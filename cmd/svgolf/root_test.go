@@ -26,7 +26,6 @@ func TestCommandsNotImplemented(t *testing.T) {
 		want string
 	}{
 		{name: "render", args: []string{"render", "in.svg", "-o", "out.png"}, want: "render: not implemented"},
-		{name: "verify", args: []string{"verify", "in.svg"}, want: "verify: not implemented"},
 		{name: "vectorize", args: []string{"vectorize", "in.png", "-o", "out.svg"}, want: "vectorize: not implemented"},
 	}
 	for _, tt := range tests {
