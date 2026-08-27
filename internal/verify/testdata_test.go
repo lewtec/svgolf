@@ -15,7 +15,14 @@ func TestTestdataMatchesResvg(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".svg") {
+		if d.IsDir() {
+			// Search eval previews are PR renders, not renderer goldens.
+			if d.Name() == "preview" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".svg") {
 			return nil
 		}
 		files = append(files, path)
