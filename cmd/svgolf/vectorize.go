@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/draw"
 	"image/png"
@@ -15,10 +16,11 @@ func newVectorizeCmd() *cobra.Command {
 	var (
 		out    string
 		colors int
+		algo   string
 	)
 	cmd := &cobra.Command{
 		Use:   "vectorize in.png",
-		Short: "Write a stub SVG from a PNG (Dumb Search)",
+		Short: "Write an SVG from a PNG (Search)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f, err := os.Open(args[0])
@@ -30,7 +32,15 @@ func newVectorizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var s search.Search = search.Dumb{Colors: colors}
+			var s search.Search
+			switch algo {
+			case "dumb":
+				s = search.Dumb{Colors: colors}
+			case "greedy":
+				s = &search.Greedy{Colors: colors}
+			default:
+				return fmt.Errorf("search: unknown adapter %q", algo)
+			}
 			doc, err := s.Search(cmd.Context(), toNRGBA(img))
 			if err != nil {
 				return err
@@ -45,6 +55,7 @@ func newVectorizeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output SVG path")
 	cmd.Flags().IntVar(&colors, "colors", 0, "palette size (0 = auto, cap 8)")
+	cmd.Flags().StringVar(&algo, "search", "dumb", "search adapter (dumb|greedy)")
 	_ = cmd.MarkFlagRequired("out")
 	return cmd
 }
