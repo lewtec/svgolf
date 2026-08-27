@@ -72,9 +72,9 @@ func paintPrimitive(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
 	if strokeOn && stroke.Width() > 0 {
 		col := stroke.Color()
 		a := uint8(stroke.Opacity()*255 + 0.5)
-		pr := premultiplyU8(col.R, a)
-		pg := premultiplyU8(col.G, a)
-		pb := premultiplyU8(col.B, a)
+		pr := div255(uint32(col.R) * uint32(a))
+		pg := div255(uint32(col.G) * uint32(a))
+		pb := div255(uint32(col.B) * uint32(a))
 		w := float32(stroke.Width())
 		if cov, hair := treatAsHairline(w, sx, sy); hair {
 			if cov != 1 {
@@ -136,9 +136,9 @@ func fillPath(pm *pixmap, p path, nonzero bool, col color.NRGBA, a uint8) {
 	if a == 0 && col.A == 0 {
 		// still may paint if col has A 255 and a is opacity
 	}
-	pr := premultiplyU8(col.R, a)
-	pg := premultiplyU8(col.G, a)
-	pb := premultiplyU8(col.B, a)
+	pr := div255(uint32(col.R) * uint32(a))
+	pg := div255(uint32(col.G) * uint32(a))
+	pb := div255(uint32(col.B) * uint32(a))
 	bl := &solidBlitter{pm: pm, pr: pr, pg: pg, pb: pb, pa: a}
 	fillPathAA(p, nonzero, uint32(pm.w), uint32(pm.h), bl)
 }
