@@ -9,18 +9,17 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
-// Render walks the tree and paints an NRGBA pixmap. Identity viewport only.
 func Render(d svg.Document) (*image.NRGBA, error) {
-	if d.ViewBox().Set() {
-		return nil, fmt.Errorf("viewBox not implemented")
-	}
 	w, h := d.Width(), d.Height()
 	if err := checkCanvas(w, h); err != nil {
 		return nil, err
 	}
-	iw, ih := int(w), int(h)
-	pm := newPixmap(iw, ih)
-	if err := paintNodes(pm, d.Children()); err != nil {
+	sx, sy, tx, ty, ok := viewBoxTransform(d)
+	if !ok {
+		return nil, fmt.Errorf("render: invalid viewBox")
+	}
+	pm := newPixmap(int(w), int(h))
+	if err := paintNodes(pm, d.Children(), sx, sy, tx, ty); err != nil {
 		return nil, err
 	}
 	return pm.toNRGBA(), nil
@@ -37,47 +36,90 @@ func finite(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
-func paintNodes(pm *pixmap, nodes []svg.Node) error {
+func paintNodes(pm *pixmap, nodes []svg.Node, sx, sy, tx, ty float32) error {
 	for _, n := range nodes {
-		if err := paintNode(pm, n); err != nil {
+		if err := paintNode(pm, n, sx, sy, tx, ty); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func paintNode(pm *pixmap, n svg.Node) error {
+func paintNode(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
 	switch n.Kind() {
 	case svg.KindGroup:
 		g, _ := n.Group()
-		return paintNodes(pm, g.Children())
-	case svg.KindRect:
-		r, _ := n.Rect()
-		return paintRect(pm, r)
-	case svg.KindCircle, svg.KindEllipse, svg.KindPolygon:
-		return nil
+		return paintNodes(pm, g.Children(), sx, sy, tx, ty)
 	case svg.KindInvalid:
 		return fmt.Errorf("render: invalid node")
+	case svg.KindRect, svg.KindCircle, svg.KindEllipse, svg.KindPolygon:
+		return paintPrimitive(pm, n, sx, sy, tx, ty)
 	default:
 		return fmt.Errorf("render: unknown node")
 	}
 }
 
-func paintRect(pm *pixmap, r svg.Rect) error {
-	p, ok := flattenRect(r)
+func paintPrimitive(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
+	p, ok := flattenNode(n)
 	if !ok {
 		return nil
 	}
-	col, on := r.Fill()
-	if !on {
-		return nil
+	p.transform(sx, sy, tx, ty)
+	fill, fillOn, fillRule, stroke, strokeOn := paintOf(n)
+	if fillOn {
+		fillPath(pm, p, fillRule != svg.FillEvenOdd, fill.col, fill.a)
 	}
-	a := uint8(r.FillOpacity()*255 + 0.5)
-	fillPath(pm, p, r.FillRule() != svg.FillEvenOdd, col, a)
+	if strokeOn {
+		sp := strokeToPath(p, stroke)
+		if !sp.empty && len(sp.segs) > 0 {
+			col := stroke.Color()
+			a := uint8(stroke.Opacity()*255 + 0.5)
+			fillPath(pm, sp, true, col, a)
+		}
+	}
 	return nil
 }
 
+type fillCol struct {
+	col color.NRGBA
+	a   uint8
+}
+
+func paintOf(n svg.Node) (fillCol, bool, svg.FillRule, svg.Stroke, bool) {
+	switch n.Kind() {
+	case svg.KindRect:
+		r, _ := n.Rect()
+		return takePaint(r.Fill, r.FillOpacity, r.FillRule, r.Stroke)
+	case svg.KindCircle:
+		c, _ := n.Circle()
+		return takePaint(c.Fill, c.FillOpacity, c.FillRule, c.Stroke)
+	case svg.KindEllipse:
+		e, _ := n.Ellipse()
+		return takePaint(e.Fill, e.FillOpacity, e.FillRule, e.Stroke)
+	case svg.KindPolygon:
+		p, _ := n.Polygon()
+		return takePaint(p.Fill, p.FillOpacity, p.FillRule, p.Stroke)
+	default:
+		return fillCol{}, false, 0, svg.Stroke{}, false
+	}
+}
+
+func takePaint(
+	fillFn func() (color.NRGBA, bool),
+	opFn func() float64,
+	ruleFn func() svg.FillRule,
+	strokeFn func() (svg.Stroke, bool),
+) (fillCol, bool, svg.FillRule, svg.Stroke, bool) {
+	col, on := fillFn()
+	a := uint8(opFn()*255 + 0.5)
+	st, son := strokeFn()
+	return fillCol{col: col, a: a}, on, ruleFn(), st, son
+}
+
 func fillPath(pm *pixmap, p path, nonzero bool, col color.NRGBA, a uint8) {
+	if a == 0 && col.A == 0 {
+		// still may paint if col has A 255 and a is opacity
+	}
 	pr := premultiplyU8(col.R, a)
 	pg := premultiplyU8(col.G, a)
 	pb := premultiplyU8(col.B, a)

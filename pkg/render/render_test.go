@@ -23,11 +23,11 @@ func TestRenderEmptyIsZeros(t *testing.T) {
 	}
 }
 
-func TestRenderViewBoxRejected(t *testing.T) {
+func TestRenderViewBoxIdentity(t *testing.T) {
 	t.Parallel()
 	d := svg.NewDocument(256, 256).WithViewBox(0, 0, 256, 256)
-	if _, err := Render(d); err == nil {
-		t.Fatal("expected viewBox error")
+	if _, err := Render(d); err != nil {
+		t.Fatal(err)
 	}
 }
 

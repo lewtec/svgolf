@@ -16,6 +16,7 @@ type lineEdge struct {
 	x, dx            int32
 	firstY, lastY    int32
 	winding          int8
+	cub              *cubicState
 }
 
 func leftShift(value, shift int32) int32 {
@@ -86,7 +87,7 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 	var edges []lineEdge
 	var mx, my, cx, cy float32
 	have := false
-	flush := func(x, y float32) {
+	flushLine := func(x, y float32) {
 		if !have {
 			return
 		}
@@ -95,16 +96,33 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 		}
 		cx, cy = x, y
 	}
+	flushCubic := func(s pathSeg) {
+		if !have {
+			return
+		}
+		for _, cub := range [][4][2]float32{{{cx, cy}, {s.x1, s.y1}, {s.x2, s.y2}, {s.x, s.y}}} {
+			le, cs, ok := newCubicEdge(cub[0][0], cub[0][1], cub[1][0], cub[1][1], cub[2][0], cub[2][1], cub[3][0], cub[3][1], shift)
+			if !ok {
+				continue
+			}
+			csCopy := cs
+			le.cub = &csCopy
+			edges = append(edges, le)
+		}
+		cx, cy = s.x, s.y
+	}
 	for _, s := range p.segs {
 		switch s.kind {
 		case segMove:
 			mx, my, cx, cy = s.x, s.y, s.x, s.y
 			have = true
 		case segLine:
-			flush(s.x, s.y)
+			flushLine(s.x, s.y)
+		case segCubic:
+			flushCubic(s)
 		case segClose:
 			if have {
-				flush(mx, my)
+				flushLine(mx, my)
 			}
 		}
 	}
@@ -452,7 +470,16 @@ func walkEdges(nonzero bool, startY, stopY int32, clipW, clipH uint32, contained
 			}
 			nextIdx := int(edges[currIdx].next)
 			if edges[currIdx].lastY == int32(currY) {
-				removeEdge(currIdx, edges)
+				if edges[currIdx].cub != nil && edges[currIdx].cub.count < 0 && updateCubic(&edges[currIdx], edges[currIdx].cub) {
+					newX := edges[currIdx].x
+					if newX < prevX {
+						backwardInsert(currIdx, edges)
+					} else {
+						prevX = newX
+					}
+				} else {
+					removeEdge(currIdx, edges)
+				}
 			} else {
 				newX := edges[currIdx].x + edges[currIdx].dx
 				edges[currIdx].x = newX

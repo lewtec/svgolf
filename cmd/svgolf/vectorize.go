@@ -1,8 +1,11 @@
 package main
 
 import (
-	"errors"
+	"image/png"
+	"os"
 
+	"github.com/lewtec/svgolf/internal/gen"
+	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/spf13/cobra"
 )
 
@@ -15,8 +18,26 @@ func newVectorizeCmd() *cobra.Command {
 		Use:   "vectorize in.png",
 		Short: "Write a stub SVG from a PNG (dumb generator)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(*cobra.Command, []string) error {
-			return errors.New("vectorize: not implemented")
+		RunE: func(_ *cobra.Command, args []string) error {
+			f, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			img, err := png.Decode(f)
+			if err != nil {
+				return err
+			}
+			doc, err := gen.Dumb(img, colors)
+			if err != nil {
+				return err
+			}
+			outf, err := os.Create(out)
+			if err != nil {
+				return err
+			}
+			defer outf.Close()
+			return svg.Encode(outf, doc)
 		},
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output SVG path")

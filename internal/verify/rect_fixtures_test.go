@@ -14,6 +14,14 @@ func TestRectFixturesMatchResvg(t *testing.T) {
 		"rect-edges.svg",
 		"rect-rx0.svg",
 		"rect-overlap.svg",
+		"circle-unit.svg",
+		"rx-nonzero-ry0.svg",
+		"polygon-nonzero.svg",
+		"polygon-evenodd.svg",
+		"group.svg",
+		"viewbox-meet.svg",
+		"stroke-w4.svg",
+		"stroke-join.svg",
 	}
 	for _, name := range files {
 		t.Run(name, func(t *testing.T) {
