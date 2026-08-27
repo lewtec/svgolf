@@ -242,8 +242,8 @@ github.com/lewtec/svgolf
   internal/verify/
     verify.go        # Compare, diff PNG
   testdata/
-    svg/             # hand fixtures
-    png/
+    svg/             # hand fixtures (renderer vs resvg)
+    eval/            # full-size scenes: bliss + LEWTEC logos
   pkg/render/testdata/fuzz/FuzzRender/  # go-fuzz crashers (beside the test)
   mise.toml
   go.mod

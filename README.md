@@ -41,6 +41,7 @@ svgolf vectorize in.png -o out.svg [--colors N]
 | `pkg/render` | in-process → `image.NRGBA` |
 | `cmd/svgolf` | Cobra |
 | `internal/` | resvg oracle, palette, Search (Dumb), Loss (Pixels/PerCost), verify |
+| `testdata/eval` | full-size scenes: bliss + LEWTEC logos |
 
 ## Not in v1
 
