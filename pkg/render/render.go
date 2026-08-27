@@ -69,12 +69,28 @@ func paintPrimitive(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
 	if fillOn {
 		fillPath(pm, p, fillRule != svg.FillEvenOdd, fill.col, fill.a)
 	}
-	if strokeOn {
-		sp := strokeToPath(p, stroke)
-		if !sp.empty && len(sp.segs) > 0 {
-			col := stroke.Color()
-			a := uint8(stroke.Opacity()*255 + 0.5)
-			fillPath(pm, sp, true, col, a)
+	if strokeOn && stroke.Width() > 0 {
+		col := stroke.Color()
+		a := uint8(stroke.Opacity()*255 + 0.5)
+		pr := premultiplyU8(col.R, a)
+		pg := premultiplyU8(col.G, a)
+		pb := premultiplyU8(col.B, a)
+		w := float32(stroke.Width())
+		if cov, hair := treatAsHairline(w, sx, sy); hair {
+			if cov != 1 {
+				a = uint8((int32(a) * int32(cov*256)) >> 8)
+				pr = premultiplyU8(col.R, a)
+				pg = premultiplyU8(col.G, a)
+				pb = premultiplyU8(col.B, a)
+			}
+			strokeHairline(pm, p, [4]uint8{pr, pg, pb, a})
+		} else if rp, ok := strokeRectRing(p, w); ok {
+			fillPath(pm, rp, true, col, a) // opposite-wound ring, nonzero
+		} else {
+			sp := strokeToPath(p, stroke)
+			if !sp.empty && len(sp.segs) > 0 {
+				fillPath(pm, sp, true, col, a)
+			}
 		}
 	}
 	return nil

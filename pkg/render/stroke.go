@@ -268,3 +268,70 @@ func treatAsHairline(width, sx, sy float32) (float32, bool) {
 	}
 	return 0, false
 }
+
+// strokeRectRing builds an even-odd outer/inner rect for an axis-aligned box.
+func strokeRectRing(src path, width float32) (path, bool) {
+	if width <= 0 {
+		return path{}, false
+	}
+	minX, minY, maxX, maxY, ok := axisAlignedRect(src)
+	if !ok {
+		return path{}, false
+	}
+	h := width / 2
+	var p path
+	p.empty = true
+	// outer
+	p.moveTo(minX-h, minY-h)
+	p.lineTo(maxX+h, minY-h)
+	p.lineTo(maxX+h, maxY+h)
+	p.lineTo(minX-h, maxY+h)
+	p.close()
+	// inner (opposite winding)
+	p.moveTo(minX+h, minY+h)
+	p.lineTo(minX+h, maxY-h)
+	p.lineTo(maxX-h, maxY-h)
+	p.lineTo(maxX-h, minY+h)
+	p.close()
+	return p, true
+}
+
+func axisAlignedRect(src path) (minX, minY, maxX, maxY float32, ok bool) {
+	var pts [][2]float32
+	for _, s := range src.segs {
+		switch s.kind {
+		case segCubic:
+			return 0, 0, 0, 0, false
+		case segMove, segLine:
+			pts = append(pts, [2]float32{s.x, s.y})
+		}
+	}
+	if len(pts) < 4 {
+		return 0, 0, 0, 0, false
+	}
+	minX, minY, maxX, maxY = pts[0][0], pts[0][1], pts[0][0], pts[0][1]
+	axis := true
+	for i := 1; i < len(pts); i++ {
+		x, y := pts[i][0], pts[i][1]
+		if x < minX {
+			minX = x
+		}
+		if y < minY {
+			minY = y
+		}
+		if x > maxX {
+			maxX = x
+		}
+		if y > maxY {
+			maxY = y
+		}
+		px, py := pts[i-1][0], pts[i-1][1]
+		if x != px && y != py {
+			axis = false
+		}
+	}
+	if !axis || maxX <= minX || maxY <= minY {
+		return 0, 0, 0, 0, false
+	}
+	return minX, minY, maxX, maxY, true
+}

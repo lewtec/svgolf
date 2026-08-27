@@ -103,6 +103,7 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 		for _, cub := range [][4][2]float32{{{cx, cy}, {s.x1, s.y1}, {s.x2, s.y2}, {s.x, s.y}}} {
 			le, cs, ok := newCubicEdge(cub[0][0], cub[0][1], cub[1][0], cub[1][1], cub[2][0], cub[2][1], cub[3][0], cub[3][1], shift)
 			if !ok {
+				pushCubicLines(&edges, cub, shift, 0)
 				continue
 			}
 			csCopy := cs
@@ -127,6 +128,32 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 		}
 	}
 	return edges
+}
+
+func pushCubicLines(edges *[]lineEdge, cub [4][2]float32, shift int32, depth int) {
+	if depth < 4 {
+		a, b := splitCubic(cub, 0.5)
+		if _, _, ok := newCubicEdge(a[0][0], a[0][1], a[1][0], a[1][1], a[2][0], a[2][1], a[3][0], a[3][1], shift); !ok {
+			pushCubicLines(edges, a, shift, depth+1)
+		} else {
+			le, cs, _ := newCubicEdge(a[0][0], a[0][1], a[1][0], a[1][1], a[2][0], a[2][1], a[3][0], a[3][1], shift)
+			csCopy := cs
+			le.cub = &csCopy
+			*edges = append(*edges, le)
+		}
+		if _, _, ok := newCubicEdge(b[0][0], b[0][1], b[1][0], b[1][1], b[2][0], b[2][1], b[3][0], b[3][1], shift); !ok {
+			pushCubicLines(edges, b, shift, depth+1)
+		} else {
+			le, cs, _ := newCubicEdge(b[0][0], b[0][1], b[1][0], b[1][1], b[2][0], b[2][1], b[3][0], b[3][1], shift)
+			csCopy := cs
+			le.cub = &csCopy
+			*edges = append(*edges, le)
+		}
+		return
+	}
+	if e, ok := newLineEdge(cub[0][0], cub[0][1], cub[3][0], cub[3][1], shift); ok {
+		*edges = append(*edges, e)
+	}
 }
 
 type alphaRuns struct {
@@ -390,7 +417,10 @@ func fillPathAA(p path, nonzero bool, clipW, clipH uint32, blit *solidBlitter) {
 	if sb == nil {
 		return
 	}
-	contained := bl >= 0 && bt >= 0 && br <= int32(clipW) && bb <= int32(clipH)
+	// Always walk the full edge list. blend() drops out-of-canvas pixels.
+	// Clipping startY to the clip box dropped winding for shapes that straddle 0
+	// (e.g. circle at origin).
+	contained := true
 	edges := buildLineEdges(p, supersampleShift)
 	if len(edges) < 2 {
 		sb.flush()
@@ -433,16 +463,14 @@ func walkEdges(nonzero bool, startY, stopY int32, clipW, clipH uint32, contained
 
 	startY <<= shift
 	stopY <<= shift
-	if !contained {
-		if startY < 0 {
-			startY = 0
-		}
-		bottom := int32(clipH) << shift
-		if stopY > bottom {
-			stopY = bottom
-		}
+	if startY < 0 {
+		startY = 0
 	}
-	if startY < 0 || stopY < 0 {
+	bottom := int32(clipH) << shift
+	if stopY > bottom {
+		stopY = bottom
+	}
+	if stopY <= startY {
 		return
 	}
 	windingMask := int32(-1)
@@ -454,19 +482,23 @@ func walkEdges(nonzero bool, startY, stopY int32, clipW, clipH uint32, contained
 	stop := uint32(stopY)
 	for {
 		w := int32(0)
-		left := uint32(0)
+		left := int32(0)
 		prevX := edges[0].x
 		currIdx := int(edges[0].next)
 		for edges[currIdx].firstY <= int32(currY) {
-			x := uint32(fdot16RoundToI32(edges[currIdx].x))
+			if edges[currIdx].lastY < int32(currY) {
+				nextIdx := int(edges[currIdx].next)
+				removeEdge(currIdx, edges)
+				currIdx = nextIdx
+				continue
+			}
+			x := fdot16RoundToI32(edges[currIdx].x)
 			if w&windingMask == 0 {
 				left = x
 			}
 			w += int32(edges[currIdx].winding)
 			if w&windingMask == 0 {
-				if x > left {
-					sb.blitH(left, currY, x-left)
-				}
+				blitSpan(sb, left, x, currY, int32(rightClip))
 			}
 			nextIdx := int(edges[currIdx].next)
 			if edges[currIdx].lastY == int32(currY) {
@@ -491,14 +523,26 @@ func walkEdges(nonzero bool, startY, stopY int32, clipW, clipH uint32, contained
 			}
 			currIdx = nextIdx
 		}
-		if w&windingMask != 0 && rightClip > left {
-			sb.blitH(left, currY, rightClip-left)
+		if w&windingMask != 0 {
+			blitSpan(sb, left, int32(rightClip), currY, int32(rightClip))
 		}
 		currY++
 		if currY >= stop {
 			break
 		}
 		insertNewEdges(currIdx, int32(currY), edges)
+	}
+}
+
+func blitSpan(sb *superBlitter, l, r int32, y uint32, clipR int32) {
+	if l < 0 {
+		l = 0
+	}
+	if r > clipR {
+		r = clipR
+	}
+	if r > l {
+		sb.blitH(uint32(l), y, uint32(r-l))
 	}
 }
 

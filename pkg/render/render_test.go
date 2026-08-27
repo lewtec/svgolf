@@ -55,6 +55,61 @@ func TestRenderFilledRectDoesNotPanic(t *testing.T) {
 	}
 }
 
+func TestCircleEdgeCount(t *testing.T) {
+	p, ok := flattenEllipse(0, 0, 10, 10)
+	if !ok {
+		t.Fatal("flatten")
+	}
+	t.Logf("segs=%d bounds=(%v,%v)-(%v,%v)", len(p.segs), p.minX, p.minY, p.maxX, p.maxY)
+	e := buildLineEdges(p, supersampleShift)
+	t.Logf("edges=%d", len(e))
+	for i, ed := range e {
+		t.Logf("edge[%d] firstY=%d lastY=%d x=%d dx=%d wind=%d cub=%v", i, ed.firstY, ed.lastY, ed.x, ed.dx, ed.winding, ed.cub != nil)
+	}
+	if len(e) < 2 {
+		t.Fatalf("too few edges")
+	}
+}
+
+func TestFillPathSmallCircle(t *testing.T) {
+	p, ok := flattenEllipse(0, 0, 10, 10)
+	if !ok {
+		t.Fatal("flatten")
+	}
+	pm := newPixmap(256, 256)
+	fillPath(pm, p, true, color.NRGBA{A: 255}, 255)
+	img := pm.toNRGBA()
+	var nz int
+	for i := 3; i < len(img.Pix); i += 4 {
+		if img.Pix[i] != 0 {
+			nz++
+		}
+	}
+	if nz == 0 {
+		t.Fatal("fillPath painted nothing")
+	}
+	t.Logf("nonzero=%d a(5,5)=%d", nz, img.NRGBAAt(5, 5).A)
+}
+
+func TestNestedCircleFillsOrigin(t *testing.T) {
+	t.Parallel()
+	d := svg.NewDocument(256, 256).Append(
+		svg.NewGroup().Append(svg.NewCircle().WithR(10).Node()).Node(),
+	)
+	img, err := Render(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := img.NRGBAAt(5, 5)
+	if c.A == 0 {
+		t.Fatalf("expected fill at (5,5), got %+v", c)
+	}
+	c0 := img.NRGBAAt(0, 0)
+	if c0.A == 0 {
+		t.Fatalf("expected fill at (0,0), got %+v", c0)
+	}
+}
+
 func TestPremultiplyU8(t *testing.T) {
 	t.Parallel()
 	if premultiplyU8(255, 255) != 255 {
