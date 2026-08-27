@@ -41,4 +41,8 @@ func TestCost(t *testing.T) {
 	if got := Cost(g.Node()); got != 3 {
 		t.Errorf("group Cost = %d; want 3", got)
 	}
+	doc := NewDocument(10, 10).Append(NewCircle().Node(), NewRect().WithWidth(4).WithHeight(4).Node())
+	if got := CostDocument(doc); got != 2 {
+		t.Errorf("CostDocument = %d; want 2", got)
+	}
 }

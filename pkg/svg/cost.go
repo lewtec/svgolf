@@ -27,3 +27,12 @@ func Cost(n Node) int {
 		return 0
 	}
 }
+
+// CostDocument sums Cost of the document children. The root is not a primitive.
+func CostDocument(d Document) int {
+	sum := 0
+	for _, c := range d.children {
+		sum += Cost(c)
+	}
+	return sum
+}

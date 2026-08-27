@@ -72,9 +72,13 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Match | Every RGBA byte equal | close enough, SSIM, ΔE |
 | ColorMap | Color rewrite adapter | “the quantizer” (as the seam name) |
 | Palette | First ColorMap adapter | theme, swatch |
-| Search | pixmap → tree | solver, golf loop, generator |
+| Search | want Scene → Document | solver, golf loop, generator |
 | Dumb | first Search adapter (one shot) | heuristic engine, stub generator |
-| Loss | Later distance (interface only) | score, fitness, energy |
+| Scene / want | decoded PNG (`*image.NRGBA`) | target, ground truth |
+| got | `Render(doc)` pixmap | candidate image |
+| Loss | `Loss(got, want) float64` | score, fitness, energy |
+| Pixels | first Loss adapter (don't-care deviate count) | Hamming, mismatch count |
+| PerCost | v1 rank: `Loss / CostDocument` | efficiency, fitness |
 | Verify | Exact ours vs resvg | compare command, diff command |
 | Encode | Tree → SVG XML | serialize, stringify |
 | Parse | XML → tree via `New*` | decode, ingest |
@@ -232,6 +236,9 @@ github.com/lewtec/svgolf
   internal/search/
     search.go        # Search interface
     dumb.go          # first Search adapter
+  internal/loss/
+    loss.go          # Loss, PerCost, Of
+    pixels.go        # first Loss adapter
   internal/verify/
     verify.go        # Compare, diff PNG
   testdata/
@@ -759,6 +766,40 @@ Other ColorMap variants stay later.
 
 Transparent pixels are don't-care for future Loss. Palette ignores `A==0`.
 
+### Circuit I/O
+
+Same Go type, different origin: `want` is the scene (decoded PNG). `got` is `Render(doc)`. Loss never sees a tree.
+
+```
+PNG ──Decode──► want *image.NRGBA
+                    │
+                    ▼
+              Search(ctx, want) ──► doc svg.Document ──Encode──► XML
+                    │
+                    └── (inside Search)
+                          got = Render(doc)
+                          n   = Loss(got, want)          // Pixels
+                          s   = PerCost(n, CostDocument(doc))
+```
+
+| Fn | Takes | Gives |
+| --- | --- | --- |
+| `Search` | `ctx`, `want *image.NRGBA` | `svg.Document` |
+| `Render` | `svg.Document` | `got *image.NRGBA` |
+| `Loss` | `got`, `want *image.NRGBA` | `float64` (lower better) |
+| `Cost` / `CostDocument` | `Node` / `Document` | `int` |
+| `Encode` | `svg.Document` | XML |
+| `ColorMap.Map` | `color.NRGBA` | `color.NRGBA` (inside Search) |
+
+Invariants:
+
+- `want` size is the canvas. Search emits a Document with that `Dx()×Dy()`.
+- `got` and `want` must share bounds or Loss is `+Inf`.
+- `want.A==0` is don't-care. Loss does not score those pixels.
+- Color is not a gene. Search may build a ColorMap from `want`.
+- Oracle/resvg is not in this circuit.
+- Search does not take XML, `image.Image`, or a Loss object. It may call Loss inside.
+
 ### Search (`internal/search`)
 
 ```go
@@ -777,7 +818,29 @@ func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, er
 
 Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap. `--colors` is a field on `Dumb`.
 
-Loss is later. Do not add an empty Loss package.
+### Loss (`internal/loss`)
+
+```go
+package loss
+
+type Loss interface {
+    Loss(got, want *image.NRGBA) float64
+}
+
+type Pixels struct{} // first adapter
+
+func (Pixels) Loss(got, want *image.NRGBA) float64
+func PerCost(deviate float64, complexity int) float64
+func Of(doc svg.Document, want *image.NRGBA) (float64, error)
+```
+
+`Pixels`: count of pixels where `want.A != 0` and `got != want`. Nil or size mismatch → `+Inf`.
+
+`PerCost`: `deviate / complexity`. First ranking metric. Extra primitives shrink the number (known). Cost 0 → `0` if deviate is 0, else `+Inf`.
+
+`Of`: `Render(doc)` then `PerCost(Pixels.Loss(got, want), CostDocument(doc))`.
+
+Dumb does not call Loss. A looping Search does.
 
 ### Dumb (first Search adapter)
 
@@ -898,20 +961,9 @@ Crashers: `pkg/render/testdata/fuzz/FuzzRender/`. Commit them. Go’s fuzz engin
 
 `svgolf verify` remains the one-file path.
 
-### Loss seam
+### Loss adapters after Pixels
 
-Do not implement. Do not lock a formula.
-
-```go
-// later
-type Loss interface {
-    Loss(got, want *image.NRGBA) float64
-}
-```
-
-Palette-snap + pixels-not-in-common was discussed as a likely first Loss adapter. It is not locked.
-
-v1 does not add an empty Loss package. Search is `internal/search`; Dumb is the first adapter.
+Other formulas stay later. Palette-snap + pixels-not-in-common remains a candidate, not locked. Do not add slop.
 
 ### Sequences
 
@@ -1168,8 +1220,8 @@ Not a hosted service.
 
 Unlocked. Do not implement as if decided.
 
-1. Loss formula (palette-snap + pixels-not-in-common is a candidate only).
-2. Search method.
+1. Loss formulas beyond `Pixels` / `PerCost`.
+2. Search method (looping adapter).
 3. ColorMap adapters beyond palette.
 4. Primitive weight iteration; polygon vertex tax formula.
 5. Gradients.

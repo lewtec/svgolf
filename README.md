@@ -2,7 +2,7 @@
 
 Turn a PNG, especially a model-generated logo, into a simple editable SVG.
 
-v1 is the trusted render pipeline: an SVG-like tree, an in-process renderer that must match **resvg** on the locked fixture set, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz. v1 Search is one shot; no Loss loop.
+v1 is the trusted render pipeline: an SVG-like tree, an in-process renderer that must match **resvg** on the locked fixture set, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz. v1 Search is one shot (Dumb). First Loss is deviate count / Cost.
 
 Contract: [SPEC.md](SPEC.md).
 
@@ -40,8 +40,8 @@ svgolf vectorize in.png -o out.svg [--colors N]
 | `pkg/svg` | tree, `New*`, Encode, Parse |
 | `pkg/render` | in-process → `image.NRGBA` |
 | `cmd/svgolf` | Cobra |
-| `internal/` | resvg oracle, palette, Search (Dumb), verify |
+| `internal/` | resvg oracle, palette, Search (Dumb), Loss (Pixels/PerCost), verify |
 
 ## Not in v1
 
-Looping Search, Loss formula, path/Bézier primitives, transform, clip, mask, gradients, `svgolf fuzz` (use `go test -fuzz=FuzzRender`).
+Looping Search, other Loss formulas, path/Bézier primitives, transform, clip, mask, gradients, `svgolf fuzz` (use `go test -fuzz=FuzzRender`).
