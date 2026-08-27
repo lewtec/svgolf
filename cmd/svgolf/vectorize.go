@@ -1,10 +1,12 @@
 package main
 
 import (
+	"image"
+	"image/draw"
 	"image/png"
 	"os"
 
-	"github.com/lewtec/svgolf/internal/gen"
+	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/spf13/cobra"
 )
@@ -16,9 +18,9 @@ func newVectorizeCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "vectorize in.png",
-		Short: "Write a stub SVG from a PNG (dumb generator)",
+		Short: "Write a stub SVG from a PNG (Dumb Search)",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			f, err := os.Open(args[0])
 			if err != nil {
 				return err
@@ -28,7 +30,8 @@ func newVectorizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			doc, err := gen.Dumb(img, colors)
+			var s search.Search = search.Dumb{Colors: colors}
+			doc, err := s.Search(cmd.Context(), toNRGBA(img))
 			if err != nil {
 				return err
 			}
@@ -44,4 +47,14 @@ func newVectorizeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&colors, "colors", 0, "palette size (0 = auto, cap 8)")
 	_ = cmd.MarkFlagRequired("out")
 	return cmd
+}
+
+func toNRGBA(img image.Image) *image.NRGBA {
+	if n, ok := img.(*image.NRGBA); ok && n.Rect.Min == (image.Point{}) {
+		return n
+	}
+	b := img.Bounds()
+	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(out, out.Bounds(), img, b.Min, draw.Src)
+	return out
 }

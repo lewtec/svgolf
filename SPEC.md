@@ -15,9 +15,9 @@ This document is the implementation contract. It does not reopen locked product 
 
 ## Overview
 
-svgolf turns a PNG — especially a model-generated logo — into the simplest hand-editable SVG. Current tracers emit noisy paths. v1 ships a trusted render pipeline, an SVG-like tree, a Cobra CLI, a dumb generator, and exact-match fuzz against **resvg**.
+svgolf turns a PNG — especially a model-generated logo — into the simplest hand-editable SVG. Current tracers emit noisy paths. v1 ships a trusted render pipeline, an SVG-like tree, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz against **resvg**.
 
-v1 does not search. Search, Loss, ColorMap variants, primitive weight iteration, gradients, and union/boolean remain later adapter seams.
+v1 Search is Dumb: one shot, no Loss loop. Loss formula, ColorMap variants, primitive weight iteration, gradients, and union/boolean remain later adapter seams.
 
 ---
 
@@ -46,9 +46,9 @@ v1 builds the pixmap contract first. Future search consumes that pixmap.
 - In-process renderer walks the tree to `image.NRGBA`.
 - Out-of-process **oracle** is resvg (mise). Match is exact RGBA.
 - CLI: `render`, `verify`, `vectorize`.
-- Dumb generator behind `vectorize`.
+- Search behind `vectorize`; first adapter is Dumb.
 - `go test -fuzz=FuzzRender` compares Encode → Render vs resvg.
-- ColorMap palette adapter for the dumb generator (auto, cap 8).
+- ColorMap palette adapter used inside Dumb (auto, cap 8).
 
 ### Non-goals (v1)
 
@@ -72,9 +72,8 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Match | Every RGBA byte equal | close enough, SSIM, ΔE |
 | ColorMap | Color rewrite adapter | “the quantizer” (as the seam name) |
 | Palette | First ColorMap adapter | theme, swatch |
-| Generator | `vectorize` producer | tracer |
-| Dumb | v1 stub generator | heuristic engine |
-| Search | Later optimizer (interface only) | solver, golf loop |
+| Search | pixmap → tree | solver, golf loop, generator |
+| Dumb | first Search adapter (one shot) | heuristic engine, stub generator |
 | Loss | Later distance (interface only) | score, fitness, energy |
 | Verify | Exact ours vs resvg | compare command, diff command |
 | Encode | Tree → SVG XML | serialize, stringify |
@@ -101,8 +100,8 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Opaque fields; `New*` returns Go zero; zero **is** the SVG default | Callers cannot write literals. Defaults cannot drift. |
 | No `*Paint` for unset | Presence is a flag or a dedicated none-state, not a nil pointer. |
 | Fill sampled from the PNG; color is not a gene | Search later mutates geometry, not hex strings. |
-| Palette is the first ColorMap adapter | Dumb generator needs a palette now. Other maps stay a seam. |
-| Transparent PNG pixels are don't-care | Loss later must ignore them. Generator uses opaque pixels only. |
+| Palette is the first ColorMap adapter | Dumb owns palette internally. Other maps stay inside Search. |
+| Transparent PNG pixels are don't-care | Loss later must ignore them. Search uses opaque pixels only. |
 | Painter model = document order; first = back | Same as SVG. Converge outer → inner by append. |
 | Groups are structure only | No group opacity, filter, isolation, or paint inheritance. |
 | No presentation attributes on `<g>` | `fill`/`stroke` on a group is an unknown attribute. Children carry their own paint. |
@@ -117,7 +116,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Match is exact RGBA | No slop at start. 1-bit AA fights are documented later if they appear. |
 | resvg is oracle, not DOM | Parse stays `encoding/xml` + `New*`. |
 | Unknown tag or attribute is an error | v1 subset stays closed. Inkscape extras fail closed. |
-| Search and Loss are seams only | v1 must not invent a formula or a search method. |
+| Search is a seam; Dumb is the first adapter | v1 must not invent a Loss formula or a looping method. |
 | Hard-stamp discrete renderer was dropped | Renderer includes AA to match resvg. Discrete snap is ColorMap/Loss later. |
 | Fuzz is `go test` only | No `svgolf fuzz` command. Crashers live under `pkg/render/testdata/fuzz`. |
 | mise pins Go 1.27 and resvg | Reproducible oracle. No host-global tools. |
@@ -171,7 +170,7 @@ flowchart TB
     encode[svg.Encode]
     tree[svg.Document]
     rend[render.Render]
-    dumb[gen.Dumb]
+    searchAd[search.Dumb]
     pal[palette.Auto]
     oracle[resvg.Render]
     cmp[verify.Compare]
@@ -191,13 +190,13 @@ flowchart TB
   cmp --> exit{exit 0 or 1 + diff PNG}
 
   vectorizeCmd --> pngIn[PNG]
-  pngIn --> pal
-  pal --> dumb
-  dumb --> tree
+  pngIn --> searchAd
+  searchAd --> pal
+  searchAd --> tree
   tree --> encode
 ```
 
-External engines never enter the search loop (there is no search in v1). They verify only.
+External engines never enter Search. They verify only.
 
 ### Layout
 
@@ -230,8 +229,9 @@ github.com/lewtec/svgolf
     resvg.go         # exec oracle
   internal/palette/
     palette.go       # ColorMap + Auto
-  internal/gen/
-    dumb.go          # Dumb generator
+  internal/search/
+    search.go        # Search interface
+    dumb.go          # first Search adapter
   internal/verify/
     verify.go        # Compare, diff PNG
   testdata/
@@ -573,7 +573,7 @@ paint order: `fill`, `fill-opacity`, `fill-rule`, `stroke`, `stroke-opacity`, `s
 - Colors: `#RRGGBB` (uppercase). Opacity is a separate `fill-opacity` / `stroke-opacity` when the stored 8-bit value is not 255. Encode that channel as the shortest `'f'` decimal whose Parse maps back to the same `uint8` (try prec 1..17; `0` and `1` for 0 and 255).
 - `points`: `x,y` pairs separated by spaces (`0,0 10,0 0,10`).
 - Indent: hierarchical two spaces per nesting level (`<svg>` children at 2, nested `<g>` children at 4, …). Goldens in PR 3 freeze this. Open question 13 is closed for v1.
-- Generator builds a `Document` via `NewRect` + `With*` only. CLI Encodes. No raw XML strings.
+- Search builds a `Document` via `NewRect` + `With*` only. CLI Encodes. No raw XML strings.
 
 ### Parse
 
@@ -759,13 +759,29 @@ Other ColorMap variants stay later.
 
 Transparent pixels are don't-care for future Loss. Palette ignores `A==0`.
 
-### Dumb generator (`internal/gen`)
+### Search (`internal/search`)
 
 ```go
-package gen
+package search
 
-func Dumb(img image.Image, colors int) (svg.Document, error)
+type Search interface {
+    Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
+}
+
+type Dumb struct {
+    Colors int // 0 = auto, cap 8
+}
+
+func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
 ```
+
+Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap. `--colors` is a field on `Dumb`.
+
+Loss is later. Do not add an empty Loss package.
+
+### Dumb (first Search adapter)
+
+One shot. No render loop.
 
 Behavior:
 
@@ -788,7 +804,7 @@ ny = py + (ph-nh)/2
 7. Fill = that palette color via `WithFill`. No stroke.
 8. Return a `Document` built only with `NewRect` + `With*` + `Append`. The CLI Encodes. No raw XML.
 
-This is a stub. It is not a tracer.
+This is a Search adapter. It is not a tracer.
 
 ### Verify (`internal/verify`)
 
@@ -837,7 +853,7 @@ svgolf vectorize in.png -o out.svg [--colors N]
 | --- | --- | --- |
 | `render` | Parse → Render → `png.Encode` | 1 on error |
 | `verify` | `verify.File` (oracle = original bytes); write diff PNG on pixel mismatch of equal size | 0 iff ours matches resvg(original) and Encode does not drift; 1 otherwise |
-| `vectorize` | `png.Decode` → `gen.Dumb` → Encode | 1 on error |
+| `vectorize` | `png.Decode` → `search.Search` (`Dumb`) → Encode | 1 on error |
 
 Flags:
 
@@ -882,16 +898,11 @@ Crashers: `pkg/render/testdata/fuzz/FuzzRender/`. Commit them. Go’s fuzz engin
 
 `svgolf verify` remains the one-file path.
 
-### Search and Loss seams
+### Loss seam
 
-Do not implement. Do not lock a formula. Document the future homes:
+Do not implement. Do not lock a formula.
 
 ```go
-// later: internal/search or pkg/search
-type Search interface {
-    Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
-}
-
 // later
 type Loss interface {
     Loss(got, want *image.NRGBA) float64
@@ -900,7 +911,7 @@ type Loss interface {
 
 Palette-snap + pixels-not-in-common was discussed as a likely first Loss adapter. It is not locked.
 
-v1 does not add empty packages for these.
+v1 does not add an empty Loss package. Search is `internal/search`; Dumb is the first adapter.
 
 ### Sequences
 
@@ -911,18 +922,18 @@ sequenceDiagram
   actor User
   participant CLI as svgolf vectorize
   participant PNG as image/png
+  participant Search as search.Search
   participant Pal as palette.Auto
-  participant Dumb as gen.Dumb
   participant SVG as pkg/svg
   User->>CLI: in.png -o out.svg --colors N
   CLI->>PNG: Decode
-  CLI->>Dumb: Dumb(img, N)
-  Dumb->>Pal: Auto(img, N)
-  Pal-->>Dumb: colors most-used to least
+  CLI->>Search: Dumb{Colors: N}.Search(nrgba)
+  Search->>Pal: Auto (inside Dumb)
+  Pal-->>Search: colors most-used to least
   loop each color
-    Dumb->>SVG: NewRect + WithFill + Append
+    Search->>SVG: NewRect + WithFill + Append
   end
-  Dumb-->>CLI: Document
+  Search-->>CLI: Document
   CLI->>SVG: Encode
   CLI-->>User: out.svg
 ```
@@ -1288,12 +1299,12 @@ Each PR is independently reviewable and mergeable. Later PRs depend on earlier o
 - **Depends on:** PR 7
 - **Changes:** Groups paint children in order with no isolation and no inherited paint. viewBox mapping. Default `xMidYMid meet` letterbox fixture. Independent of PR 9–12. Until this PR, `Render` still errors on a set viewBox.
 
-### PR 14 — Palette, dumb generator, `vectorize`
+### PR 14 — Palette, Search (Dumb), `vectorize`
 
-- **Title:** `feat: palette ColorMap, dumb generator, svgolf vectorize`
-- **Files:** `internal/palette/*`, `internal/gen/dumb.go`, `cmd/svgolf/vectorize.go`, tests
+- **Title:** `feat: palette ColorMap, search.Dumb, svgolf vectorize`
+- **Files:** `internal/palette/*`, `internal/search/*`, `cmd/svgolf/vectorize.go`, tests
 - **Depends on:** PR 3, PR 8
-- **Changes:** `palette.Auto` (locked ≤n path + specified median-cut). `Map` preserves A. `gen.Dumb` nested 75% rects, most-used first, bbox vs plate, `Dx`/`Dy` origin. CLI `vectorize`. Tests on synthetic PNGs (solid, two-color, with alpha, non-zero `Bounds().Min`). Does not wait on stroke or viewBox.
+- **Changes:** `palette.Auto` (locked ≤n path + specified median-cut). `Map` preserves A. `search.Search` seam; `search.Dumb` nested 75% rects, most-used first, bbox vs plate, `Dx`/`Dy` origin. CLI `vectorize` calls Search. Tests on synthetic PNGs (solid, two-color, with alpha, non-zero `Bounds().Min`). Does not wait on stroke or viewBox.
 
 ### PR 15 — `FuzzRender`
 

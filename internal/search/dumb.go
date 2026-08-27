@@ -1,6 +1,8 @@
-package gen
+package search
 
 import (
+	"context"
+	"fmt"
 	"image"
 	"image/color"
 
@@ -8,11 +10,24 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
-func Dumb(img image.Image, colors int) (svg.Document, error) {
-	b := img.Bounds()
+// Dumb is the one-shot Search adapter: one rect per palette color, concentric 75%.
+type Dumb struct {
+	Colors int // 0 = auto, cap 8
+}
+
+var _ Search = Dumb{}
+
+func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error) {
+	if err := ctx.Err(); err != nil {
+		return svg.Document{}, err
+	}
+	if target == nil {
+		return svg.Document{}, fmt.Errorf("search: nil pixmap")
+	}
+	b := target.Bounds()
 	w, h := b.Dx(), b.Dy()
 	doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
-	_, pal, err := palette.Auto(img, colors)
+	_, pal, err := palette.Auto(target, d.Colors)
 	if err != nil {
 		return doc, err
 	}
@@ -24,8 +39,7 @@ func Dumb(img image.Image, colors int) (svg.Document, error) {
 	first := true
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			_, _, _, a := img.At(x, y).RGBA()
-			aa := uint8(a >> 8)
+			aa := target.NRGBAAt(x, y).A
 			if aa != 255 {
 				plate = false
 			}

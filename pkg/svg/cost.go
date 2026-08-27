@@ -1,6 +1,6 @@
 package svg
 
-// Cost is the primitive rank. Search is later; ranks live on the tree.
+// Cost is the primitive rank. Dumb does not use it; a looping Search may.
 func Cost(n Node) int {
 	switch n.kind {
 	case KindInvalid:

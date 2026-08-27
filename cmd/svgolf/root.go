@@ -13,9 +13,9 @@ func newRootCmd() *cobra.Command {
 Commands:
   render      SVG file to PNG (in-process renderer)
   verify      compare in-process render to resvg
-  vectorize   PNG to a stub SVG (dumb generator)
+  vectorize   PNG to SVG (Search; v1 is Dumb)
 
-v1 does not search. Run tests with: mise run test`,
+v1 Search is Dumb (one shot). Run tests with: mise run test`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

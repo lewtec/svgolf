@@ -1,4 +1,4 @@
-package gen
+package search
 
 import (
 	"image"
@@ -13,7 +13,7 @@ func TestDumbSolid(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
-	doc, err := Dumb(img, 0)
+	doc, err := (Dumb{}).Search(t.Context(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestDumbTwoColorConcentric(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	doc, err := Dumb(img, 2)
+	doc, err := (Dumb{Colors: 2}).Search(t.Context(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +56,19 @@ func TestDumbAlphaBBox(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 10))
 	img.SetNRGBA(2, 3, color.NRGBA{R: 1, A: 200})
 	img.SetNRGBA(4, 6, color.NRGBA{R: 1, A: 200})
-	doc, err := Dumb(img, 1)
+	doc, err := (Dumb{Colors: 1}).Search(t.Context(), img)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, _ := doc.Children()[0].Rect()
 	if r.X() != 2 || r.Y() != 3 || r.Width() != 3 || r.Height() != 4 {
 		t.Fatalf("bbox rect x=%v y=%v w=%v h=%v", r.X(), r.Y(), r.Width(), r.Height())
+	}
+}
+
+func TestDumbNilPixmap(t *testing.T) {
+	_, err := (Dumb{}).Search(t.Context(), nil)
+	if err == nil {
+		t.Fatal("expected error")
 	}
 }
