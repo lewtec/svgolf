@@ -1,0 +1,23 @@
+[tools]
+go = "1.27"
+"github:linebender/resvg" = "0.47.0"
+
+[tasks.install]
+description = "Download Go modules and pin tools"
+run = "go mod download"
+
+[tasks.build]
+description = "Build svgolf"
+run = "go build -o bin/svgolf ./cmd/svgolf"
+
+[tasks.test]
+description = "Unit tests (resvg on PATH via mise)"
+run = "go test ./..."
+
+[tasks.fuzz]
+description = "Exact-match fuzz vs resvg (long)"
+run = "go test -fuzz=FuzzRender -fuzztime=30s ./pkg/render"
+
+[tasks.ci]
+description = "CI checks"
+depends = ["test", "build"]

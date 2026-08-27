@@ -721,7 +721,7 @@ No shell. Fixed argv. `LookPath` uses `exec.LookPath("resvg")`. Supported test e
 
 Missing binary → error that names mise (`mise install`).
 
-Pin **resvg 0.47.0** via `cargo:resvg` (see mise.toml). 0.48.1 exists and still depends on tiny-skia 0.12.0; we stay on 0.47.0 so the CLI/usvg surface is the contract we port against. Bumping the pin is a contract PR.
+Pin **resvg 0.47.0** via `github:linebender/resvg` (see mise.toml). Release assets include `resvg-linux-x86_64.tar.gz` and macOS/Windows zips. 0.48.1 exists and still depends on tiny-skia 0.12.0; we stay on 0.47.0 so the CLI/usvg surface is the contract we port against. Bumping the pin is a contract PR.
 
 ### ColorMap and palette
 
@@ -1030,7 +1030,7 @@ On-disk artifacts:
 ```toml
 [tools]
 go = "1.27"
-"cargo:resvg" = "0.47.0"
+"github:linebender/resvg" = "0.47.0"
 
 [tasks.install]
 description = "Download Go modules and pin tools"
@@ -1053,9 +1053,9 @@ description = "CI checks"
 depends = ["test", "build"]
 ```
 
-`mise run test` / `mise run ci` is the only supported test entry. mise puts `cargo:resvg` 0.47.0 on PATH before the command.
+`mise run test` / `mise run ci` is the only supported test entry. mise puts `github:linebender/resvg` 0.47.0 on PATH before the command.
 
-Backend is **`cargo:resvg`**. resvg GitHub releases do not ship a portable Linux/macOS CLI binary (source archive + Windows thumbnailer). The cargo backend builds crate `resvg` 0.47.0. PR 1 fails unless `mise exec -- resvg --version` reports 0.47.0.
+Backend is **`github:linebender/resvg`**. PR 1 fails unless `mise exec -- resvg --version` reports 0.47.0.
 
 Rationale for 0.47.0 vs 0.48.1: 0.47.0 is the first resvg on tiny-skia 0.12 (the port target). 0.48.1 still depends on tiny-skia 0.12.0 but changes the CLI/usvg surface. Stay on 0.47.0 until a dedicated pin-bump PR.
 
@@ -1167,7 +1167,7 @@ Unlocked. Do not implement as if decided.
 8. Transform, if a mark needs it.
 9. 1-bit AA slop, only after documented fights.
 10. Named CSS colors in Parse.
-11. ~~mise backend if core `resvg` is missing~~ — locked: `cargo:resvg` 0.47.0.
+11. ~~mise backend if core `resvg` is missing~~ — locked: `github:linebender/resvg` 0.47.0.
 12. Element-level `opacity` (currently out).
 13. ~~Pretty-print vs compact Encode~~ — locked: hierarchical two-space indent; goldens are the decision.
 
@@ -1194,7 +1194,7 @@ Each PR is independently reviewable and mergeable. Later PRs depend on earlier o
 - **Title:** `chore: bootstrap github.com/lewtec/svgolf`
 - **Files:** `go.mod`, `go.sum`, `mise.toml`, `.gitignore`, `cmd/svgolf/main.go`, `cmd/svgolf/root.go`, `README.md`
 - **Depends on:** none
-- **Changes:** Module `github.com/lewtec/svgolf`, Go 1.27, Cobra root with help text listing `render`, `verify`, `vectorize` as reserved. Commands return “not implemented”. `mise.toml` pins `go = "1.27"` and `"cargo:resvg" = "0.47.0"`. PR fails unless `mise exec -- resvg --version` reports 0.47.0. README states v1 scope and `mise run test`.
+- **Changes:** Module `github.com/lewtec/svgolf`, Go 1.27, Cobra root with help text listing `render`, `verify`, `vectorize` as reserved. Commands return “not implemented”. `mise.toml` pins `go = "1.27"` and `"github:linebender/resvg" = "0.47.0"`. PR fails unless `mise exec -- resvg --version` reports 0.47.0. README states v1 scope and `mise run test`.
 
 ### PR 2 — `pkg/svg` types and `New*`
 
