@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"iter"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -19,9 +18,8 @@ const (
 	minIsland  = 8
 )
 
-// Stack covers a coarse residual region with a simple path, then tightens that same path.
-// A new path is accepted on island-local hue drop (global mean traps after a plate).
-// Tightening is accepted on global hue drop. Stop after stallLimit failed regions.
+// Stack covers a leftover region with a simple path, then tightens that same path.
+// Accept if Score drops; on a tie, fewer path commands. Stop after stallLimit failed regions.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -63,7 +61,6 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				break
 			}
 			placed := false
-			local := hueOn(got, target, island)
 			for _, cand := range formPaths(island, col) {
 				var next svg.Document
 				if !placed {
@@ -76,11 +73,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					yield(svg.Document{}, err)
 					return
 				}
-				if !placed {
-					if !(hueOn(ngot, target, island) < local) {
-						continue
-					}
-				} else if !betterOrSimpler(got, ngot, target, island, doc, cand.Node()) {
+				if !accept(got, ngot, target, doc, cand.Node(), placed) {
 					continue
 				}
 				doc, got = next, ngot
@@ -104,24 +97,17 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 	}
 }
 
-func betterForm(got, ngot, want *image.NRGBA, island []pix) bool {
-	if hueOn(ngot, want, island) > hueOn(got, want, island) {
-		return false
+func accept(got, ngot, want *image.NRGBA, cur svg.Document, cand svg.Node, placed bool) bool {
+	n := len(cur.Children())
+	nn := n
+	if !placed {
+		nn++
 	}
-	if loss.Hue(ngot, want) < loss.Hue(got, want) {
+	a, b := Score(got, want, n), Score(ngot, want, nn)
+	if b < a {
 		return true
 	}
-	return overpaint(ngot, want) < overpaint(got, want)
-}
-
-func betterOrSimpler(got, ngot, want *image.NRGBA, island []pix, cur svg.Document, cand svg.Node) bool {
-	if betterForm(got, ngot, want, island) {
-		return true
-	}
-	if hueOn(ngot, want, island) > hueOn(got, want, island) {
-		return false
-	}
-	if overpaint(ngot, want) > overpaint(got, want) {
+	if b > a || !placed {
 		return false
 	}
 	kids := cur.Children()

@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/svgolf/internal/search/stack"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/spf13/cobra"
@@ -101,7 +101,7 @@ func writeEpoch(cmd *cobra.Command, dir string, i int, doc svg.Document, want *i
 		return err
 	}
 	pf.Close()
-	fmt.Fprintf(cmd.OutOrStdout(), "epoch %d paths=%d hue=%.3f rmse=%.4f pixels=%.0f -> %s\n",
-		i, len(doc.Children()), loss.Hue(got, want), loss.RMSE(got, want), loss.Pixels(got, want), svgPath)
+	fmt.Fprintf(cmd.OutOrStdout(), "epoch %d paths=%d score=%.3f -> %s\n",
+		i, len(doc.Children()), stack.Score(got, want, len(doc.Children())), svgPath)
 	return nil
 }

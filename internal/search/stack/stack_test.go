@@ -5,7 +5,6 @@ import (
 	"image/color"
 	"testing"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -75,8 +74,8 @@ func TestStackMarkAfterPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loss.Hue(got, img) >= loss.Hue(empty, img) {
-		t.Fatalf("final hue not better than empty")
+	if Score(got, img, len(doc.Children())) >= Score(empty, img, 0) {
+		t.Fatalf("final score not better than empty")
 	}
 }
 
