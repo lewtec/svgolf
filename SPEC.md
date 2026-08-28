@@ -853,7 +853,13 @@ func Of(doc svg.Document, want *image.NRGBA) (float64, error)
 
 `Pixels`: count of pixels where `want.A != 0` and `got != want`. Nil or size mismatch → `+Inf`.
 
-`PerCost`: `deviate / complexity`. First ranking metric. Extra primitives shrink the number (known). Cost 0 → `0` if deviate is 0, else `+Inf`.
+`RMSE`: √(ΣΔRGB² / 3N) on scored pixels. Range 0..255.
+
+`Fit`: `RMSE/255 + 0.01·Parts`. One extra part must cut RMSE by ~2.5. Prefer this as a Search accept rule.
+
+`EpsFit`: if RMSE > 8, score `1+RMSE/255`; else score `Parts`. Simplest that fits.
+
+`PerCost`: `deviate / complexity`. Extra primitives shrink the number (known cheat). Cost 0 → `0` if deviate is 0, else `+Inf`.
 
 `Of`: `Render(doc)` then `PerCost(Pixels.Loss(got, want), CostDocument(doc))`.
 
