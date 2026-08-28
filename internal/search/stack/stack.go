@@ -64,15 +64,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			}
 			placed := false
 			local := hueOn(got, target, island)
-			for _, ring := range forms(island) {
-				if len(ring) < 3 {
-					continue
-				}
+			for _, cand := range formPaths(island, col) {
 				var next svg.Document
 				if !placed {
-					next = doc.Append(filledPath(ring, col).Node())
+					next = doc.Append(cand.Node())
 				} else {
-					next = replaceLast(doc, filledPath(ring, col).Node())
+					next = replaceLast(doc, cand.Node())
 				}
 				ngot, err := render.Render(next)
 				if err != nil {
@@ -83,7 +80,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					if !(hueOn(ngot, target, island) < local) {
 						continue
 					}
-				} else if !betterForm(got, ngot, target, island) {
+				} else if !betterOrSimpler(got, ngot, target, island, doc, cand.Node()) {
 					continue
 				}
 				doc, got = next, ngot
@@ -117,19 +114,43 @@ func betterForm(got, ngot, want *image.NRGBA, island []pix) bool {
 	return overpaint(ngot, want) < overpaint(got, want)
 }
 
-func forms(island []pix) [][][2]float64 {
+func betterOrSimpler(got, ngot, want *image.NRGBA, island []pix, cur svg.Document, cand svg.Node) bool {
+	if betterForm(got, ngot, want, island) {
+		return true
+	}
+	if hueOn(ngot, want, island) > hueOn(got, want, island) {
+		return false
+	}
+	if overpaint(ngot, want) > overpaint(got, want) {
+		return false
+	}
+	kids := cur.Children()
+	if len(kids) == 0 {
+		return false
+	}
+	return pathLen(cand) < pathLen(kids[len(kids)-1])
+}
+
+func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	bb := bbox(island)
 	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	c := contour(island)
 	if boxA > 2*float64(len(island)) {
-		return [][][2]float64{rdp(c, 4), rdp(c, 1)}
+		return []svg.Path{filledPath(rdp(c, 4), col), filledPath(rdp(c, 1), col)}
 	}
-	return [][][2]float64{
-		bb,
-		convexHull(corners(island)),
-		rdp(c, 8),
-		rdp(c, 2),
+	out := []svg.Path{filledPath(bb, col)}
+	if cx, cy, rx, ry, ok := fitEllipse(island); ok {
+		out = append(out, filledEllipse(cx, cy, rx, ry, col))
+		if r := (rx + ry) / 2; r >= 1 {
+			out = append(out, filledEllipse(cx, cy, r, r, col))
+		}
 	}
+	out = append(out,
+		filledPath(convexHull(corners(island)), col),
+		filledPath(rdp(c, 8), col),
+		filledPath(rdp(c, 2), col),
+	)
+	return out
 }
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {

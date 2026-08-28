@@ -194,6 +194,19 @@ func TestRDPCollinear(t *testing.T) {
 	}
 }
 
+func TestFilledEllipseUsesCubics(t *testing.T) {
+	p := filledEllipse(10, 10, 8, 8, color.NRGBA{R: 255, A: 255})
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			n++
+		}
+	}
+	if n != 4 {
+		t.Fatalf("cubics=%d want 4", n)
+	}
+}
+
 func TestHullSquare(t *testing.T) {
 	h := convexHull([][2]float64{{0, 0}, {1, 0}, {1, 1}, {0, 1}, {0.5, 0.5}})
 	if len(h) != 4 {
