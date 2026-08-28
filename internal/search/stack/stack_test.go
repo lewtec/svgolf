@@ -102,6 +102,55 @@ func TestStackKeepsGoingAfterReject(t *testing.T) {
 	}
 }
 
+func TestStackDoesNotKeepFilledHoles(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 4; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 12; y < 20; y++ {
+		for x := 12; x < 20; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{})
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := got.NRGBAAt(16, 16)
+	if c.A != 0 && c.B > 40 {
+		t.Fatalf("hole still navy %+v paths=%d", c, len(doc.Children()))
+	}
+}
+
+func TestStackTinyMark(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 40))
+	for y := 0; y < 40; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 18; y < 22; y++ {
+		for x := 18; x < 22; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{A: 255})
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n < 2 {
+		t.Fatalf("paths=%d want plate + 16px mark", n)
+	}
+}
+
 func TestStackNilPixmap(t *testing.T) {
 	_, err := search.Last((Stack{}).Search(t.Context(), nil))
 	if err == nil {

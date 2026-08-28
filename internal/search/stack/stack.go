@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	maxPaths   = 256
-	stallLimit = 8
+	maxPaths   = 512
+	stallLimit = 24
 	minIsland  = 8
 )
 
@@ -48,7 +48,6 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			yield(svg.Document{}, err)
 			return
 		}
-		best := loss.Hue(got, target)
 		skip := make([]byte, w*h)
 		stall := 0
 		yielded := false
@@ -60,11 +59,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				return
 			}
 			col, island := largestIsland(got, target, skip)
-			need := minIsland
-			if n := w * h / 20000; n > need {
-				need = n
-			}
-			if len(island) < need {
+			if len(island) < minIsland {
 				break
 			}
 			placed := false
@@ -88,10 +83,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					if !(hueOn(ngot, target, island) < local) {
 						continue
 					}
-				} else if !(loss.Hue(ngot, target) < best) {
+				} else if !betterForm(got, ngot, target, island) {
 					continue
 				}
-				doc, got, best = next, ngot, loss.Hue(ngot, target)
+				doc, got = next, ngot
 				placed = true
 				stall = 0
 				yielded = true
@@ -112,10 +107,25 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 	}
 }
 
+func betterForm(got, ngot, want *image.NRGBA, island []pix) bool {
+	if hueOn(ngot, want, island) > hueOn(got, want, island) {
+		return false
+	}
+	if loss.Hue(ngot, want) < loss.Hue(got, want) {
+		return true
+	}
+	return overpaint(ngot, want) < overpaint(got, want)
+}
+
 func forms(island []pix) [][][2]float64 {
+	bb := bbox(island)
+	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	c := contour(island)
+	if boxA > 2*float64(len(island)) {
+		return [][][2]float64{rdp(c, 4), rdp(c, 1)}
+	}
 	return [][][2]float64{
-		bbox(island),
+		bb,
 		convexHull(corners(island)),
 		rdp(c, 8),
 		rdp(c, 2),

@@ -10,6 +10,9 @@ import (
 type pix struct{ x, y int }
 
 func coarse(c color.NRGBA) int {
+	if c.A == 0 {
+		return -1
+	}
 	h, s, v := loss.HSV(c)
 	if s < 0.08 {
 		if v < 0.5 {
@@ -25,10 +28,10 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 		return false
 	}
 	q := want.NRGBAAt(want.Rect.Min.X+x, want.Rect.Min.Y+y)
-	if q.A == 0 {
-		return false
-	}
 	g := got.NRGBAAt(got.Rect.Min.X+x, got.Rect.Min.Y+y)
+	if q.A == 0 {
+		return g.A != 0
+	}
 	return loss.HueAt(g, q) > 1
 }
 
@@ -128,7 +131,25 @@ func meanFill(want *image.NRGBA, island []pix) color.NRGBA {
 		sa += int(c.A)
 	}
 	n := len(island)
+	if sa/n < 128 {
+		return color.NRGBA{A: 255}
+	}
 	return color.NRGBA{R: uint8(sr / n), G: uint8(sg / n), B: uint8(sb / n), A: uint8(sa / n)}
+}
+
+func overpaint(got, want *image.NRGBA) int {
+	n := 0
+	for y := want.Rect.Min.Y; y < want.Rect.Max.Y; y++ {
+		for x := want.Rect.Min.X; x < want.Rect.Max.X; x++ {
+			if want.NRGBAAt(x, y).A != 0 {
+				continue
+			}
+			if got.NRGBAAt(x, y).A != 0 {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func bbox(island []pix) [][2]float64 {
