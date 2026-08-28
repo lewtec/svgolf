@@ -120,7 +120,7 @@ func TestEncodeRejects(t *testing.T) {
 	}{
 		{name: "zero size", doc: NewDocument(0, 256)},
 		{name: "non-integer", doc: NewDocument(256.5, 256)},
-		{name: "too big", doc: NewDocument(4097, 256)},
+		{name: "too big", doc: NewDocument(8192, 256)},
 		{name: "negative r", doc: NewDocument(256, 256).Append(NewCircle().WithR(-1).Node())},
 		{name: "empty polygon", doc: NewDocument(256, 256).Append(NewPolygon().Node())},
 		{name: "invalid node", doc: NewDocument(256, 256).Append(Node{})},

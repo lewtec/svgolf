@@ -14,7 +14,7 @@ type Loss interface {
 	Loss(got, want *image.NRGBA) float64
 }
 
-// PerCost is the v1 ranking metric: deviate / Cost(doc).
+// PerCost is deviate / complexity. Search chooses complexity.
 // Extra primitives shrink the number — known; replace later if it inflates trees.
 // Cost 0: 0 if deviate == 0, otherwise +Inf.
 func PerCost(deviate float64, complexity int) float64 {
@@ -30,11 +30,12 @@ func PerCost(deviate float64, complexity int) float64 {
 	return deviate / float64(complexity)
 }
 
-// Of renders doc and returns PerCost(Pixels.Loss(got, want), Cost(doc)).
-func Of(doc svg.Document, want *image.NRGBA) (float64, error) {
+// Of renders doc and returns PerCost(Pixels.Loss(got, want), complexity).
+// complexity is Search-owned. Pass 0 for an empty tree.
+func Of(doc svg.Document, want *image.NRGBA, complexity int) (float64, error) {
 	got, err := render.Render(doc)
 	if err != nil {
 		return math.Inf(1), err
 	}
-	return PerCost((Pixels{}).Loss(got, want), svg.CostDocument(doc)), nil
+	return PerCost((Pixels{}).Loss(got, want), complexity), nil
 }

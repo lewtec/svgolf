@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"iter"
 
 	"github.com/lewtec/svgolf/internal/palette"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -21,7 +22,13 @@ func init() {
 	Register("dumb", func() Search { return Dumb{} })
 }
 
-func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error) {
+func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error] {
+	return func(yield func(svg.Document, error) bool) {
+		yield(d.epoch(ctx, target))
+	}
+}
+
+func (d Dumb) epoch(ctx context.Context, target *image.NRGBA) (svg.Document, error) {
 	if err := ctx.Err(); err != nil {
 		return svg.Document{}, err
 	}

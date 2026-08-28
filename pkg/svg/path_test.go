@@ -68,22 +68,3 @@ func TestParseRejectsQuadraticAndArc(t *testing.T) {
 		}
 	}
 }
-
-func TestPathCost(t *testing.T) {
-	empty := NewPath()
-	if PathCost(empty.Commands()) != 0 {
-		t.Fatal(PathCost(empty.Commands()))
-	}
-	box := NewPath().MoveTo(0, 0).LineTo(1, 0).LineTo(1, 1).LineTo(0, 1).Close()
-	if c := Cost(box.Node()); c != 1 {
-		t.Fatalf("box Cost=%d", c)
-	}
-	curvy := NewPath().MoveTo(0, 0).CubicTo(1, 0, 1, 1, 0, 1).Close()
-	if c := Cost(curvy.Node()); c != 1 {
-		t.Fatalf("cubic Cost=%d want 1 (4 points)", c)
-	}
-	long := NewPath().MoveTo(0, 0).CubicTo(1, 0, 1, 1, 0, 1).CubicTo(-1, 1, -1, 0, 0, 0).Close()
-	if c := Cost(long.Node()); c != 1+(7-4) {
-		t.Fatalf("long Cost=%d", c)
-	}
-}

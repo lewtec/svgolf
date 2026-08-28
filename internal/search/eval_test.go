@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/lewtec/svgolf/internal/loss"
 )
 
 func TestEvalScenes(t *testing.T) {
@@ -35,19 +33,11 @@ func TestEvalScenes(t *testing.T) {
 			}
 			want := FromImage(img)
 			w, h := want.Rect.Dx(), want.Rect.Dy()
-			doc, err := (Dumb{}).Search(t.Context(), want)
+			doc, err := Last((Dumb{}).Search(t.Context(), want))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if w > MaxCanvas || h > MaxCanvas {
-				t.Logf("canvas %d×%d over cap; kids=%d", w, h, len(doc.Children()))
-				return
-			}
-			s, err := loss.Of(doc, want)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Logf("Dumb Of=%g kids=%d canvas=%d×%d", s, len(doc.Children()), w, h)
+			t.Logf("kids=%d canvas=%d×%d", len(doc.Children()), w, h)
 		})
 	}
 	if n == 0 {

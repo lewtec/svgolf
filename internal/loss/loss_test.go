@@ -52,7 +52,7 @@ func TestPerCost(t *testing.T) {
 func TestOfEmptyMatch(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 4, 4))
 	doc := svg.NewDocument(4, 4)
-	s, err := Of(doc, want)
+	s, err := Of(doc, want, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestOfSolidPlate(t *testing.T) {
 	doc := svg.NewDocument(4, 4).Append(
 		svg.NewRect().WithWidth(4).WithHeight(4).WithFill(color.NRGBA{R: 255, A: 255}).Node(),
 	)
-	s, err := Of(doc, want)
+	s, err := Of(doc, want, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	regMu     sync.Mutex
-	adapters  = map[string]func() Search{}
+	regMu    sync.Mutex
+	adapters = map[string]func() Search{}
 )
 
 // Register adds a Search constructor. Call from init in the adapter file.
@@ -24,7 +24,7 @@ func Register(name string, make func() Search) {
 	adapters[name] = make
 }
 
-// New builds a registered adapter. Palette and knobs stay inside the adapter.
+// New builds a registered adapter. Palette, Cost, and knobs stay inside the adapter.
 func New(name string) (Search, error) {
 	regMu.Lock()
 	fn, ok := adapters[name]

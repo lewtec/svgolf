@@ -10,7 +10,7 @@ import (
 
 const (
 	svgNS       = "http://www.w3.org/2000/svg"
-	maxCanvas   = 4096
+	MaxCanvas   = 8191 // tiny-skia pixmap edge; Encode/Render/Parse
 	maxChildren = 4096
 	xmlDecl     = `<?xml version="1.0" encoding="UTF-8"?>`
 )
@@ -299,8 +299,8 @@ func checkDocSize(w, h float64) error {
 }
 
 func checkWholeCanvas(name string, v float64) error {
-	if !isFinite(v) || v <= 0 || v > maxCanvas || v != math.Trunc(v) {
-		return fmt.Errorf("document %s %v: must be a whole number in (0, %d]", name, v, maxCanvas)
+	if !isFinite(v) || v <= 0 || v > MaxCanvas || v != math.Trunc(v) {
+		return fmt.Errorf("document %s %v: must be a whole number in (0, %d]", name, v, MaxCanvas)
 	}
 	return nil
 }

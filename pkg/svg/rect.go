@@ -37,7 +37,8 @@ func (r Rect) RY() float64     { return r.ry }
 
 func (r Rect) radiiSet() (rxSet, rySet bool) { return r.rxSet, r.rySet }
 
-func (r Rect) clampedRadii() (rx, ry float64) {
+// ClampedRadii is paint-time rx/ry, each capped at half the stored width/height.
+func (r Rect) ClampedRadii() (rx, ry float64) {
 	rx, ry = r.rx, r.ry
 	hw := r.width / 2
 	hh := r.height / 2

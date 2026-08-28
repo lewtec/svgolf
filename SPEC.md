@@ -17,7 +17,7 @@ This document is the implementation contract. It does not reopen locked product 
 
 svgolf turns a PNG — especially a model-generated logo — into the simplest hand-editable SVG. Current tracers emit noisy paths. v1 ships a trusted render pipeline, an SVG-like tree, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz against **resvg**.
 
-v1 Search is Dumb: one shot, no Loss loop. Loss formula, ColorMap variants, primitive weight iteration, gradients, and union/boolean remain later adapter seams.
+v1 Search is Dumb: one epoch, then the iterator stops. Loss formula, ColorMap variants, primitive weight iteration, gradients, and union/boolean remain later adapter seams.
 
 ---
 
@@ -72,13 +72,14 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Match | Every RGBA byte equal | close enough, SSIM, ΔE |
 | ColorMap | Color rewrite adapter | “the quantizer” (as the seam name) |
 | Palette | First ColorMap adapter | theme, swatch |
-| Search | want Scene → Document | solver, golf loop, generator |
-| Dumb | first Search adapter (one shot) | heuristic engine, stub generator |
+| Search | want Scene → epochs of Document | solver, golf loop, generator |
+| Epoch | one yield from Search | generation, step, iteration |
+| Dumb | first Search adapter (one epoch) | heuristic engine, stub generator |
 | Scene / want | decoded PNG (`*image.NRGBA`) | target, ground truth |
 | got | `Render(doc)` pixmap | candidate image |
 | Loss | `Loss(got, want) float64` | score, fitness, energy |
 | Pixels | first Loss adapter (don't-care deviate count) | Hamming, mismatch count |
-| PerCost | v1 rank: `Loss / CostDocument` | efficiency, fitness |
+| PerCost | rank helper: `Loss / complexity` | efficiency, fitness |
 | Verify | Exact ours vs resvg | compare command, diff command |
 | Encode | Tree → SVG XML | serialize, stringify |
 | Parse | XML → tree via `New*` | decode, ingest |
@@ -86,7 +87,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Stroke | Outline paint struct | border, outline |
 | Group | Non-isolating `<g>` | layer, isolated group |
 | Seam | Later adapter interface | plugin, hook |
-| Cost | Primitive rank integer | weight |
+| Cost | Search-owned primitive rank | weight |
 | Fuzz | `go test -fuzz=FuzzRender` | `svgolf fuzz` |
 | Don't-care | Transparent PNG pixels, not scored | mask, ignore-region |
 | Plate | Full-bleed background rect | “background shape” |
@@ -99,7 +100,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Decision | Rationale |
 | --- | --- |
 | Production editable SVG, not a research demo | Success is Figma/Inkscape edit, not visual resemblance. |
-| Native primitives with Cost ranks | Search later needs cheap circles/rects; Path is M/L/C/Z when an island is a curve. |
+| Native primitives; Search owns Cost | Cheap circles/rects matter to Search. The tree does not lock ranks. |
 | Tree of structs; sealed `Node`; no interface zoo | Matches SVG document order. Avoids Drawable/Shape hierarchies. |
 | Opaque fields; `New*` returns Go zero; zero **is** the SVG default | Callers cannot write literals. Defaults cannot drift. |
 | No `*Paint` for unset | Presence is a flag or a dedicated none-state, not a nil pointer. |
@@ -220,12 +221,11 @@ github.com/lewtec/svgolf
     ellipse.go
     rect.go
     polygon.go
-    path.go          # Path, PathCmd, PathCost
+    path.go          # Path, PathCmd
     pathd.go         # d encode/parse
     paint.go         # fill, stroke, FillRule, LineCap, LineJoin
     encode.go
     parse.go
-    cost.go          # Cost ranks; unused by search in v1
   pkg/render/
     render.go        # Render(Document) (*image.NRGBA, error)
     viewport.go      # width/height/viewBox → pixel mapping
@@ -510,10 +510,8 @@ A path stores only absolute `M` / `L` / `C` / `Z`. Relative `m/l/c/z` and `H/V/S
 
 - `Q`, `T`, `A` (and relatives) → Parse error.
 - More than **4096** commands → error (`WithCommands`, Parse).
-- `NewPath()` is empty (`d=""`). Cost 0. Encode emits `<path d=""/>`. Render no-ops.
+- `NewPath()` is empty (`d=""`). Encode emits `<path d=""/>`. Render no-ops.
 - Encode writes absolute `M`/`L`/`C`/`Z` with `fmtNum` and spaces (`M40 40 L120 40 Z`).
-
-`PathCost`: count stored points (`M`/`L` = 1, `C` = 3, `Z` = 0). Empty → 0. Else `1 + max(0, n-4)` so a 4-point box costs 1.
 
 #### Document size and degenerate geometry
 
@@ -521,7 +519,7 @@ A path stores only absolute `M` / `L` / `C` / `Z`. Relative `m/l/c/z` and `H/V/S
 
 | Input | Parse | Encode / Render |
 | --- | --- | --- |
-| Document `width`/`height` non-finite, `≤ 0`, `> 4096`, or not a whole number | error | error |
+| Document `width`/`height` non-finite, `≤ 0`, `> 8191`, or not a whole number | error | error |
 | Shape `width`/`height`/`r`/`rx`/`ry` non-finite or `< 0` | error | error |
 | Shape `r==0` or `width==0` or `height==0` | valid | no-op paint (match resvg) |
 | Unknown enum (`fill-rule="winding"`, `stroke-linecap="foo"`) | error | n/a |
@@ -532,33 +530,7 @@ Fuzz uses 256×256.
 
 `WithRX` / `WithRY` are independent. There is no implicit copy on the builder. SVG “if one radius is omitted, copy the other” is **Parse only**.
 
-Clamp `rx` to `width/2` and `ry` to `height/2` at **paint time** and when computing `Cost`. Stored values stay unclamped. Parse stores the written numbers (after the copy-when-omitted rule).
-
-### Cost
-
-Search is later. Ranks exist in the model.
-
-| Cost | Primitive |
-| --- | --- |
-| 1 | circle, axis-aligned rect (`rx==0` and `ry==0`) |
-| 2 | ellipse, rounded rect |
-| 3 | triangle / regular polygon (later detector) |
-| 4 | free polygon (vertex tax later) |
-| 1 + max(0, n−4) | Path; n is stored points (`M`/`L`=1, `C`=3) |
-
-```go
-func Cost(n Node) int
-```
-
-- `KindInvalid`: 0. A zero `Node` is not constructible via public API (`New*` / `Node()` always set a real kind).
-- `KindGroup`: sum of `Cost` over `Children()`. Empty group is 0.
-- Circle: 1.
-- Rect: 1 if clamped `rx==0` and clamped `ry==0`; else 2.
-- Ellipse: 2.
-- Polygon: 4 in v1. Regularity and vertex tax stay later. Do not invent the tax formula.
-- Path: `PathCost` (above). Empty path is 0.
-
-Search that sums `Cost` over `Children()` must not also add `Cost(group)` (that would double-count). Prefer `Cost` on the group, which already sums.
+Clamp `rx` to `width/2` and `ry` to `height/2` at **paint time** (`Rect.ClampedRadii`). Stored values stay unclamped. Parse stores the written numbers (after the copy-when-omitted rule).
 
 ### SVG default table
 
@@ -705,7 +677,7 @@ Contract:
 
 Identity viewport until PR 12. If `ViewBox().Set()` is true before that PR, `Render` returns an error (`viewBox not implemented`). Do not silently ignore it.
 
-tiny-skia pixmap width is capped at 8191. v1 max is 4096, so no tiled draw.
+tiny-skia pixmap width is capped at 8191. v1 max is 8191 (`svg.MaxCanvas`). No tiled draw. Host does not downscale a larger PNG.
 
 #### Rasterizer port
 
@@ -822,31 +794,33 @@ Same Go type, different origin: `want` is the scene (decoded PNG). `got` is `Ren
 PNG ──Decode──► want *image.NRGBA
                     │
                     ▼
-              Search(ctx, want) ──► doc svg.Document ──Encode──► XML
+              Search(ctx, want) ──► epoch Documents ── Last ──► Encode──► XML
                     │
-                    └── (inside Search)
+                    └── (inside Search, per epoch)
                           got = Render(doc)
-                          n   = Loss(got, want)          // Pixels
-                          s   = PerCost(n, CostDocument(doc))
+                          n   = Loss(got, want)
+                          k   = adapter complexity
+                          s   = adapter rank (e.g. PerCost(n, k))
 ```
 
 | Fn | Takes | Gives |
 | --- | --- | --- |
-| `Search` | `ctx`, `want *image.NRGBA` | `svg.Document` |
+| `Search` | `ctx`, `want *image.NRGBA` | `iter.Seq2[svg.Document, error]` |
+| `Last` | that sequence | last successful `svg.Document` |
 | `Render` | `svg.Document` | `got *image.NRGBA` |
 | `Loss` | `got`, `want *image.NRGBA` | `float64` (lower better) |
-| `Cost` / `CostDocument` | `Node` / `Document` | `int` |
 | `Encode` | `svg.Document` | XML |
 | `ColorMap.Map` | `color.NRGBA` | `color.NRGBA` (inside Search) |
 
 Invariants:
 
-- `want` size is the canvas. Search emits a Document with that `Dx()×Dy()`.
+- `want` is the original pixmap (`FromImage` only). Host does not scale. Only a Search adapter may scale, as its own algorithm.
+- `want` size is the canvas. A yielded Document uses that `Dx()×Dy()`. Internal scale stays inside the adapter.
 - `got` and `want` must share bounds or Loss is `+Inf`.
 - `want.A==0` is don't-care. Loss does not score those pixels.
 - Color is not a gene. Search may build a ColorMap from `want`.
 - Oracle/resvg is not in this circuit.
-- Search does not take XML, `image.Image`, or a Loss object. It may call Loss inside.
+- Search does not take XML, `image.Image`, a Loss object, or a Cost. It may call Loss and its own Cost inside.
 
 ### Search (`internal/search`)
 
@@ -854,34 +828,38 @@ Invariants:
 package search
 
 type Search interface {
-    Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
+    Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error]
 }
 
 func Register(name string, make func() Search)
 func New(name string) (Search, error)
 func Names() []string
+func Last(seq iter.Seq2[svg.Document, error]) (svg.Document, error)
 func FromImage(img image.Image) *image.NRGBA
-func FitCanvas(src *image.NRGBA, max int) *image.NRGBA // max≤0 → MaxCanvas (4096)
 
 type Dumb struct {
     Colors int // 0 = auto, cap 8
 }
 
-func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
+func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error]
 ```
 
 A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`.
+Search is the whole problem: `want` pixmap in, one `Document` per epoch. Host does not scale. Only a Search adapter may scale, as its own algorithm. A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject a ColorMap, a color count, a Loss, or a Cost. `--search` selects the registry name. Default `dumb`. `vectorize` and `preview` Encode `Last` (the last successful epoch). Zero epochs or a yielded error fail.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME
 svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview]
 ```
 
-`preview` walks eval PNGs, `FitCanvas` to 4096, writes `want-<scene>.png` (480), `<scene>.svg`, and `<scene>.png` via `resvg --width 480`. That is the PR-body render path.
+`preview` walks eval PNGs at native size, writes `want-<scene>.png`, `<scene>.svg`, and `<scene>.png` via `resvg` (intrinsic size). Host does not scale. Only a Search adapter may scale, as its own algorithm.
 
 `mise run preview -- --search NAME`
+
+### Cost (Search-owned)
+
+The tree has no rank. There is no shared Cost table. Each adapter owns complexity if it ranks candidates.
 
 ### Loss (`internal/loss`)
 
@@ -896,26 +874,26 @@ type Pixels struct{} // first adapter
 
 func (Pixels) Loss(got, want *image.NRGBA) float64
 func PerCost(deviate float64, complexity int) float64
-func Of(doc svg.Document, want *image.NRGBA) (float64, error)
+func Of(doc svg.Document, want *image.NRGBA, complexity int) (float64, error)
 ```
 
 `Pixels`: count of pixels where `want.A != 0` and `got != want`. Nil or size mismatch → `+Inf`.
 
 `RMSE`: √(ΣΔRGB² / 3N) on scored pixels. Range 0..255.
 
-`Fit`: `RMSE/255 + 0.01·Parts`. One extra part must cut RMSE by ~2.5. Prefer this as a Search accept rule.
+`Fit`: `RMSE/255 + 0.01·k`. One extra part must cut RMSE by ~2.5. Prefer this as a Search accept rule. `k` is Search-owned.
 
-`EpsFit`: if RMSE > 8, score `1+RMSE/255`; else score `Parts`. Simplest that fits.
+`EpsFit`: if RMSE > 8, score `1+RMSE/255`; else score `k`. Simplest that fits.
 
-`PerCost`: `deviate / complexity`. Extra primitives shrink the number (known cheat). Cost 0 → `0` if deviate is 0, else `+Inf`.
+`PerCost`: `deviate / complexity`. Extra primitives shrink the number (known cheat). Complexity 0 → `0` if deviate is 0, else `+Inf`.
 
-`Of`: `Render(doc)` then `PerCost(Pixels.Loss(got, want), CostDocument(doc))`.
+`Of`: `Render(doc)` then `PerCost(Pixels.Loss(got, want), complexity)`. Search passes complexity.
 
 Dumb does not call Loss. A looping Search does.
 
 ### Dumb (first Search adapter)
 
-One shot. No render loop.
+One epoch. No render loop. The iterator yields once and stops.
 
 Behavior:
 
@@ -988,8 +966,8 @@ svgolf preview --search NAME
 | --- | --- | --- |
 | `render` | Parse → Render → `png.Encode` | 1 on error |
 | `verify` | `verify.File` (oracle = original bytes); write diff PNG on pixel mismatch of equal size | 0 iff ours matches resvg(original) and Encode does not drift; 1 otherwise |
-| `vectorize` | `png.Decode` → `FitCanvas` → `search.New` → Encode | 1 on error |
-| `preview` | eval PNGs → Search → `testdata/preview` (want PNG, SVG, resvg 480) | 1 on error |
+| `vectorize` | `png.Decode` → `FromImage` → `search.New` → `Last` → Encode | 1 on error |
+| `preview` | eval PNGs → Search → `Last` → `testdata/preview` (want PNG, SVG, resvg intrinsic) | 1 on error |
 
 Flags:
 
@@ -1058,8 +1036,8 @@ sequenceDiagram
   loop each color
     Search->>SVG: NewRect + WithFill + Append
   end
-  Search-->>CLI: Document
-  CLI->>SVG: Encode
+  Search-->>CLI: one epoch Document
+  CLI->>SVG: Encode Last
   CLI-->>User: out.svg
 ```
 
@@ -1141,7 +1119,7 @@ Greenfield. No prior public API.
 
 Library surface intended for reuse:
 
-- `pkg/svg`: Document, Node, New*, Encode, Parse, Cost
+- `pkg/svg`: Document, Node, New*, Encode, Parse
 - `pkg/render`: Render
 
 CLI and oracle stay internal. Downstream tools import `pkg/svg` and `pkg/render` only.
@@ -1237,7 +1215,7 @@ Do not install resvg globally. Linters later.
 | --- | --- | --- |
 | XXE / external entity in Parse | Low | `encoding/xml` does not resolve external entities by default. Do not enable them. |
 | Oracle argv injection | Medium | Fixed argv. No shell. User SVG is stdin bytes, not interpolated. |
-| Huge canvas / many nodes | Medium | Max 4096×4096. Parse and Encode reject more than 4096 children per parent. |
+| Huge canvas / many nodes | Medium | Max 8191×8191 (tiny-skia). Parse and Encode reject more than 4096 children per parent. |
 | Polygon vertex bomb | Medium | Cap vertices at 1024 in Parse and `WithPoints`. |
 | Path traversal on `-o` | Low | Write the path the user passed. This is a local CLI. |
 | Temp file leaks from resvg | Low | Prefer stdin/stdout (`- -c`). No temp SVG. |

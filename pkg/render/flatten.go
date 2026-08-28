@@ -137,14 +137,7 @@ func flattenRect(r svg.Rect) (path, bool) {
 	if w <= 0 || h <= 0 {
 		return path{}, false
 	}
-	rx, ry := r.RX(), r.RY()
-	hw, hh := r.Width()/2, r.Height()/2
-	if hw >= 0 && rx > hw {
-		rx = hw
-	}
-	if hh >= 0 && ry > hh {
-		ry = hh
-	}
+	rx, ry := r.ClampedRadii()
 	x, y := float32(r.X()), float32(r.Y())
 	if rx == 0 && ry == 0 {
 		var p path

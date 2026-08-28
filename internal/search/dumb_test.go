@@ -13,7 +13,7 @@ func TestDumbSolid(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
-	doc, err := (Dumb{}).Search(t.Context(), img)
+	doc, err := Last((Dumb{}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestDumbTwoColorConcentric(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	doc, err := (Dumb{Colors: 2}).Search(t.Context(), img)
+	doc, err := Last((Dumb{Colors: 2}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestDumbAlphaBBox(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 10))
 	img.SetNRGBA(2, 3, color.NRGBA{R: 1, A: 200})
 	img.SetNRGBA(4, 6, color.NRGBA{R: 1, A: 200})
-	doc, err := (Dumb{Colors: 1}).Search(t.Context(), img)
+	doc, err := Last((Dumb{Colors: 1}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +67,23 @@ func TestDumbAlphaBBox(t *testing.T) {
 }
 
 func TestDumbNilPixmap(t *testing.T) {
-	_, err := (Dumb{}).Search(t.Context(), nil)
+	_, err := Last((Dumb{}).Search(t.Context(), nil))
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDumbOneEpoch(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	img.SetNRGBA(0, 0, color.NRGBA{A: 255})
+	n := 0
+	for _, err := range (Dumb{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	if n != 1 {
+		t.Fatalf("epochs=%d want 1", n)
 	}
 }

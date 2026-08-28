@@ -26,7 +26,7 @@ func Render(d svg.Document) (*image.NRGBA, error) {
 }
 
 func checkCanvas(w, h float64) error {
-	if !finite(w) || !finite(h) || w <= 0 || h <= 0 || w > 4096 || h > 4096 || w != math.Trunc(w) || h != math.Trunc(h) {
+	if !finite(w) || !finite(h) || w <= 0 || h <= 0 || w > svg.MaxCanvas || h > svg.MaxCanvas || w != math.Trunc(w) || h != math.Trunc(h) {
 		return fmt.Errorf("render: canvas %v×%v", w, h)
 	}
 	return nil

@@ -1,9 +1,6 @@
 package search
 
-import (
-	"image"
-	"testing"
-)
+import "testing"
 
 func TestNewDumb(t *testing.T) {
 	s, err := New("dumb")
@@ -30,13 +27,5 @@ func TestNamesHasDumb(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Names=%v", Names())
-	}
-}
-
-func TestFitCanvasCaps(t *testing.T) {
-	src := image.NewNRGBA(image.Rect(0, 0, 5000, 4000))
-	got := FitCanvas(src, 4096)
-	if got.Rect.Dx() != 4096 || got.Rect.Dy() != 3276 {
-		t.Fatalf("got %dx%d", got.Rect.Dx(), got.Rect.Dy())
 	}
 }

@@ -69,20 +69,20 @@ func EpsFit(got, want *image.NRGBA, k int) float64 {
 	return float64(k)
 }
 
-// OfFit renders and returns Fit(got, want, PartsDocument).
-func OfFit(doc svg.Document, want *image.NRGBA) (float64, error) {
+// OfFit renders and returns Fit(got, want, k). k is Search-owned.
+func OfFit(doc svg.Document, want *image.NRGBA, k int) (float64, error) {
 	got, err := render.Render(doc)
 	if err != nil {
 		return math.Inf(1), err
 	}
-	return Fit(got, want, svg.PartsDocument(doc)), nil
+	return Fit(got, want, k), nil
 }
 
-// OfEps renders and returns EpsFit(got, want, PartsDocument).
-func OfEps(doc svg.Document, want *image.NRGBA) (float64, error) {
+// OfEps renders and returns EpsFit(got, want, k). k is Search-owned.
+func OfEps(doc svg.Document, want *image.NRGBA, k int) (float64, error) {
 	got, err := render.Render(doc)
 	if err != nil {
 		return math.Inf(1), err
 	}
-	return EpsFit(got, want, svg.PartsDocument(doc)), nil
+	return EpsFit(got, want, k), nil
 }

@@ -55,7 +55,7 @@ func TestEpsFitPrefersFewerWhenUnder(t *testing.T) {
 
 func TestOfFitEmpty(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 4, 4))
-	s, err := OfFit(svg.NewDocument(4, 4), want)
+	s, err := OfFit(svg.NewDocument(4, 4), want, 0)
 	if err != nil || s != 0 {
 		t.Fatalf("OfFit=%v err=%v", s, err)
 	}

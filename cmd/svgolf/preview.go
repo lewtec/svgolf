@@ -17,10 +17,9 @@ import (
 
 func newPreviewCmd() *cobra.Command {
 	var (
-		algo   string
-		eval   string
-		out    string
-		width int
+		algo string
+		eval string
+		out  string
 	)
 	cmd := &cobra.Command{
 		Use:   "preview",
@@ -48,7 +47,7 @@ func newPreviewCmd() *cobra.Command {
 				}
 				n++
 				scene := strings.TrimSuffix(e.Name(), ".png")
-				if err := previewOne(cmd, s, bin, filepath.Join(eval, e.Name()), out, scene, width); err != nil {
+				if err := previewOne(cmd, s, bin, filepath.Join(eval, e.Name()), out, scene); err != nil {
 					return fmt.Errorf("%s: %w", scene, err)
 				}
 			}
@@ -61,11 +60,10 @@ func newPreviewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&algo, "search", "dumb", "registered Search adapter")
 	cmd.Flags().StringVar(&eval, "eval", filepath.Join("testdata", "eval"), "eval PNG directory")
 	cmd.Flags().StringVar(&out, "out", filepath.Join("testdata", "preview"), "preview output directory")
-	cmd.Flags().IntVar(&width, "width", 480, "preview PNG width for resvg")
 	return cmd
 }
 
-func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene string, width int) error {
+func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -75,11 +73,11 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 	if err != nil {
 		return err
 	}
-	want := search.FitCanvas(search.FromImage(img), search.MaxCanvas)
-	if err := writePNGFile(filepath.Join(out, "want-"+scene+".png"), search.FitCanvas(want, width)); err != nil {
+	want := search.FromImage(img)
+	if err := writePNGFile(filepath.Join(out, "want-"+scene+".png"), want); err != nil {
 		return err
 	}
-	doc, err := s.Search(cmd.Context(), want)
+	doc, err := search.Last(s.Search(cmd.Context(), want))
 	if err != nil {
 		return err
 	}
@@ -94,7 +92,7 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 	}
 	sf.Close()
 	pngPath := filepath.Join(out, scene+".png")
-	c := exec.CommandContext(cmd.Context(), resvgBin, "--width", fmt.Sprint(width), svgPath, pngPath)
+	c := exec.CommandContext(cmd.Context(), resvgBin, svgPath, pngPath)
 	c.Stderr = os.Stderr
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("resvg: %w", err)

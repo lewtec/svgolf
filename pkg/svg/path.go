@@ -109,23 +109,3 @@ func (p Path) Fill() (color.NRGBA, bool) { return p.paint.fill() }
 func (p Path) FillOpacity() float64      { return p.paint.fillOpacity() }
 func (p Path) FillRule() FillRule        { return p.paint.fillRule }
 func (p Path) Stroke() (Stroke, bool)    { return p.paint.stroke() }
-
-// PathCost is 1 + extra control points after a 4-point box.
-func PathCost(cmds []PathCmd) int {
-	n := 0
-	for _, c := range cmds {
-		switch c.Kind {
-		case CmdMove, CmdLine:
-			n++
-		case CmdCubic:
-			n += 3
-		}
-	}
-	if n == 0 {
-		return 0
-	}
-	if n <= 4 {
-		return 1
-	}
-	return 1 + (n - 4)
-}
