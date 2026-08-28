@@ -3,4 +3,5 @@ package prelude
 
 import (
 	_ "github.com/lewtec/svgolf/internal/search/dumb"
+	_ "github.com/lewtec/svgolf/internal/search/stack"
 )

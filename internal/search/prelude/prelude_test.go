@@ -17,6 +17,18 @@ func TestNewDumb(t *testing.T) {
 	}
 }
 
+func TestNamesHasStack(t *testing.T) {
+	found := false
+	for _, n := range search.Names() {
+		if n == "stack" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Names=%v", search.Names())
+	}
+}
+
 func TestNamesHasDumb(t *testing.T) {
 	found := false
 	for _, n := range search.Names() {
