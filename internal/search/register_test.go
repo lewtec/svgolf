@@ -21,10 +21,32 @@ func TestNewUnknown(t *testing.T) {
 	}
 }
 
+func TestNewFitRes(t *testing.T) {
+	s, err := New("fitres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.(*FitRes); !ok {
+		t.Fatalf("got %T", s)
+	}
+}
+
 func TestNamesHasDumb(t *testing.T) {
 	found := false
 	for _, n := range Names() {
 		if n == "dumb" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Names=%v", Names())
+	}
+}
+
+func TestNamesHasFitRes(t *testing.T) {
+	found := false
+	for _, n := range Names() {
+		if n == "fitres" {
 			found = true
 		}
 	}
