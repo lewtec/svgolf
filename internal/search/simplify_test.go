@@ -141,14 +141,17 @@ func TestSimplifyCircleConverges(t *testing.T) {
 	if !ok {
 		t.Fatal("not path")
 	}
-	n := 0
+	n, nC := 0, 0
 	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			nC++
+		}
 		if c.Kind != svg.CmdClose {
 			n++
 		}
 	}
-	if n > 20 {
-		t.Fatalf("circle did not converge: %d cmds %+v", n, p.Commands())
+	if nC < 2 || n > 6 {
+		t.Fatalf("circle should be two cubics: cmds=%d C=%d %+v", n, nC, p.Commands())
 	}
 }
 

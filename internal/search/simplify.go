@@ -1060,6 +1060,9 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 			nCorner++
 		}
 	}
+	if n >= 6 && simpIsRound(lp) {
+		return simpNCubics(lp, 2)
+	}
 	if nCorner == n {
 		return simpLines(lp)
 	}
@@ -1111,6 +1114,69 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 			X:    b[0], Y: b[1],
 		})
 		i++
+	}
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
+	return cmds
+}
+
+func simpIsRound(lp [][2]float64) bool {
+	n := len(lp)
+	if n < 6 {
+		return false
+	}
+	var cx, cy float64
+	for _, p := range lp {
+		cx += p[0]
+		cy += p[1]
+	}
+	fn := float64(n)
+	cx /= fn
+	cy /= fn
+	mean := 0.0
+	rs := make([]float64, n)
+	for i, p := range lp {
+		rs[i] = math.Hypot(p[0]-cx, p[1]-cy)
+		mean += rs[i]
+	}
+	mean /= fn
+	if mean < 1 {
+		return false
+	}
+	for _, r := range rs {
+		if math.Abs(r-mean)/mean > 0.2 {
+			return false
+		}
+	}
+	return true
+}
+
+func simpNCubics(lp [][2]float64, parts int) []svg.PathCmd {
+	n := len(lp)
+	if parts < 2 {
+		parts = 2
+	}
+	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: lp[0][0], Y: lp[0][1]}}
+	for q := 0; q < parts; q++ {
+		a := q * n / parts
+		b := (q + 1) * n / parts
+		if q == parts-1 {
+			b = n
+		}
+		run := append([][2]float64(nil), lp[a:min(b+1, n)]...)
+		if q == parts-1 {
+			run = append(run, lp[0])
+		}
+		end := run[len(run)-1]
+		if len(run) < 3 {
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
+			continue
+		}
+		c1, c2 := fitCubicAlways(run)
+		cmds = append(cmds, svg.PathCmd{
+			Kind: svg.CmdCubic,
+			X1:   c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1],
+			X: end[0], Y: end[1],
+		})
 	}
 	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
 	return cmds
