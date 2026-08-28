@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"iter"
+	"sort"
 
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -18,7 +19,7 @@ const (
 	minIsland  = 8
 )
 
-// Stack covers a leftover region with a simple path, then tightens that same path.
+// Stack covers every leftover region with a simple path, then tightens those paths.
 // Accept if Score drops; on a tie, fewer path commands. Stop after stallLimit failed regions.
 type Stack struct{}
 
@@ -49,7 +50,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		skip := make([]byte, w*h)
 		stall := 0
 		yielded := false
-		for i := 0; i < maxPaths && stall < stallLimit; i++ {
+		var layers []layer
+		for len(layers) < maxPaths && stall < stallLimit {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
 					yield(svg.Document{}, err)
@@ -60,35 +62,53 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			if len(island) < minIsland {
 				break
 			}
-			placed := false
-			for _, cand := range formPaths(island, col) {
-				var next svg.Document
-				if !placed {
-					next = doc.Append(cand.Node())
-				} else {
-					next = replaceLast(doc, cand.Node())
-				}
-				ngot, err := render.Render(next)
-				if err != nil {
-					yield(svg.Document{}, err)
-					return
-				}
-				if !accept(got, ngot, target, doc, cand.Node(), placed) {
-					continue
-				}
+			cands := formPaths(island, col)
+			next := doc.Append(cands[0].Node())
+			ngot, err := render.Render(next)
+			if err != nil {
+				yield(svg.Document{}, err)
+				return
+			}
+			if accept(got, ngot, target, len(layers), len(layers)+1, svg.Node{}, cands[0].Node()) {
 				doc, got = next, ngot
-				placed = true
+				layers = append(layers, layer{forms: cands, n: len(island)})
 				stall = 0
 				yielded = true
 				if !yield(doc, nil) {
 					return
 				}
+			} else {
+				stall++
 			}
 			for _, p := range island {
 				skip[p.y*w+p.x] = 1
 			}
-			if !placed {
-				stall++
+		}
+		n := len(layers)
+		for _, i := range refineOrder(layers) {
+			if err := ctx.Err(); err != nil {
+				if !yielded {
+					yield(svg.Document{}, err)
+				}
+				return
+			}
+			old := doc.Children()[i]
+			for _, cand := range layers[i].forms[1:] {
+				next := replaceAt(doc, i, cand.Node())
+				ngot, err := render.Render(next)
+				if err != nil {
+					yield(svg.Document{}, err)
+					return
+				}
+				if !accept(got, ngot, target, n, n, old, cand.Node()) {
+					continue
+				}
+				doc, got = next, ngot
+				old = cand.Node()
+				yielded = true
+				if !yield(doc, nil) {
+					return
+				}
 			}
 		}
 		if !yielded {
@@ -97,24 +117,31 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 	}
 }
 
-func accept(got, ngot, want *image.NRGBA, cur svg.Document, cand svg.Node, placed bool) bool {
-	n := len(cur.Children())
-	nn := n
-	if !placed {
-		nn++
+type layer struct {
+	forms []svg.Path
+	n     int
+}
+
+func refineOrder(layers []layer) []int {
+	idx := make([]int, len(layers))
+	for i := range idx {
+		idx[i] = i
 	}
-	a, b := Score(got, want, n), Score(ngot, want, nn)
+	sort.SliceStable(idx, func(i, j int) bool {
+		return layers[idx[i]].n > layers[idx[j]].n
+	})
+	return idx
+}
+
+func accept(got, ngot, want *image.NRGBA, parts, nparts int, old, cand svg.Node) bool {
+	a, b := Score(got, want, parts), Score(ngot, want, nparts)
 	if b < a {
 		return true
 	}
-	if b > a || !placed {
+	if b > a || old.Kind() == svg.KindInvalid {
 		return false
 	}
-	kids := cur.Children()
-	if len(kids) == 0 {
-		return false
-	}
-	return pathLen(cand) < pathLen(kids[len(kids)-1])
+	return pathLen(cand) < pathLen(old)
 }
 
 func formPaths(island []pix, col color.NRGBA) []svg.Path {
@@ -151,14 +178,18 @@ func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
 	return p
 }
 
-func replaceLast(d svg.Document, n svg.Node) svg.Document {
+func replaceAt(d svg.Document, i int, n svg.Node) svg.Document {
 	kids := d.Children()
 	out := svg.NewDocument(d.Width(), d.Height())
 	if vb := d.ViewBox(); vb.Set() {
 		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
 	}
-	if len(kids) > 1 {
-		out = out.Append(kids[:len(kids)-1]...)
+	for j, k := range kids {
+		if j == i {
+			out = out.Append(n)
+			continue
+		}
+		out = out.Append(k)
 	}
-	return out.Append(n)
+	return out
 }

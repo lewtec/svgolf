@@ -157,6 +157,69 @@ func TestStackNilPixmap(t *testing.T) {
 	}
 }
 
+func TestRefineOrderBiggerFirst(t *testing.T) {
+	got := refineOrder([]layer{{n: 9}, {n: 9}, {n: 64}, {n: 12}})
+	want := []int{2, 3, 0, 1}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order=%v want %v", got, want)
+		}
+	}
+}
+
+func TestStackCoversBeforeRefine(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			c := color.NRGBA{R: 255, A: 255}
+			if x >= 2 && x < 6 && y >= 2 && y < 6 {
+				c = color.NRGBA{B: 255, A: 255}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	var kids []int
+	var firstPts []int
+	for doc, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		kids = append(kids, len(doc.Children()))
+		firstPts = append(firstPts, pathPts(doc.Children()[0]))
+	}
+	lastGrow := 0
+	for i := 1; i < len(kids); i++ {
+		if kids[i] > kids[i-1] {
+			lastGrow = i
+		}
+	}
+	if kids[lastGrow] < 2 {
+		t.Fatalf("never covered both, kids=%v", kids)
+	}
+	for i := 0; i <= lastGrow; i++ {
+		if firstPts[i] != 4 {
+			t.Fatalf("epoch %d: still covering (kids=%d) but first path pts=%d want 4", i, kids[i], firstPts[i])
+		}
+	}
+}
+
+func pathPts(n svg.Node) int {
+	p, ok := n.Path()
+	if !ok {
+		return 0
+	}
+	ncmd := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			ncmd++
+		}
+	}
+	return ncmd
+}
+
 func TestStackFirstFormIsBBox(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {
