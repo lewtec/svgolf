@@ -370,6 +370,15 @@ func simpPath(b simpBlob, w, h int) (svg.Node, bool) {
 		}
 	}
 	cmds := simpEmit(best)
+	for div := 20.0; div >= 8; div -= 4 {
+		cubicDiv = div
+		trial := simpEmit(best)
+		if len(trial) == 0 || len(trial) >= len(cmds) {
+			break
+		}
+		cmds = trial
+	}
+	cubicDiv = 25
 	for n := 2.0; len(cmds) > 4096 && n <= 64; n *= 2 {
 		for i := range best {
 			best[i] = simpRDPClosed(best[i], n)
@@ -1153,12 +1162,14 @@ func simpSpanSmooth(run [][2]float64) bool {
 	return true
 }
 
+var cubicDiv = 25.0
+
 func fitCubicEps(pts [][2]float64) float64 {
 	if len(pts) < 2 {
 		return 4
 	}
 	a, b := pts[0], pts[len(pts)-1]
-	return 4 + math.Hypot(b[0]-a[0], b[1]-a[1])/25
+	return 4 + math.Hypot(b[0]-a[0], b[1]-a[1])/cubicDiv
 }
 
 func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
