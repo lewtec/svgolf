@@ -71,37 +71,55 @@ func newVectorizeCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output SVG path")
 	cmd.Flags().StringVar(&algo, "search", "dumb", "Search adapter")
-	cmd.Flags().StringVar(&epochs, "epochs", "", "directory to write each epoch as N.svg and N.png")
+	cmd.Flags().StringVar(&epochs, "epochs", "", "directory to write each epoch as N.svg and N.png, plus last.svg and last.png")
 	_ = cmd.MarkFlagRequired("out")
 	return cmd
 }
 
 func writeEpoch(cmd *cobra.Command, dir string, i int, doc svg.Document, want *image.NRGBA) error {
 	svgPath := filepath.Join(dir, fmt.Sprintf("%03d.svg", i))
-	sf, err := os.Create(svgPath)
-	if err != nil {
+	if err := writeSVG(svgPath, doc); err != nil {
 		return err
 	}
-	if err := svg.Encode(sf, doc); err != nil {
-		sf.Close()
+	if err := writeSVG(filepath.Join(dir, "last.svg"), doc); err != nil {
 		return err
 	}
-	sf.Close()
 	got, err := render.Render(doc)
 	if err != nil {
 		return err
 	}
 	pngPath := filepath.Join(dir, fmt.Sprintf("%03d.png", i))
-	pf, err := os.Create(pngPath)
-	if err != nil {
+	if err := writePNG(pngPath, got); err != nil {
 		return err
 	}
-	if err := png.Encode(pf, got); err != nil {
-		pf.Close()
+	if err := writePNG(filepath.Join(dir, "last.png"), got); err != nil {
 		return err
 	}
-	pf.Close()
 	fmt.Fprintf(cmd.OutOrStdout(), "epoch %d paths=%d score=%.3f -> %s\n",
 		i, len(doc.Children()), stack.Score(got, want, len(doc.Children())), svgPath)
 	return nil
+}
+
+func writeSVG(path string, doc svg.Document) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	err = svg.Encode(f, doc)
+	if c := f.Close(); err == nil {
+		err = c
+	}
+	return err
+}
+
+func writePNG(path string, img *image.NRGBA) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	err = png.Encode(f, img)
+	if c := f.Close(); err == nil {
+		err = c
+	}
+	return err
 }
