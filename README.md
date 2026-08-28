@@ -32,7 +32,7 @@ svgolf preview   --search NAME
 
 `verify` exits 0 only when every pixel matches resvg (and Encode does not drift). On a pixel mismatch it writes `<input>.diff.png`.
 
-`vectorize` is PNG → `search.New` → Encode. Register a method with `search.Register` in `init`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + 480px PNG). v1 ships `dumb`.
+`vectorize` is PNG → `search.New` → Encode. Register a method with `search.Register` in `init`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + 480px PNG). v1 ships `dumb` and `simplify`.
 
 ## Layout
 

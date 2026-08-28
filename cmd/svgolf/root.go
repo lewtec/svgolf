@@ -19,7 +19,7 @@ Commands:
 Register a Search with search.Register in init. Then:
   mise exec -- go run ./cmd/svgolf preview --search NAME
 
-v1 ships Dumb. Run tests with: mise run test`,
+v1 ships Dumb and Simplify. Run tests with: mise run test`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

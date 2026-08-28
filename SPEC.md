@@ -868,11 +868,17 @@ type Dumb struct {
 }
 
 func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
+
+type Simplify struct {
+    Colors int // 0 = auto, cap 8
+}
+
+func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
 ```
 
 A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`.
+Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`. `simplify` traces each island as a path and drops points while coverage holds.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME
