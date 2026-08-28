@@ -74,14 +74,14 @@ func Auto(img image.Image, n int) (ColorMap, []color.NRGBA, error) {
 	for c, cnt := range hist {
 		entries = append(entries, histEntry{c, cnt})
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].n != entries[j].n {
+			return entries[i].n > entries[j].n
+		}
+		return lessRGB(entries[i].c, entries[j].c)
+	})
 	var pal []color.NRGBA
 	if len(entries) <= n {
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].n != entries[j].n {
-				return entries[i].n > entries[j].n
-			}
-			return lessRGB(entries[i].c, entries[j].c)
-		})
 		for _, e := range entries {
 			pal = append(pal, e.c)
 		}

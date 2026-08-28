@@ -37,6 +37,31 @@ func TestMapPreservesAlpha(t *testing.T) {
 	}
 }
 
+func TestAutoDeterministic(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 8), G: uint8(y * 8), B: uint8(x + y), A: 255})
+		}
+	}
+	_, a, err := Auto(img, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, b, err := Auto(img, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) != len(b) {
+		t.Fatalf("len %d vs %d", len(a), len(b))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("pal[%d] %+v vs %+v", i, a[i], b[i])
+		}
+	}
+}
+
 func TestAutoNonZeroMin(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(3, 5, 5, 6))
 	img.SetNRGBA(3, 5, color.NRGBA{G: 255, A: 255})
