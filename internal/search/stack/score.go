@@ -8,31 +8,26 @@ import (
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
-// pathCost is how many mean-error degrees one extra path must buy.
-const pathCost = 0.5
+// pathCost is the error-sum one extra path must buy (minIsland pixels at 180°).
+const pathCost = 180 * minIsland
 
-// Score is mean pixel error plus pathCost·parts. Opaque pixels use HueAt.
-// A hole (want.A==0) is HueAt(got, black): empty or black is 0, a saturated
-// fill is 180. An extra path must cut mean error by more than pathCost.
+// Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels use
+// HueAt. A hole (want.A==0) is HueAt(got, black). Mean would hide letters on
+// a large canvas; sum does not.
 func Score(got, want *image.NRGBA, parts int) float64 {
 	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return math.Inf(1)
 	}
 	var sum float64
-	n := 0
 	for y := want.Rect.Min.Y; y < want.Rect.Max.Y; y++ {
 		for x := want.Rect.Min.X; x < want.Rect.Max.X; x++ {
 			sum += errAt(got.NRGBAAt(x, y), want.NRGBAAt(x, y))
-			n++
 		}
-	}
-	if n == 0 {
-		return pathCost * float64(max(0, parts))
 	}
 	if parts < 0 {
 		parts = 0
 	}
-	return sum/float64(n) + pathCost*float64(parts)
+	return sum + pathCost*float64(parts)
 }
 
 func errAt(g, q color.NRGBA) float64 {
