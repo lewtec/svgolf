@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+  <rect width="1000" height="1000" fill="#0C1624"/>
+  <rect x="24" y="273" width="291" height="290" fill="#01B0F9"/>
+  <rect x="412" y="670" width="397" height="147" fill="#0D1625"/>
+  <circle cx="510" cy="506" r="55" fill="#00AFF9"/>
+  <ellipse cx="576" cy="849" rx="88" ry="53" fill="#0D1625"/>
+  <rect x="602" y="557" width="121" height="34" fill="#01CB7C"/>
+  <rect x="430" y="388" width="380" height="24" fill="#0D1725"/>
+  <ellipse cx="821" cy="708.5" rx="49" ry="38.5" fill="#0D1625"/>
+  <circle cx="685.5" cy="847.5" r="27.5" fill="#0D1625"/>
+  <ellipse cx="530" cy="692.5" rx="33" ry="18.5" fill="#0C1625"/>
+  <rect x="828" y="595" width="76" height="85" fill="#0D1625"/>
+  <rect x="545" y="905" width="134" height="16" fill="#0D1625"/>
+  <circle cx="795.5" cy="520" r="20" fill="#0D1625"/>
+  <rect x="370" y="677" width="34" height="42" fill="#0D1625"/>
+  <circle cx="303" cy="610.5" r="23" fill="#0D1725"/>
+  <rect x="416" y="541" width="39" height="39" fill="#0D1625"/>
+  <rect x="372" y="429" width="17" height="146" fill="#0B1627"/>
+  <rect x="414" y="341" width="412" height="13" fill="#0C1A2C"/>
+  <circle cx="738.5" cy="177" r="15" fill="#0D1625"/>
+  <rect x="799" y="783" width="29" height="42" fill="#0D1625"/>
+  <circle cx="622" cy="690.5" r="15.5" fill="#0C1625"/>
+  <rect x="420" y="351" width="398" height="1" fill="#0A0B0F"/>
+  <rect x="423" y="352" width="393" height="1" fill="#068ABF"/>
+  <rect x="431" y="386" width="379" height="1" fill="#054464"/>
+  <rect x="852" y="486" width="14" height="101" fill="#0D1725"/>
+  <rect x="723" y="863" width="34" height="45" fill="#0D1625"/>
+  <rect x="435" y="672" width="368" height="1" fill="#08080E"/>
+  <rect x="437" y="671" width="365" height="1" fill="#036097"/>
+  <rect x="440" y="636" width="359" height="1" fill="#063E57"/>
+  <rect x="669" y="907" width="50" height="14" fill="#0D1725"/>
+  <rect x="314" y="481" width="19" height="34" fill="#0D1726"/>
+  <circle cx="879" cy="755.5" r="12" fill="#0D1725"/>
+  <circle cx="904.5" cy="508.5" r="3.5" fill="#0D1625"/>
+  <ellipse cx="657.5" cy="876.5" rx="10.5" ry="15.5" fill="#0D1625"/>
+  <rect x="325" y="429" width="14" height="56" fill="#0D1725"/>
+  <ellipse cx="891.5" cy="716.5" rx="8.5" ry="17.5" fill="#0D1725"/>
+  <ellipse cx="924" cy="324" rx="8" ry="17" fill="#0D1725"/>
+  <circle cx="617" cy="492" r="11" fill="#0D1625"/>
+  <ellipse cx="554" cy="91.5" rx="23" ry="9.5" fill="#0D1625"/>
+  <rect x="412" y="810" width="19" height="25" fill="#0D1725"/>
+</svg>
