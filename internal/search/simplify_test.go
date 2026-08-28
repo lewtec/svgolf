@@ -154,9 +154,9 @@ func TestSimplifyDropsStairPoints(t *testing.T) {
 }
 
 func TestSimplifyDropsFringeColor(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 40, 30))
-	for y := 0; y < 30; y++ {
-		for x := 0; x < 40; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 80, 80))
+	for y := 0; y < 80; y++ {
+		for x := 0; x < 80; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
 		}
 	}
