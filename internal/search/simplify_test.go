@@ -120,6 +120,48 @@ func TestSimplifyDropsStairPoints(t *testing.T) {
 	}
 }
 
+func TestSimplifyDropsFringeColor(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 30))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
+		}
+	}
+	for y := 1; y < 4; y++ {
+		for x := 1; x < 4; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{G: 200, A: 255})
+		}
+	}
+	doc, err := (Simplify{}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n != 1 {
+		t.Fatalf("kids=%d; fringe green should not add a cycle", n)
+	}
+}
+
+func TestSimplifyKeepsSecondColor(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 30))
+	for y := 0; y < 30; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
+		}
+	}
+	for y := 5; y < 25; y++ {
+		for x := 5; x < 25; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{B: 200, A: 255})
+		}
+	}
+	doc, err := (Simplify{}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n != 2 {
+		t.Fatalf("kids=%d; large second color should stay", n)
+	}
+}
+
 func TestSimplifyRingHasHole(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 12, 12))
 	for y := 0; y < 12; y++ {

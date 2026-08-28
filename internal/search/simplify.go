@@ -8,9 +8,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/palette"
-	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
@@ -23,9 +21,11 @@ type Simplify struct {
 var _ Search = Simplify{}
 
 const (
-	simpCover     = 0.97
-	simpMaxKids   = 4096
-	simpPruneArea = 512 * 512
+	simpCover    = 0.97
+	simpMaxKids  = 24
+	simpCycleλ   = 0.04 // extra closed path must cut RMSE by ~10
+	simpMergeD2  = 48 * 48
+	simpMinColor = 0.02 // extra palette slots need ≥2% of scored pixels
 )
 
 func init() {
@@ -45,32 +45,64 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	if w <= 0 || h <= 0 {
 		return doc, nil
 	}
-	cmap, pal, err := palette.Auto(want, s.Colors)
+	_, pal, err := palette.Auto(want, s.Colors)
 	if err != nil {
 		return doc, err
 	}
+	pal = simpMergePal(pal)
 	if len(pal) == 0 {
 		return doc, nil
 	}
-	blobs := simpBlobs(want, cmap, simpSpeckle(w, h))
-	if len(blobs) > 64 {
-		blobs = blobs[:64]
-	}
+	blobs := simpBlobs(want, pal, simpSpeckle(w, h))
+	groups := simpColorGroups(blobs)
+	got := image.NewNRGBA(image.Rect(0, 0, w, h))
+	nScore := simpScoredN(want)
+	sse := simpEmptySSE(want)
+	cur := simpFit(sse, nScore, 0)
 	var kids []svg.Node
-	for _, b := range blobs {
+	for _, g := range groups {
 		if err := ctx.Err(); err != nil {
 			return doc.Append(kids...), err
 		}
 		if len(kids) >= simpMaxKids {
 			break
 		}
-		n, ok := simpPath(b, w, h)
-		if !ok {
+		if len(kids) > 0 && nScore > 0 && float64(g.area) < simpMinColor*float64(nScore) {
 			continue
 		}
-		kids = append(kids, n)
+		var nodes []svg.Node
+		var used []simpBlob
+		for _, b := range g.blobs {
+			if len(kids)+len(nodes) >= simpMaxKids {
+				break
+			}
+			n, ok := simpPath(b, w, h)
+			if !ok {
+				continue
+			}
+			nodes = append(nodes, n)
+			used = append(used, b)
+		}
+		if len(nodes) == 0 {
+			continue
+		}
+		// Dominant color always stays. Extra swatches must pay in Fit.
+		if len(kids) > 0 {
+			delta := 0.0
+			for _, b := range used {
+				delta += simpPaint(got, want, b, false)
+			}
+			next := simpFit(sse+delta, nScore, len(kids)+len(nodes))
+			if next >= cur {
+				continue
+			}
+		}
+		for _, b := range used {
+			sse += simpPaint(got, want, b, true)
+		}
+		kids = append(kids, nodes...)
+		cur = simpFit(sse, nScore, len(kids))
 	}
-	kids = simpPrune(ctx, want, w, h, kids)
 	return doc.Append(kids...), nil
 }
 
@@ -84,7 +116,46 @@ type simpBlob struct {
 	area int
 }
 
-func simpBlobs(want *image.NRGBA, cmap palette.ColorMap, speckle int) []simpBlob {
+func simpMergePal(pal []color.NRGBA) []color.NRGBA {
+	var kept []color.NRGBA
+	for _, c := range pal {
+		c.A = 255
+		dup := false
+		for _, k := range kept {
+			if simpDist2(c, k) <= simpMergeD2 {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			kept = append(kept, c)
+		}
+	}
+	return kept
+}
+
+func simpSnap(pal []color.NRGBA, c color.NRGBA) color.NRGBA {
+	if len(pal) == 0 || c.A == 0 {
+		return color.NRGBA{}
+	}
+	best, bestD := pal[0], simpDist2(c, pal[0])
+	for _, p := range pal[1:] {
+		if d := simpDist2(c, p); d < bestD {
+			best, bestD = p, d
+		}
+	}
+	best.A = 255
+	return best
+}
+
+func simpDist2(a, b color.NRGBA) int {
+	dr := int(a.R) - int(b.R)
+	dg := int(a.G) - int(b.G)
+	db := int(a.B) - int(b.B)
+	return dr*dr + dg*dg + db*db
+}
+
+func simpBlobs(want *image.NRGBA, pal []color.NRGBA, speckle int) []simpBlob {
 	b := want.Bounds()
 	w, h := b.Dx(), b.Dy()
 	snap := make([]color.NRGBA, w*h)
@@ -95,9 +166,7 @@ func simpBlobs(want *image.NRGBA, cmap palette.ColorMap, speckle int) []simpBlob
 			if c.A == 0 {
 				continue
 			}
-			c = cmap.Map(c)
-			c.A = 255
-			snap[y*w+x] = c
+			snap[y*w+x] = simpSnap(pal, c)
 		}
 	}
 	var out []simpBlob
@@ -142,6 +211,96 @@ func simpBlobs(want *image.NRGBA, cmap palette.ColorMap, speckle int) []simpBlob
 		return lessNRGBA(out[i].col, out[j].col)
 	})
 	return out
+}
+
+type simpGroup struct {
+	col   color.NRGBA
+	blobs []simpBlob
+	area  int
+}
+
+func simpColorGroups(blobs []simpBlob) []simpGroup {
+	idx := map[color.NRGBA]int{}
+	var gs []simpGroup
+	for _, b := range blobs {
+		i, ok := idx[b.col]
+		if !ok {
+			i = len(gs)
+			idx[b.col] = i
+			gs = append(gs, simpGroup{col: b.col})
+		}
+		gs[i].blobs = append(gs[i].blobs, b)
+		gs[i].area += b.area
+	}
+	sort.Slice(gs, func(i, j int) bool {
+		if gs[i].area != gs[j].area {
+			return gs[i].area > gs[j].area
+		}
+		return lessNRGBA(gs[i].col, gs[j].col)
+	})
+	return gs
+}
+
+func simpScoredN(want *image.NRGBA) int {
+	n := 0
+	b := want.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if want.NRGBAAt(x, y).A != 0 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func simpEmptySSE(want *image.NRGBA) float64 {
+	var sse float64
+	b := want.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			q := want.NRGBAAt(x, y)
+			if q.A == 0 {
+				continue
+			}
+			sse += float64(uint32(q.R)*uint32(q.R) + uint32(q.G)*uint32(q.G) + uint32(q.B)*uint32(q.B))
+		}
+	}
+	return sse
+}
+
+func simpFit(sse float64, n, k int) float64 {
+	if n <= 0 {
+		return simpCycleλ * float64(max(k, 0))
+	}
+	rmse := math.Sqrt(sse / (3 * float64(n)))
+	if math.IsInf(rmse, 0) || math.IsNaN(rmse) {
+		return rmse
+	}
+	return rmse/255 + simpCycleλ*float64(max(k, 0))
+}
+
+func simpPaint(got, want *image.NRGBA, b simpBlob, commit bool) float64 {
+	var d float64
+	for _, p := range b.pix {
+		q := want.NRGBAAt(p.X, p.Y)
+		if q.A == 0 {
+			continue
+		}
+		g := got.NRGBAAt(p.X, p.Y)
+		old := simpChan2(g.R, q.R) + simpChan2(g.G, q.G) + simpChan2(g.B, q.B)
+		neu := simpChan2(b.col.R, q.R) + simpChan2(b.col.G, q.G) + simpChan2(b.col.B, q.B)
+		d += float64(neu) - float64(old)
+		if commit {
+			got.SetNRGBA(p.X, p.Y, color.NRGBA{R: b.col.R, G: b.col.G, B: b.col.B, A: 255})
+		}
+	}
+	return d
+}
+
+func simpChan2(a, b uint8) uint32 {
+	d := int(a) - int(b)
+	return uint32(d * d)
 }
 
 func lessNRGBA(a, b color.NRGBA) bool {
@@ -671,49 +830,4 @@ func simpLines(lp [][2]float64) []svg.PathCmd {
 	}
 	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
 	return cmds
-}
-
-func simpPrune(ctx context.Context, want *image.NRGBA, w, h int, kids []svg.Node) []svg.Node {
-	if len(kids) < 2 || w*h > simpPruneArea {
-		return kids
-	}
-	if err := ctx.Err(); err != nil {
-		return kids
-	}
-	score := func(nodes []svg.Node) (float64, bool) {
-		if ctx.Err() != nil {
-			return 0, false
-		}
-		doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h)).Append(nodes...)
-		got, err := render.Render(doc)
-		if err != nil {
-			return math.Inf(1), true
-		}
-		return loss.Fit(got, want, svg.PartsDocument(doc)), true
-	}
-	cur, ok := score(kids)
-	if !ok {
-		return kids
-	}
-	i := len(kids) - 1
-	for i >= 0 {
-		if ctx.Err() != nil {
-			break
-		}
-		trial := append(append([]svg.Node(nil), kids[:i]...), kids[i+1:]...)
-		sc, ok := score(trial)
-		if !ok {
-			break
-		}
-		if sc < cur {
-			kids = trial
-			cur = sc
-			if i >= len(kids) {
-				i = len(kids) - 1
-			}
-			continue
-		}
-		i--
-	}
-	return kids
 }
