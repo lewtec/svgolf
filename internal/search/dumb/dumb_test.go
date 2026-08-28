@@ -1,9 +1,11 @@
-package search
+package dumb
 
 import (
 	"image"
 	"image/color"
 	"testing"
+
+	"github.com/lewtec/svgolf/internal/search"
 )
 
 func TestDumbSolid(t *testing.T) {
@@ -13,7 +15,7 @@ func TestDumbSolid(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
-	doc, err := Last((Dumb{}).Search(t.Context(), img))
+	doc, err := search.Last((Dumb{}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestDumbTwoColorConcentric(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	doc, err := Last((Dumb{Colors: 2}).Search(t.Context(), img))
+	doc, err := search.Last((Dumb{Colors: 2}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestDumbAlphaBBox(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 10))
 	img.SetNRGBA(2, 3, color.NRGBA{R: 1, A: 200})
 	img.SetNRGBA(4, 6, color.NRGBA{R: 1, A: 200})
-	doc, err := Last((Dumb{Colors: 1}).Search(t.Context(), img))
+	doc, err := search.Last((Dumb{Colors: 1}).Search(t.Context(), img))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +69,7 @@ func TestDumbAlphaBBox(t *testing.T) {
 }
 
 func TestDumbNilPixmap(t *testing.T) {
-	_, err := Last((Dumb{}).Search(t.Context(), nil))
+	_, err := search.Last((Dumb{}).Search(t.Context(), nil))
 	if err == nil {
 		t.Fatal("expected error")
 	}

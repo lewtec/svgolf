@@ -24,7 +24,7 @@ func Register(name string, make func() Search) {
 	adapters[name] = make
 }
 
-// New builds a registered adapter. Palette, Cost, and knobs stay inside the adapter.
+// New builds a registered adapter. Import search/prelude so adapters Register.
 func New(name string) (Search, error) {
 	regMu.Lock()
 	fn, ok := adapters[name]

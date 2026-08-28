@@ -1,40 +1,10 @@
-package palette
+package dumb
 
 import (
 	"image"
 	"image/color"
 	"sort"
 )
-
-type ColorMap interface {
-	Map(c color.NRGBA) color.NRGBA
-}
-
-type snapMap struct {
-	pal []color.NRGBA
-}
-
-func (m snapMap) Map(c color.NRGBA) color.NRGBA {
-	if c.A == 0 {
-		return color.NRGBA{}
-	}
-	best := m.pal[0]
-	bestD := dist2(c, best)
-	for _, p := range m.pal[1:] {
-		if d := dist2(c, p); d < bestD || (d == bestD && lessRGB(p, best)) {
-			best, bestD = p, d
-		}
-	}
-	best.A = c.A
-	return best
-}
-
-func dist2(a, b color.NRGBA) int {
-	dr := int(a.R) - int(b.R)
-	dg := int(a.G) - int(b.G)
-	db := int(a.B) - int(b.B)
-	return dr*dr + dg*dg + db*db
-}
 
 func lessRGB(a, b color.NRGBA) bool {
 	if a.R != b.R {
@@ -54,7 +24,7 @@ type histEntry struct {
 	n int
 }
 
-func Auto(img image.Image, n int) (ColorMap, []color.NRGBA, error) {
+func auto(img image.Image, n int) ([]color.NRGBA, error) {
 	if n <= 0 {
 		n = 8
 	}
@@ -88,7 +58,7 @@ func Auto(img image.Image, n int) (ColorMap, []color.NRGBA, error) {
 	} else {
 		pal = medianCut(entries, n)
 	}
-	return snapMap{pal: pal}, pal, nil
+	return pal, nil
 }
 
 func medianCut(entries []histEntry, n int) []color.NRGBA {

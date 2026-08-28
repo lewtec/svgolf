@@ -1,4 +1,4 @@
-package search
+package dumb
 
 import (
 	"image/png"
@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lewtec/svgolf/internal/search"
 )
 
 func TestEvalScenes(t *testing.T) {
-	root := filepath.Join("..", "..", "testdata", "eval")
+	root := filepath.Join("..", "..", "..", "testdata", "eval")
 	ents, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -31,9 +33,9 @@ func TestEvalScenes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := FromImage(img)
+			want := search.FromImage(img)
 			w, h := want.Rect.Dx(), want.Rect.Dy()
-			doc, err := Last((Dumb{}).Search(t.Context(), want))
+			doc, err := search.Last((Dumb{}).Search(t.Context(), want))
 			if err != nil {
 				t.Fatal(err)
 			}

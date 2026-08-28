@@ -2,7 +2,7 @@
 
 Turn a PNG, especially a model-generated logo, into a simple editable SVG.
 
-v1 is the trusted render pipeline: an SVG-like tree, an in-process renderer that must match **resvg** on the locked fixture set, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz. v1 Search is one shot (Dumb): one epoch, then the iterator stops. Search owns Cost (no shared table); first Loss is deviate count.
+v1 is the trusted render pipeline: an SVG-like tree, an in-process renderer that must match **resvg** on the locked fixture set, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz. v1 Search is one shot (Dumb): one epoch, then the iterator stops. Import `search/prelude` so adapters Register. Search owns Cost and rank.
 
 Contract: [SPEC.md](SPEC.md).
 
@@ -32,7 +32,7 @@ svgolf preview   --search NAME
 
 `verify` exits 0 only when every pixel matches resvg (and Encode does not drift). On a pixel mismatch it writes `<input>.diff.png`.
 
-`vectorize` is PNG → `FromImage` → `search.New` → epochs → Encode `Last`. Native size. Only a Search adapter may scale. Register a method with `search.Register` in `init`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + resvg at intrinsic size). v1 ships `dumb`.
+`vectorize` is PNG → `FromImage` → `search.New` → epochs → Encode `Last`. Native size. Only a Search adapter may scale. Register with `search.Register` in the adapter `init`; blank-import `search/prelude`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + resvg at intrinsic size). v1 ships `dumb`.
 
 ## Layout
 
@@ -41,7 +41,7 @@ svgolf preview   --search NAME
 | `pkg/svg` | tree, `New*`, Encode, Parse |
 | `pkg/render` | in-process → `image.NRGBA` |
 | `cmd/svgolf` | Cobra |
-| `internal/` | resvg oracle, palette, Search (Dumb), Loss (Pixels/PerCost), verify |
+| `internal/` | resvg oracle, Search (`dumb` + prelude), Loss (Pixels/RMSE), verify |
 | `testdata/eval` | full-size scenes: bliss + LEWTEC logos |
 
 ## Not in v1

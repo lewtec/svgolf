@@ -1,6 +1,8 @@
 package main
 
 import (
+	_ "github.com/lewtec/svgolf/internal/search/prelude"
+
 	"github.com/spf13/cobra"
 )
 
@@ -16,10 +18,10 @@ Commands:
   vectorize   PNG to SVG (--search NAME)
   preview     run Search on testdata/eval → testdata/preview
 
-Register a Search with search.Register in init. Then:
+Register a Search in its package init. Import search/prelude so it Registers. Then:
   mise exec -- go run ./cmd/svgolf preview --search NAME
 
-v1 ships Dumb. Run tests with: mise run test`,
+v1 ships Dumb via prelude. Run tests with: mise run test`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

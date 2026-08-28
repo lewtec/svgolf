@@ -1,4 +1,4 @@
-package search
+package dumb
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"image/color"
 	"iter"
 
-	"github.com/lewtec/svgolf/internal/palette"
+	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
@@ -16,10 +16,10 @@ type Dumb struct {
 	Colors int // 0 = auto, cap 8
 }
 
-var _ Search = Dumb{}
+var _ search.Search = Dumb{}
 
 func init() {
-	Register("dumb", func() Search { return Dumb{} })
+	search.Register("dumb", func() search.Search { return Dumb{} })
 }
 
 func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error] {
@@ -38,7 +38,7 @@ func (d Dumb) epoch(ctx context.Context, target *image.NRGBA) (svg.Document, err
 	b := target.Bounds()
 	w, h := b.Dx(), b.Dy()
 	doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
-	_, pal, err := palette.Auto(target, d.Colors)
+	pal, err := auto(target, d.Colors)
 	if err != nil {
 		return doc, err
 	}

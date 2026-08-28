@@ -17,7 +17,7 @@ This document is the implementation contract. It does not reopen locked product 
 
 svgolf turns a PNG — especially a model-generated logo — into the simplest hand-editable SVG. Current tracers emit noisy paths. v1 ships a trusted render pipeline, an SVG-like tree, a Cobra CLI, Search (Dumb adapter), and exact-match fuzz against **resvg**.
 
-v1 Search is Dumb: one epoch, then the iterator stops. Loss formula, ColorMap variants, primitive weight iteration, gradients, and union/boolean remain later adapter seams.
+v1 Search is Dumb: one epoch, then the iterator stops. Other adapters Register via prelude. Rank, palette, and scale stay inside the adapter.
 
 ---
 
@@ -48,7 +48,7 @@ v1 builds the pixmap contract first. Future search consumes that pixmap.
 - CLI: `render`, `verify`, `vectorize`.
 - Search behind `vectorize`; first adapter is Dumb.
 - `go test -fuzz=FuzzRender` compares Encode → Render vs resvg.
-- ColorMap palette adapter used inside Dumb (auto, cap 8).
+- Dumb owns its palette (auto, cap 8).
 
 ### Non-goals (v1)
 
@@ -70,16 +70,13 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Oracle | Out-of-process resvg | gold renderer, reference binary |
 | Pixmap | `image.NRGBA` buffer | surface, framebuffer, bitmap |
 | Match | Every RGBA byte equal | close enough, SSIM, ΔE |
-| ColorMap | Color rewrite adapter | “the quantizer” (as the seam name) |
-| Palette | First ColorMap adapter | theme, swatch |
 | Search | want Scene → epochs of Document | solver, golf loop, generator |
 | Epoch | one yield from Search | generation, step, iteration |
 | Dumb | first Search adapter (one epoch) | heuristic engine, stub generator |
+| Prelude | blank-import package that Registers adapters | plugin loader |
 | Scene / want | decoded PNG (`*image.NRGBA`) | target, ground truth |
 | got | `Render(doc)` pixmap | candidate image |
-| Loss | `Loss(got, want) float64` | score, fitness, energy |
-| Pixels | first Loss adapter (don't-care deviate count) | Hamming, mismatch count |
-| PerCost | rank helper: `Loss / complexity` | efficiency, fitness |
+| Pixels | don't-care deviate count | Hamming, mismatch count |
 | Verify | Exact ours vs resvg | compare command, diff command |
 | Encode | Tree → SVG XML | serialize, stringify |
 | Parse | XML → tree via `New*` | decode, ingest |
@@ -105,7 +102,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Opaque fields; `New*` returns Go zero; zero **is** the SVG default | Callers cannot write literals. Defaults cannot drift. |
 | No `*Paint` for unset | Presence is a flag or a dedicated none-state, not a nil pointer. |
 | Fill sampled from the PNG; color is not a gene | Search later mutates geometry, not hex strings. |
-| Palette is the first ColorMap adapter | Dumb owns palette internally. Other maps stay inside Search. |
+| Palette lives inside Dumb | Other adapters bring their own color logic. |
 | Transparent PNG pixels are don't-care | Loss later must ignore them. Search uses opaque pixels only. |
 | Painter model = document order; first = back | Same as SVG. Converge outer → inner by append. |
 | Groups are structure only | No group opacity, filter, isolation, or paint inheritance. |
@@ -147,9 +144,8 @@ Out of the tree, parser, encoder, renderer, and CLI:
 - `id`, `class`, `xml:space`
 - units other than unitless and `px`
 - `preserveAspectRatio` attribute (default `xMidYMid meet` still applies)
-- Search implementation
-- Loss formula
-- ColorMap adapters other than palette
+- looping Search
+- shared rank or Cost table
 - primitive weight iteration
 - union / boolean
 - path commands other than M/L/H/V/C/S/Z (no Q, T, A)
@@ -175,8 +171,7 @@ flowchart TB
     encode[svg.Encode]
     tree[svg.Document]
     rend[render.Render]
-    searchAd[search.Dumb]
-    pal[palette.Auto]
+    searchAd[search.New]
     oracle[resvg.Render]
     cmp[verify.Compare]
   end
@@ -196,7 +191,6 @@ flowchart TB
 
   vectorizeCmd --> pngIn[PNG]
   pngIn --> searchAd
-  searchAd --> pal
   searchAd --> tree
   tree --> encode
 ```
@@ -233,14 +227,13 @@ github.com/lewtec/svgolf
     blend.go         # source-over, premul helpers
   internal/resvg/
     resvg.go         # exec oracle
-  internal/palette/
-    palette.go       # ColorMap + Auto
   internal/search/
     search.go        # Search interface
-    dumb.go          # first Search adapter
+    prelude/         # blank-import adapters so they Register
+    dumb/            # first Search adapter + its palette
   internal/loss/
-    loss.go          # Loss, PerCost, Of
-    pixels.go        # first Loss adapter
+    pixels.go        # deviate count
+    rmse.go          # RMSE on scored pixels
   internal/verify/
     verify.go        # Compare, diff PNG
   testdata/
@@ -750,42 +743,6 @@ Missing binary → error that names mise (`mise install`).
 
 Pin **resvg 0.47.0** via `github:linebender/resvg` (see mise.toml). Release assets include `resvg-linux-x86_64.tar.gz` and macOS/Windows zips. 0.48.1 exists and still depends on tiny-skia 0.12.0; we stay on 0.47.0 so the CLI/usvg surface is the contract we port against. Bumping the pin is a contract PR.
 
-### ColorMap and palette
-
-Seam (v1 ships one adapter):
-
-```go
-package palette
-
-type ColorMap interface {
-    Map(c color.NRGBA) color.NRGBA
-}
-
-func Auto(img image.Image, n int) (ColorMap, []color.NRGBA, error)
-```
-
-`n <= 0` means auto cap 8. `n > 0` is a caller-chosen size (Search adapters decide; not a CLI flag).
-
-Iterate `img.Bounds()`: `Y` from `Min.Y` to `Max.Y-1`, `X` from `Min.X` to `Max.X-1`. Canvas size is `Dx()` × `Dy()`, not `Max`. `png.Decode` is usually `Min==(0,0)`; do not assume it.
-
-`Auto` algorithm (first adapter; not the Loss formula):
-
-1. Histogram pixels with `A != 0`. Key is `NRGBA`.
-2. If unique count ≤ `n` (or ≤ 8 when auto), those colors **are** the palette. This path is locked.
-3. If unique count > `n`: textbook median-cut in RGB.
-   - Start with one box of all histogram entries.
-   - Repeatedly split the box with the largest channel range (R, then G, then B on ties).
-   - Split at the median pixel count (half the box’s frequency).
-   - Representative = frequency-weighted mean RGB, each channel `uint8(mean + 0.5)`.
-   - Assign each histogram bucket to the nearest representative (Euclidean RGB). Ties: lower R, then G, then B, then A.
-   - Sum frequencies per representative.
-4. Return colors sorted most-used → least-used. Frequency ties: lower R, then G, then B, then A.
-5. `Map`: `A==0` stays `0,0,0,0`. Otherwise snap RGB to the nearest palette RGB and **preserve A**.
-
-Other ColorMap variants stay later.
-
-Transparent pixels are don't-care for future Loss. Palette ignores `A==0`.
-
 ### Circuit I/O
 
 Same Go type, different origin: `want` is the scene (decoded PNG). `got` is `Render(doc)`. Loss never sees a tree.
@@ -798,9 +755,7 @@ PNG ──Decode──► want *image.NRGBA
                     │
                     └── (inside Search, per epoch)
                           got = Render(doc)
-                          n   = Loss(got, want)
-                          k   = adapter complexity
-                          s   = adapter rank (e.g. PerCost(n, k))
+                          n   = adapter score (may call Pixels / RMSE)
 ```
 
 | Fn | Takes | Gives |
@@ -808,9 +763,7 @@ PNG ──Decode──► want *image.NRGBA
 | `Search` | `ctx`, `want *image.NRGBA` | `iter.Seq2[svg.Document, error]` |
 | `Last` | that sequence | last successful `svg.Document` |
 | `Render` | `svg.Document` | `got *image.NRGBA` |
-| `Loss` | `got`, `want *image.NRGBA` | `float64` (lower better) |
 | `Encode` | `svg.Document` | XML |
-| `ColorMap.Map` | `color.NRGBA` | `color.NRGBA` (inside Search) |
 
 Invariants:
 
@@ -818,9 +771,9 @@ Invariants:
 - `want` size is the canvas. A yielded Document uses that `Dx()×Dy()`. Internal scale stays inside the adapter.
 - `got` and `want` must share bounds or Loss is `+Inf`.
 - `want.A==0` is don't-care. Loss does not score those pixels.
-- Color is not a gene. Search may build a ColorMap from `want`.
+- Color is not a gene. An adapter may sample fills from `want`.
 - Oracle/resvg is not in this circuit.
-- Search does not take XML, `image.Image`, a Loss object, or a Cost. It may call Loss and its own Cost inside.
+- Search does not take XML, `image.Image`, a Loss, or a Cost. The adapter brings its own.
 
 ### Search (`internal/search`)
 
@@ -836,17 +789,11 @@ func New(name string) (Search, error)
 func Names() []string
 func Last(seq iter.Seq2[svg.Document, error]) (svg.Document, error)
 func FromImage(img image.Image) *image.NRGBA
-
-type Dumb struct {
-    Colors int // 0 = auto, cap 8
-}
-
-func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error]
 ```
 
-A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
+A new adapter is a subpackage plus `init { Register("name", ...) }`. Blank-import it from `internal/search/prelude`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search is the whole problem: `want` pixmap in, one `Document` per epoch. Host does not scale. Only a Search adapter may scale, as its own algorithm. A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject a ColorMap, a color count, a Loss, or a Cost. `--search` selects the registry name. Default `dumb`. `vectorize` and `preview` Encode `Last` (the last successful epoch). Zero epochs or a yielded error fail.
+Search is the whole problem: `want` pixmap in, one `Document` per epoch. Host does not scale. Only a Search adapter may scale, as its own algorithm. A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject them. `--search` selects the registry name. Default `dumb` (via prelude). `vectorize` and `preview` Encode `Last` (the last successful epoch). Zero epochs or a yielded error fail.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME
@@ -863,33 +810,16 @@ The tree has no rank. There is no shared Cost table. Each adapter owns complexit
 
 ### Loss (`internal/loss`)
 
+Pixmap compare helpers. Not a Search rank. An adapter may call them or ignore them.
+
 ```go
-package loss
-
-type Loss interface {
-    Loss(got, want *image.NRGBA) float64
-}
-
-type Pixels struct{} // first adapter
-
-func (Pixels) Loss(got, want *image.NRGBA) float64
-func PerCost(deviate float64, complexity int) float64
-func Of(doc svg.Document, want *image.NRGBA, complexity int) (float64, error)
+func Pixels(got, want *image.NRGBA) float64
+func RMSE(got, want *image.NRGBA) float64
 ```
 
 `Pixels`: count of pixels where `want.A != 0` and `got != want`. Nil or size mismatch → `+Inf`.
 
-`RMSE`: √(ΣΔRGB² / 3N) on scored pixels. Range 0..255.
-
-`Fit`: `RMSE/255 + 0.01·k`. One extra part must cut RMSE by ~2.5. Prefer this as a Search accept rule. `k` is Search-owned.
-
-`EpsFit`: if RMSE > 8, score `1+RMSE/255`; else score `k`. Simplest that fits.
-
-`PerCost`: `deviate / complexity`. Extra primitives shrink the number (known cheat). Complexity 0 → `0` if deviate is 0, else `+Inf`.
-
-`Of`: `Render(doc)` then `PerCost(Pixels.Loss(got, want), complexity)`. Search passes complexity.
-
-Dumb does not call Loss. A looping Search does.
+`RMSE`: √(ΣΔRGB² / 3N) on scored pixels. Range 0..255. No scored pixels → 0.
 
 ### Dumb (first Search adapter)
 
@@ -898,7 +828,7 @@ One epoch. No render loop. The iterator yields once and stops.
 Behavior:
 
 1. `w, h := img.Bounds().Dx(), img.Bounds().Dy()`. Origin in the tree is `(0,0)`, not `bounds.Min`. `NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))`.
-2. Build palette via `palette.Auto(img, colors)`.
+2. Build a palette from opaque pixels (unique colors if ≤ n, else median-cut). `n <= 0` means cap 8. Private to Dumb.
 3. If the palette is empty (fully transparent): return the empty document.
 4. One `<rect>` per palette color, most-used first (back / outer).
 5. First rect:
@@ -1012,9 +942,9 @@ Crashers: `pkg/render/testdata/fuzz/FuzzRender/`. Commit them. Go’s fuzz engin
 
 `svgolf verify` remains the one-file path.
 
-### Loss adapters after Pixels
+### Rank formulas
 
-Other formulas stay later. Palette-snap + pixels-not-in-common remains a candidate, not locked. Do not add slop.
+Stay inside the Search adapter. Do not add slop.
 
 ### Sequences
 
@@ -1026,13 +956,10 @@ sequenceDiagram
   participant CLI as svgolf vectorize
   participant PNG as image/png
   participant Search as search.Search
-  participant Pal as palette.Auto
   participant SVG as pkg/svg
   User->>CLI: in.png -o out.svg --search NAME
   CLI->>PNG: Decode
   CLI->>Search: New(NAME).Search(nrgba)
-  Search->>Pal: Auto (inside Dumb)
-  Pal-->>Search: colors most-used to least
   loop each color
     Search->>SVG: NewRect + WithFill + Append
   end
@@ -1271,9 +1198,9 @@ Not a hosted service.
 
 Unlocked. Do not implement as if decided.
 
-1. Loss formulas beyond `Pixels` / `PerCost`.
+1. Rank formula inside a looping Search.
 2. Search method (looping adapter).
-3. ColorMap adapters beyond palette.
+3. Color / palette logic beyond Dumb's private `auto`.
 4. Primitive weight iteration; polygon vertex tax formula.
 5. Gradients.
 6. Union / boolean.

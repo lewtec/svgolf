@@ -6,11 +6,7 @@ import (
 )
 
 // Pixels counts scored pixels where got != want. want.A == 0 is don't-care.
-type Pixels struct{}
-
-var _ Loss = Pixels{}
-
-func (Pixels) Loss(got, want *image.NRGBA) float64 {
+func Pixels(got, want *image.NRGBA) float64 {
 	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return math.Inf(1)
 	}
