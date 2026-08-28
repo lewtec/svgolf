@@ -23,6 +23,8 @@ func Cost(n Node) int {
 		return 2
 	case KindPolygon:
 		return 4
+	case KindPath:
+		return PathCost(n.path.cmds)
 	default:
 		return 0
 	}

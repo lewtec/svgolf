@@ -58,6 +58,7 @@ const (
 	KindEllipse
 	KindRect
 	KindPolygon
+	KindPath
 )
 
 type Node struct {
@@ -67,6 +68,7 @@ type Node struct {
 	ellipse Ellipse
 	rect    Rect
 	polygon Polygon
+	path    Path
 }
 
 func (n Node) Kind() Kind { return n.kind }
@@ -104,6 +106,13 @@ func (n Node) Polygon() (Polygon, bool) {
 		return Polygon{}, false
 	}
 	return n.polygon, true
+}
+
+func (n Node) Path() (Path, bool) {
+	if n.kind != KindPath {
+		return Path{}, false
+	}
+	return n.path, true
 }
 
 type Group struct {

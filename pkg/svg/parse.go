@@ -193,6 +193,8 @@ func parseChild(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 		return parseRect(dec, start)
 	case "polygon":
 		return parsePolygon(dec, start)
+	case "path":
+		return parsePath(dec, start)
 	default:
 		return Node{}, fmt.Errorf("parse: unknown tag %s", name)
 	}
@@ -413,6 +415,40 @@ func parsePolygon(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 		return Node{}, err
 	}
 	if err := skipEmpty(dec, "polygon"); err != nil {
+		return Node{}, err
+	}
+	return p.Node(), nil
+}
+
+func parsePath(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+	p := NewPath()
+	var pa paintAttrs
+	for _, a := range start.Attr {
+		key, err := attrName(a.Name)
+		if err != nil {
+			return Node{}, err
+		}
+		switch key {
+		case "d":
+			cmds, err := parsePathD(a.Value)
+			if err != nil {
+				return Node{}, err
+			}
+			p, err = p.WithCommands(cmds)
+			if err != nil {
+				return Node{}, err
+			}
+		default:
+			if !pa.set(key, a.Value) {
+				return Node{}, fmt.Errorf("parse: unknown attribute %s on path", key)
+			}
+		}
+	}
+	p, err := applyPathPaint(p, pa)
+	if err != nil {
+		return Node{}, err
+	}
+	if err := skipEmpty(dec, "path"); err != nil {
 		return Node{}, err
 	}
 	return p.Node(), nil
@@ -685,6 +721,29 @@ func applyRectPaint(r Rect, a paintAttrs) (Rect, error) {
 }
 
 func applyPolygonPaint(p Polygon, a paintAttrs) (Polygon, error) {
+	none, apply, col, rule, err := composeFill(a)
+	if err != nil {
+		return p, err
+	}
+	on, st, err := composeStroke(a)
+	if err != nil {
+		return p, err
+	}
+	if none {
+		p = p.WithFillNone()
+	} else if apply {
+		p = p.WithFill(col)
+	}
+	if rule == FillEvenOdd {
+		p = p.WithFillRule(FillEvenOdd)
+	}
+	if on {
+		p = p.WithStroke(st)
+	}
+	return p, nil
+}
+
+func applyPathPaint(p Path, a paintAttrs) (Path, error) {
 	none, apply, col, rule, err := composeFill(a)
 	if err != nil {
 		return p, err

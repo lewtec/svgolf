@@ -123,6 +123,9 @@ func flattenNode(n svg.Node) (path, bool) {
 	case svg.KindPolygon:
 		p, _ := n.Polygon()
 		return flattenPolygon(p)
+	case svg.KindPath:
+		p, _ := n.Path()
+		return flattenSVGPath(p)
 	default:
 		return path{}, false
 	}
@@ -196,6 +199,31 @@ func flattenPolygon(poly svg.Polygon) (path, bool) {
 		p.lineTo(float32(pt[0]), float32(pt[1]))
 	}
 	p.close()
+	return p, true
+}
+
+func flattenSVGPath(sp svg.Path) (path, bool) {
+	cmds := sp.Commands()
+	if len(cmds) == 0 {
+		return path{}, false
+	}
+	var p path
+	p.empty = true
+	for _, c := range cmds {
+		switch c.Kind {
+		case svg.CmdMove:
+			p.moveTo(float32(c.X), float32(c.Y))
+		case svg.CmdLine:
+			p.lineTo(float32(c.X), float32(c.Y))
+		case svg.CmdCubic:
+			p.cubicTo(float32(c.X1), float32(c.Y1), float32(c.X2), float32(c.Y2), float32(c.X), float32(c.Y))
+		case svg.CmdClose:
+			p.close()
+		}
+	}
+	if p.empty && len(p.segs) == 0 {
+		return path{}, false
+	}
 	return p, true
 }
 

@@ -51,6 +51,27 @@ func TestEncodeGoldens(t *testing.T) {
 			),
 		},
 		{name: "polygon.svg", doc: NewDocument(256, 256).Append(poly.Node())},
+		{
+			name: "path-tri.svg",
+			doc: NewDocument(256, 256).Append(
+				NewPath().MoveTo(40, 40).LineTo(120, 40).LineTo(80, 100).Close().Node(),
+			),
+		},
+		{
+			name: "path-cubic.svg",
+			doc: NewDocument(256, 256).Append(
+				NewPath().MoveTo(40, 120).CubicTo(40, 40, 120, 40, 120, 120).CubicTo(120, 200, 40, 200, 40, 120).Close().Node(),
+			),
+		},
+		{
+			name: "path-stroke.svg",
+			doc: NewDocument(256, 256).Append(
+				NewPath().MoveTo(30, 180).LineTo(125, 40).LineTo(220, 180).
+					WithFillNone().
+					WithStroke(NewStroke().WithWidth(4)).
+					Node(),
+			),
+		},
 		{name: "viewbox.svg", doc: NewDocument(256, 256).WithViewBox(0, 0, 100, 50)},
 	}
 	for _, tt := range tests {

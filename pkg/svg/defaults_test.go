@@ -78,6 +78,7 @@ func TestPublicConstructorsSetKind(t *testing.T) {
 		{"ellipse", NewEllipse().Node().Kind(), KindEllipse},
 		{"rect", NewRect().Node().Kind(), KindRect},
 		{"polygon", NewPolygon().Node().Kind(), KindPolygon},
+		{"path", NewPath().Node().Kind(), KindPath},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

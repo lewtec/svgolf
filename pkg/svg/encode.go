@@ -91,6 +91,8 @@ func (e *encoder) node(n Node, level int) error {
 		return e.rect(n.rect, level)
 	case KindPolygon:
 		return e.polygon(n.polygon, level)
+	case KindPath:
+		return e.pathEl(n.path, level)
 	default:
 		return fmt.Errorf("encode: invalid node")
 	}
@@ -193,6 +195,15 @@ func (e *encoder) polygon(p Polygon, level int) error {
 		b.WriteString(fmtNum(pt[1]))
 	}
 	e.attr("points", b.String())
+	e.paint(p.paint)
+	e.str("/>\n")
+	return e.err
+}
+
+func (e *encoder) pathEl(p Path, level int) error {
+	e.indent(level)
+	e.str("<path")
+	e.attr("d", encodePathD(p.cmds))
 	e.paint(p.paint)
 	e.str("/>\n")
 	return e.err

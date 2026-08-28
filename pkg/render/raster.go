@@ -115,6 +115,9 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 	for _, s := range p.segs {
 		switch s.kind {
 		case segMove:
+			if have {
+				flushLine(mx, my) // tiny-skia fill closes the previous contour
+			}
 			mx, my, cx, cy = s.x, s.y, s.x, s.y
 			have = true
 		case segLine:
@@ -126,6 +129,9 @@ func buildLineEdges(p path, shift int32) []lineEdge {
 				flushLine(mx, my)
 			}
 		}
+	}
+	if have {
+		flushLine(mx, my)
 	}
 	return edges
 }

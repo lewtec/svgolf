@@ -150,7 +150,7 @@ func TestParseRejects(t *testing.T) {
 		{name: "rgb()", xml: `<svg width="256" height="256"><circle r="1" fill="rgb(0,0,0)"/></svg>`},
 		{name: "winding", xml: `<svg width="256" height="256"><polygon points="0,0 1,0 0,1" fill-rule="winding"/></svg>`},
 		{name: "text", xml: `<svg width="256" height="256">hello</svg>`},
-		{name: "path", xml: `<svg width="256" height="256"><path d="M0 0"/></svg>`},
+		{name: "path arc", xml: `<svg width="256" height="256"><path d="M0 0 A10 10 0 0 1 10 10"/></svg>`},
 		{name: "em unit", xml: `<svg width="10em" height="256"/></svg>`},
 		{name: "non-integer canvas", xml: `<svg width="256.5" height="256"/>`},
 		{name: "negative r", xml: `<svg width="256" height="256"><circle r="-1"/></svg>`},

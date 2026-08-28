@@ -52,7 +52,7 @@ func paintNode(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
 		return paintNodes(pm, g.Children(), sx, sy, tx, ty)
 	case svg.KindInvalid:
 		return fmt.Errorf("render: invalid node")
-	case svg.KindRect, svg.KindCircle, svg.KindEllipse, svg.KindPolygon:
+	case svg.KindRect, svg.KindCircle, svg.KindEllipse, svg.KindPolygon, svg.KindPath:
 		return paintPrimitive(pm, n, sx, sy, tx, ty)
 	default:
 		return fmt.Errorf("render: unknown node")
@@ -114,6 +114,9 @@ func paintOf(n svg.Node) (fillCol, bool, svg.FillRule, svg.Stroke, bool) {
 		return takePaint(e.Fill, e.FillOpacity, e.FillRule, e.Stroke)
 	case svg.KindPolygon:
 		p, _ := n.Polygon()
+		return takePaint(p.Fill, p.FillOpacity, p.FillRule, p.Stroke)
+	case svg.KindPath:
+		p, _ := n.Path()
 		return takePaint(p.Fill, p.FillOpacity, p.FillRule, p.Stroke)
 	default:
 		return fillCol{}, false, 0, svg.Stroke{}, false

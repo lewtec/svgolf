@@ -85,6 +85,25 @@ func TestWithPointsRejectsBadLength(t *testing.T) {
 	}
 }
 
+func TestPathCommandsCopy(t *testing.T) {
+	t.Parallel()
+	in := []PathCmd{{Kind: CmdMove, X: 0, Y: 0}, {Kind: CmdLine, X: 1, Y: 0}, {Kind: CmdClose}}
+	p, err := NewPath().WithCommands(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in[0].X = 99
+	got := p.Commands()
+	if got[0].X != 0 {
+		t.Errorf("mutating WithCommands input changed stored cmds: %+v", got[0])
+	}
+	got[1].X = 7
+	again := p.Commands()
+	if again[1].X != 1 {
+		t.Errorf("mutating Commands() result changed stored cmds: %+v", again[1])
+	}
+}
+
 func TestRXIndependentOfRY(t *testing.T) {
 	t.Parallel()
 	r := NewRect().WithWidth(10).WithHeight(10).WithRX(5)

@@ -46,4 +46,4 @@ svgolf preview   --search NAME
 
 ## Not in v1
 
-Looping Search, other Loss formulas, path/Bézier primitives, transform, clip, mask, gradients, `svgolf fuzz` (use `go test -fuzz=FuzzRender`).
+Looping Search, other Loss formulas, transform, clip, mask, gradients, `svgolf fuzz` (use `go test -fuzz=FuzzRender`).

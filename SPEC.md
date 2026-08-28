@@ -99,7 +99,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 | Decision | Rationale |
 | --- | --- |
 | Production editable SVG, not a research demo | Success is Figma/Inkscape edit, not visual resemblance. |
-| Native primitives with Cost ranks | Search later needs cheap circles/rects; paths stay later. |
+| Native primitives with Cost ranks | Search later needs cheap circles/rects; Path is M/L/C/Z when an island is a curve. |
 | Tree of structs; sealed `Node`; no interface zoo | Matches SVG document order. Avoids Drawable/Shape hierarchies. |
 | Opaque fields; `New*` returns Go zero; zero **is** the SVG default | Callers cannot write literals. Defaults cannot drift. |
 | No `*Paint` for unset | Presence is a flag or a dedicated none-state, not a nil pointer. |
@@ -133,7 +133,7 @@ One concept, one word. Do not use the banned column in code, flags, or new prose
 Out of the tree, parser, encoder, renderer, and CLI:
 
 - text, image, use, symbol
-- path, polyline
+- polyline
 - gradients, patterns, filters
 - mask, clipPath, marker
 - dasharray, dashoffset
@@ -151,7 +151,7 @@ Out of the tree, parser, encoder, renderer, and CLI:
 - ColorMap adapters other than palette
 - primitive weight iteration
 - union / boolean
-- Bézier primitives
+- path commands other than M/L/H/V/C/S/Z (no Q, T, A)
 - `svgolf fuzz` command
 - linters in mise (later)
 
@@ -220,6 +220,8 @@ github.com/lewtec/svgolf
     ellipse.go
     rect.go
     polygon.go
+    path.go          # Path, PathCmd, PathCost
+    pathd.go         # d encode/parse
     paint.go         # fill, stroke, FillRule, LineCap, LineJoin
     encode.go
     parse.go
@@ -273,7 +275,7 @@ Construction rules:
 
 - Fields stay unexported.
 - Callers never write composite literals.
-- `NewCircle()`, `NewEllipse()`, `NewRect()`, `NewPolygon()`, `NewGroup()`, `NewStroke()`, `NewDocument(w, h)` return the type’s Go zero value.
+- `NewCircle()`, `NewEllipse()`, `NewRect()`, `NewPolygon()`, `NewPath()`, `NewGroup()`, `NewStroke()`, `NewDocument(w, h)` return the type’s Go zero value.
 - That zero value **is** the SVG spec default.
 
 Numeric SVG defaults that are not Go zero (stroke-width 1, opacities 1, miterlimit 4) use an unexported `set bool` wrapper. Getters resolve the spec default. Callers never see the wrapper.
@@ -302,9 +304,9 @@ Stroke presence is `strokeOn bool` on the shape (zero = none). `NewStroke()` is 
 Value receivers look immutable. They must be.
 
 - `Document.Append` and `Group.Append` clone the child slice, then append.
-- `WithPoints` copies the input slice.
-- `Children()` and `Points()` return a fresh copy. Callers must not assume aliasing.
-- Mutating the slice passed to `WithPoints`, or the slice from `Points()`/`Children()`, must not change a later `Encode`. Tests in PR 2 cover this.
+- `WithPoints` and `WithCommands` copy the input slice.
+- `Children()`, `Points()`, and `Commands()` return a fresh copy. Callers must not assume aliasing.
+- Mutating the slice passed to `WithPoints` / `WithCommands`, or the slice from `Points()` / `Commands()` / `Children()`, must not change a later `Encode`. Tests in PR 2 cover this.
 
 #### Types
 
@@ -366,6 +368,7 @@ func (n Node) Circle() (Circle, bool)
 func (n Node) Ellipse() (Ellipse, bool)
 func (n Node) Rect() (Rect, bool)
 func (n Node) Polygon() (Polygon, bool)
+func (n Node) Path() (Path, bool)
 
 type Kind int
 
@@ -376,6 +379,7 @@ const (
     KindEllipse
     KindRect
     KindPolygon
+    KindPath
 )
 
 type Group struct { /* unexported children */ }
@@ -421,6 +425,33 @@ func NewPolygon() Polygon
 func (p Polygon) WithPoints(pts [][2]float64) (Polygon, error) // copies pts
 func (p Polygon) Points() [][2]float64                         // defensive copy
 func (p Polygon) Node() Node
+
+type PathCmdKind uint8
+
+const (
+    CmdMove PathCmdKind = iota
+    CmdLine
+    CmdCubic
+    CmdClose
+)
+
+// PathCmd is absolute. Cubics store controls in X1,Y1,X2,Y2 and end in X,Y.
+type PathCmd struct {
+    Kind           PathCmdKind
+    X, Y           float64
+    X1, Y1, X2, Y2 float64
+}
+
+type Path struct { /* unexported cmds */ }
+
+func NewPath() Path
+func (p Path) MoveTo(x, y float64) Path
+func (p Path) LineTo(x, y float64) Path
+func (p Path) CubicTo(x1, y1, x2, y2, x, y float64) Path
+func (p Path) Close() Path
+func (p Path) WithCommands(cmds []PathCmd) (Path, error) // copies cmds; error if > 4096
+func (p Path) Commands() []PathCmd                       // defensive copy
+func (p Path) Node() Node
 ```
 
 Paint mutators exist on each shape (same names, value receivers). Shared unexported `paint` struct avoids a public mixin.
@@ -473,6 +504,17 @@ A polygon is valid iff `3 ≤ len(points) ≤ 1024`.
 - `NewPolygon()` is an incomplete builder (0 points). `Encode` and `Render` reject it with the same error.
 - Vertex cap **1024** is mandatory (Parse, `WithPoints`, Encode, Render).
 
+#### Path validity
+
+A path stores only absolute `M` / `L` / `C` / `Z`. Relative `m/l/c/z` and `H/V/S` (relative too) are Parse-only; they become those four.
+
+- `Q`, `T`, `A` (and relatives) → Parse error.
+- More than **4096** commands → error (`WithCommands`, Parse).
+- `NewPath()` is empty (`d=""`). Cost 0. Encode emits `<path d=""/>`. Render no-ops.
+- Encode writes absolute `M`/`L`/`C`/`Z` with `fmtNum` and spaces (`M40 40 L120 40 Z`).
+
+`PathCost`: count stored points (`M`/`L` = 1, `C` = 3, `Z` = 0). Empty → 0. Else `1 + max(0, n-4)` so a 4-point box costs 1.
+
 #### Document size and degenerate geometry
 
 `NewDocument` does not clamp. Writers and raster share one validity table:
@@ -502,6 +544,7 @@ Search is later. Ranks exist in the model.
 | 2 | ellipse, rounded rect |
 | 3 | triangle / regular polygon (later detector) |
 | 4 | free polygon (vertex tax later) |
+| 1 + max(0, n−4) | Path; n is stored points (`M`/`L`=1, `C`=3) |
 
 ```go
 func Cost(n Node) int
@@ -513,6 +556,7 @@ func Cost(n Node) int
 - Rect: 1 if clamped `rx==0` and clamped `ry==0`; else 2.
 - Ellipse: 2.
 - Polygon: 4 in v1. Regularity and vertex tax stay later. Do not invent the tax formula.
+- Path: `PathCost` (above). Empty path is 0.
 
 Search that sums `Cost` over `Children()` must not also add `Cost(group)` (that would double-count). Prefer `Cost` on the group, which already sums.
 
@@ -573,6 +617,8 @@ Rules:
 
 `<polygon>`: `points`, then paint
 
+`<path>`: `d`, then paint
+
 paint order: `fill`, `fill-opacity`, `fill-rule`, `stroke`, `stroke-opacity`, `stroke-width`, `stroke-linecap`, `stroke-linejoin`, `stroke-miterlimit`
 
 - Numbers: `strconv.FormatFloat(v, 'f', -1, 64)`. Emit `0` not `-0`. No scientific notation.
@@ -595,8 +641,8 @@ Rules:
 
 - Unknown tag → error.
 - Unknown attribute → error.
-- Allowed tags: `svg`, `g`, `circle`, `ellipse`, `rect`, `polygon`.
-- Allowed attributes: the Encode lists plus `xmlns` on `<svg>` only.
+- Allowed tags: `svg`, `g`, `circle`, `ellipse`, `rect`, `polygon`, `path`.
+- Allowed attributes: the Encode lists plus `xmlns` on `<svg>` only. `d` on `<path>`.
 - `<g>` has **no** presentation attributes. `fill` or `stroke` on `<g>` is an unknown attribute. There is no inheritance in v1. Each shape carries its own paint. resvg would inherit; our subset forbids the parent attributes so both sides see the same per-shape defaults.
 - `xmlns` must be `http://www.w3.org/2000/svg` when present. Missing `xmlns` is accepted. Other namespaces → error.
 - Token names: accept both `Name.Local=="svg"` with empty `Name.Space` and `Name.Space=="http://www.w3.org/2000/svg"` with `Name.Local=="svg"` (and the same for child tags). Both xmlns-present and xmlns-absent files must parse.
@@ -609,6 +655,7 @@ Rules:
 - Adapter: construct only via `New*` / `With*`.
 - `rx`/`ry` on rect: if one is omitted, copy the other (SVG). Both omitted → 0. If both present, store both (including `ry="0"`).
 - `viewBox` and `points`: SVG number-list grammar (comma or whitespace separators; extra commas/whitespace allowed).
+- `d`: SVG path numbers (comma or whitespace; implicit separators like `1-2` and `1.2.3`). First command must exist. Implicit repeats after `M`/`m` become `L`/`l`. Reject `Q`/`T`/`A`.
 - Reject non-finite numbers, negative `width`/`height`/`r`/`rx`/`ry`, and non-positive or non-integer document size (see validity table).
 
 resvg is not the parser.
@@ -667,6 +714,7 @@ Do not invent a coverage rasterizer. Port the crates resvg **0.47.0** actually r
 | Piece | Upstream (tag / crate) | Files |
 | --- | --- | --- |
 | Flatten circle/ellipse/rect/polygon | usvg **0.47.0** | `crates/usvg/src/parser/shapes.rs` (`convert_rect`, `convert_circle`, `convert_ellipse`/`ellipse_to_path`, polygon) |
+| Flatten path | identity | stored `M`/`L`/`C`/`Z` → renderer path; fill auto-closes each contour (tiny-skia) |
 | Path + stroker | tiny-skia-path **0.12.0** | `path/src/path_builder.rs`, `path/src/stroker.rs` |
 | AA fill | tiny-skia **0.12.0** | `src/scan/path_aa.rs` (`SUPERSAMPLE_SHIFT = 2` → 4× per axis), `src/scan/path.rs`, edge builder |
 | Blit / source-over | tiny-skia **0.12.0** | `src/pipeline/blitter.rs`, `src/pipeline/lowp.rs` `SourceOver` / `SourceOverRgba` |
@@ -1251,7 +1299,7 @@ Unlocked. Do not implement as if decided.
 4. Primitive weight iteration; polygon vertex tax formula.
 5. Gradients.
 6. Union / boolean.
-7. Path / Bézier primitives.
+7. ~~Path / Bézier primitives~~ — locked: `Path` is absolute `M`/`L`/`C`/`Z`. Parse also accepts relative and `H`/`V`/`S`. `Q`/`T`/`A` stay out.
 8. Transform, if a mark needs it.
 9. 1-bit AA slop, only after documented fights.
 10. Named CSS colors in Parse.
