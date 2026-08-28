@@ -26,12 +26,13 @@ Match is exact RGBA vs resvg. No slop.
 ```
 svgolf render    in.svg -o out.png
 svgolf verify    in.svg [--diff path]
-svgolf vectorize in.png -o out.svg [--colors N]
+svgolf vectorize in.png -o out.svg [--search NAME]
+svgolf preview   --search NAME
 ```
 
 `verify` exits 0 only when every pixel matches resvg (and Encode does not drift). On a pixel mismatch it writes `<input>.diff.png`.
 
-`vectorize` is PNG → Search → Encode. v1 Search is Dumb: one rect per palette color, most-used first, concentric 75% shrink.
+`vectorize` is PNG → `search.New` → Encode. Register a method with `search.Register` in `init`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + 480px PNG). v1 ships `dumb`.
 
 ## Layout
 

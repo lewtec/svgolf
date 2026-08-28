@@ -744,7 +744,7 @@ type ColorMap interface {
 func Auto(img image.Image, n int) (ColorMap, []color.NRGBA, error)
 ```
 
-`n <= 0` means auto cap 8. `n > 0` is `--colors N` (may exceed 8).
+`n <= 0` means auto cap 8. `n > 0` is a caller-chosen size (Search adapters decide; not a CLI flag).
 
 Iterate `img.Bounds()`: `Y` from `Min.Y` to `Max.Y-1`, `X` from `Min.X` to `Max.X-1`. Canvas size is `Dx()` × `Dy()`, not `Max`. `png.Decode` is usually `Min==(0,0)`; do not assume it.
 
@@ -809,6 +809,12 @@ type Search interface {
     Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
 }
 
+func Register(name string, make func() Search)
+func New(name string) (Search, error)
+func Names() []string
+func FromImage(img image.Image) *image.NRGBA
+func FitCanvas(src *image.NRGBA, max int) *image.NRGBA // max≤0 → MaxCanvas (4096)
+
 type Dumb struct {
     Colors int // 0 = auto, cap 8
 }
@@ -816,7 +822,18 @@ type Dumb struct {
 func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error)
 ```
 
-Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap. `--colors` is a field on `Dumb`.
+A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
+
+Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`.
+
+```
+svgolf vectorize in.png -o out.svg --search NAME
+svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview]
+```
+
+`preview` walks eval PNGs, `FitCanvas` to 4096, writes `want-<scene>.png` (480), `<scene>.svg`, and `<scene>.png` via `resvg --width 480`. That is the PR-body render path.
+
+`mise run preview -- --search NAME`
 
 ### Loss (`internal/loss`)
 
@@ -909,20 +926,22 @@ Cobra. Pattern from `eletrocromo`: `newRootCmd`, `SilenceUsage`, errors on stder
 ```
 svgolf render   in.svg -o out.png
 svgolf verify   in.svg [--diff path]
-svgolf vectorize in.png -o out.svg [--colors N]
+svgolf vectorize in.png -o out.svg [--search NAME]
+svgolf preview --search NAME
 ```
 
 | Command | Pipeline | Exit |
 | --- | --- | --- |
 | `render` | Parse → Render → `png.Encode` | 1 on error |
 | `verify` | `verify.File` (oracle = original bytes); write diff PNG on pixel mismatch of equal size | 0 iff ours matches resvg(original) and Encode does not drift; 1 otherwise |
-| `vectorize` | `png.Decode` → `search.Search` (`Dumb`) → Encode | 1 on error |
+| `vectorize` | `png.Decode` → `FitCanvas` → `search.New` → Encode | 1 on error |
+| `preview` | eval PNGs → Search → `testdata/preview` (want PNG, SVG, resvg 480) | 1 on error |
 
 Flags:
 
 - `-o` required on `render` and `vectorize`.
 - `verify --diff` defaults to `<input>.diff.png` beside the input file. Write only when sizes match and pixels differ. On size mismatch, print both bounds and skip the file.
-- `vectorize --colors N` default 0 (auto, cap 8).
+- Palette size is the adapter's problem, not a CLI flag.
 
 No `svgolf fuzz`.
 
@@ -977,9 +996,9 @@ sequenceDiagram
   participant Search as search.Search
   participant Pal as palette.Auto
   participant SVG as pkg/svg
-  User->>CLI: in.png -o out.svg --colors N
+  User->>CLI: in.png -o out.svg --search NAME
   CLI->>PNG: Decode
-  CLI->>Search: Dumb{Colors: N}.Search(nrgba)
+  CLI->>Search: New(NAME).Search(nrgba)
   Search->>Pal: Auto (inside Dumb)
   Pal-->>Search: colors most-used to least
   loop each color

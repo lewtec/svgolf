@@ -14,6 +14,10 @@ run = "go build -o bin/svgolf ./cmd/svgolf"
 description = "Unit tests (resvg on PATH via mise)"
 run = "go test ./..."
 
+[tasks.preview]
+description = "Run a Search on testdata/eval into testdata/preview (pass -- --search NAME)"
+run = "go run ./cmd/svgolf preview"
+
 [tasks.fuzz]
 description = "Exact-match fuzz vs resvg (long)"
 run = "go test -fuzz=FuzzRender -fuzztime=30s ./pkg/render"

@@ -17,6 +17,10 @@ type Dumb struct {
 
 var _ Search = Dumb{}
 
+func init() {
+	Register("dumb", func() Search { return Dumb{} })
+}
+
 func (d Dumb) Search(ctx context.Context, target *image.NRGBA) (svg.Document, error) {
 	if err := ctx.Err(); err != nil {
 		return svg.Document{}, err

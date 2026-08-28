@@ -13,14 +13,19 @@ func newRootCmd() *cobra.Command {
 Commands:
   render      SVG file to PNG (in-process renderer)
   verify      compare in-process render to resvg
-  vectorize   PNG to SVG (Search; v1 is Dumb)
+  vectorize   PNG to SVG (--search NAME)
+  preview     run Search on testdata/eval → testdata/preview
 
-v1 Search is Dumb (one shot). Run tests with: mise run test`,
+Register a Search with search.Register in init. Then:
+  mise exec -- go run ./cmd/svgolf preview --search NAME
+
+v1 ships Dumb. Run tests with: mise run test`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	cmd.AddCommand(newRenderCmd())
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newVectorizeCmd())
+	cmd.AddCommand(newPreviewCmd())
 	return cmd
 }
