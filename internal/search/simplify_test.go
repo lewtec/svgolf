@@ -153,6 +153,36 @@ func TestSimplifyDropsStairPoints(t *testing.T) {
 	}
 }
 
+func TestSimplifyDropsEdgeSpike(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 30, 16))
+	for y := 4; y < 12; y++ {
+		for x := 3; x < 27; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{B: 200, A: 255})
+		}
+	}
+	img.SetNRGBA(15, 3, color.NRGBA{B: 200, A: 255})
+	doc, err := (Simplify{Colors: 1}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Children()) != 1 {
+		t.Fatalf("kids=%d", len(doc.Children()))
+	}
+	p, ok := doc.Children()[0].Path()
+	if !ok {
+		t.Fatal("not path")
+	}
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			n++
+		}
+	}
+	if n > 8 {
+		t.Fatalf("1px spike kept: %d cmds %+v", n, p.Commands())
+	}
+}
+
 func TestSimplifyDropsFringeColor(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 80, 80))
 	for y := 0; y < 80; y++ {

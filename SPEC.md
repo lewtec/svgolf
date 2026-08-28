@@ -878,7 +878,7 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 
 A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`. `simplify` paints islands back-to-front (largest first) while residual SSE drops, then peels a layer when Fit improves. Fill is the mean of the island’s PNG pixels. Smooth spans emit one cubic.
+Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`. `simplify` paints islands back-to-front (largest first) while residual SSE drops, then peels a layer when Fit improves. Fill is the mean of the island’s PNG pixels. Vertex drop ignores a 1px fringe so outlines do not follow raster stairs. Smooth spans emit one cubic.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME

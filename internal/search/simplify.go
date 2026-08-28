@@ -563,14 +563,22 @@ func simpErode(pix []image.Point, w, h int) []image.Point {
 }
 
 type simpMask struct {
-	in, core []bool
-	w, h     int
+	in, core, hull []bool
+	w, h           int
 }
 
 func newSimpMask(b simpBlob, w, h int) *simpMask {
-	m := &simpMask{in: make([]bool, w*h), core: make([]bool, w*h), w: w, h: h}
+	m := &simpMask{in: make([]bool, w*h), core: make([]bool, w*h), hull: make([]bool, w*h), w: w, h: h}
 	for _, p := range b.pix {
 		m.in[p.Y*w+p.X] = true
+		for dy := -1; dy <= 1; dy++ {
+			for dx := -1; dx <= 1; dx++ {
+				x, y := p.X+dx, p.Y+dy
+				if x >= 0 && y >= 0 && x < w && y < h {
+					m.hull[y*w+x] = true
+				}
+			}
+		}
 	}
 	core := simpErode(b.pix, w, h)
 	if len(core) == 0 {
@@ -615,12 +623,34 @@ func simpConverge(loops [][][2]float64, m *simpMask) [][][2]float64 {
 	cur := copyLoops(loops)
 	for {
 		n0 := simpCount(cur)
+		for i := range cur {
+			cur[i] = simpCollapseF(cur[i])
+		}
 		cur = simpDrop(cur, m)
 		if simpCount(cur) >= n0 {
 			break
 		}
 	}
 	return cur
+}
+
+func simpCollapseF(pts [][2]float64) [][2]float64 {
+	n := len(pts)
+	if n < 3 {
+		return pts
+	}
+	out := make([][2]float64, 0, n)
+	for i := 0; i < n; i++ {
+		a, b, c := pts[(i-1+n)%n], pts[i], pts[(i+1)%n]
+		if (b[0]-a[0])*(c[1]-b[1]) == (b[1]-a[1])*(c[0]-b[0]) {
+			continue
+		}
+		out = append(out, b)
+	}
+	if len(out) < 3 {
+		return pts
+	}
+	return out
 }
 
 // simpSpanRDP splits each loop at sharp corners and RDP's each arc alone,
@@ -767,10 +797,10 @@ func (m *simpMask) earOK(a, b, c [2]float64, ccw bool) bool {
 				continue
 			}
 			i := y*m.w + x
-			if convex && m.in[i] {
+			if convex && m.core[i] {
 				return false
 			}
-			if !convex && !m.in[i] {
+			if !convex && !m.hull[i] {
 				return false
 			}
 		}
@@ -974,7 +1004,7 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 		merged := false
 		for t := j; t >= i+3; t-- {
 			run := lp[i : t+1]
-			ok, c1, c2 := fitCubic(run, 8)
+			ok, c1, c2 := fitCubic(run, fitCubicEps(run))
 			if !ok {
 				continue
 			}
@@ -1025,7 +1055,7 @@ func simpFourCubics(lp [][2]float64) []svg.PathCmd {
 			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
 			continue
 		}
-		ok, c1, c2 := fitCubic(run, 8)
+		ok, c1, c2 := fitCubic(run, fitCubicEps(run))
 		end := run[len(run)-1]
 		if !ok {
 			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
@@ -1051,6 +1081,14 @@ func simpSpanSmooth(run [][2]float64) bool {
 		}
 	}
 	return true
+}
+
+func fitCubicEps(pts [][2]float64) float64 {
+	if len(pts) < 2 {
+		return 4
+	}
+	a, b := pts[0], pts[len(pts)-1]
+	return 4 + math.Hypot(b[0]-a[0], b[1]-a[1])/25
 }
 
 func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
