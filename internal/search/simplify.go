@@ -325,6 +325,16 @@ func simpPath(b simpBlob, w, h int) (svg.Node, bool) {
 	if len(best) == 0 {
 		return svg.Node{}, false
 	}
+	eps := 1.5
+	if a := math.Sqrt(float64(b.area)) / 80; a > eps {
+		eps = a
+	}
+	for i := range best {
+		got := simpRDPBySpan(best[i], eps)
+		if len(got) >= 3 {
+			best[i] = got
+		}
+	}
 	cmds := simpEmit(best)
 	for n := 2.0; len(cmds) > 4096 && n <= 64; n *= 2 {
 		for i := range best {
@@ -719,11 +729,19 @@ func simpCorners(lp [][2]float64) []bool {
 	n := len(lp)
 	out := make([]bool, n)
 	for i := 0; i < n; i++ {
-		if turnDeg(lp[(i-1+n)%n], lp[i], lp[(i+1)%n]) >= 40 {
+		if simpFeature(lp[(i-1+n)%n], lp[i], lp[(i+1)%n]) {
 			out[i] = true
 		}
 	}
 	return out
+}
+
+// simpFeature is a real corner: sharp turn with legs longer than a raster stair.
+func simpFeature(a, b, c [2]float64) bool {
+	if turnDeg(a, b, c) < 40 {
+		return false
+	}
+	return math.Hypot(b[0]-a[0], b[1]-a[1]) >= 4 && math.Hypot(c[0]-b[0], c[1]-b[1]) >= 4
 }
 
 func simpCount(loops [][][2]float64) int {
@@ -757,6 +775,9 @@ func simpDropAt(lp [][2]float64, m *simpMask) int {
 	best, bestA := -1, math.MaxFloat64
 	for i := 0; i < n; i++ {
 		a, b, c := lp[(i-1+n)%n], lp[i], lp[(i+1)%n]
+		if simpFeature(a, b, c) {
+			continue
+		}
 		area := math.Abs((b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]))
 		if area >= bestA {
 			continue
@@ -774,6 +795,10 @@ func (m *simpMask) earOK(a, b, c [2]float64, ccw bool) bool {
 	convex := cross > 0
 	if !ccw {
 		convex = cross < 0
+	}
+	maxEdge := math.Max(math.Hypot(b[0]-a[0], b[1]-a[1]), math.Hypot(c[0]-b[0], c[1]-b[1]))
+	if ac := math.Hypot(c[0]-a[0], c[1]-a[1]); ac > maxEdge {
+		maxEdge = ac
 	}
 	minX := int(math.Floor(math.Min(a[0], math.Min(b[0], c[0]))))
 	maxX := int(math.Ceil(math.Max(a[0], math.Max(b[0], c[0]))))
@@ -797,6 +822,17 @@ func (m *simpMask) earOK(a, b, c [2]float64, ccw bool) bool {
 				continue
 			}
 			i := y*m.w + x
+			// Tiny ears are raster stairs: allow a 1px fringe.
+			// Longer ears are features: stay pixel-exact so bays survive.
+			if maxEdge > 3 {
+				if convex && m.in[i] {
+					return false
+				}
+				if !convex && !m.in[i] {
+					return false
+				}
+				continue
+			}
 			if convex && m.core[i] {
 				return false
 			}

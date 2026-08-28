@@ -183,6 +183,47 @@ func TestSimplifyDropsEdgeSpike(t *testing.T) {
 	}
 }
 
+func TestSimplifyKeepsBay(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 16))
+	fill := func(x0, y0, x1, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := x0; x < x1; x++ {
+				img.SetNRGBA(x, y, color.NRGBA{B: 200, A: 255})
+			}
+		}
+	}
+	fill(2, 2, 8, 14)
+	fill(16, 2, 22, 14)
+	fill(2, 10, 22, 14)
+	doc, err := (Simplify{Colors: 1}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Children()) != 1 {
+		t.Fatalf("kids=%d", len(doc.Children()))
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NRGBAAt(12, 5).A != 0 {
+		t.Fatalf("bay filled %+v", got.NRGBAAt(12, 5))
+	}
+	if got.NRGBAAt(4, 5).A == 0 {
+		t.Fatal("arm empty")
+	}
+	p, _ := doc.Children()[0].Path()
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			n++
+		}
+	}
+	if n < 6 {
+		t.Fatalf("bay corners dropped: %d cmds %+v", n, p.Commands())
+	}
+}
+
 func TestSimplifyDropsFringeColor(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 80, 80))
 	for y := 0; y < 80; y++ {
