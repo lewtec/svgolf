@@ -102,6 +102,19 @@ func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 	return meanFill(want, best), best
 }
 
+func hueOn(got, want *image.NRGBA, island []pix) float64 {
+	if len(island) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, p := range island {
+		q := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
+		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
+		sum += loss.HueAt(g, q)
+	}
+	return sum / float64(len(island))
+}
+
 func meanFill(want *image.NRGBA, island []pix) color.NRGBA {
 	if len(island) == 0 {
 		return color.NRGBA{}

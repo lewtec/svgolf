@@ -20,7 +20,8 @@ const (
 )
 
 // Stack covers a coarse residual region with a simple path, then tightens that same path.
-// Accept when mean HSV hue distance drops. Stop after stallLimit failed regions in a row.
+// A new path is accepted on island-local hue drop (global mean traps after a plate).
+// Tightening is accepted on global hue drop. Stop after stallLimit failed regions.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -59,10 +60,15 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				return
 			}
 			col, island := largestIsland(got, target, skip)
-			if len(island) < minIsland {
+			need := minIsland
+			if n := w * h / 20000; n > need {
+				need = n
+			}
+			if len(island) < need {
 				break
 			}
 			placed := false
+			local := hueOn(got, target, island)
 			for _, ring := range forms(island) {
 				if len(ring) < 3 {
 					continue
@@ -78,11 +84,14 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					yield(svg.Document{}, err)
 					return
 				}
-				nhue := loss.Hue(ngot, target)
-				if !(nhue < best) {
+				if !placed {
+					if !(hueOn(ngot, target, island) < local) {
+						continue
+					}
+				} else if !(loss.Hue(ngot, target) < best) {
 					continue
 				}
-				doc, got, best = next, ngot, nhue
+				doc, got, best = next, ngot, loss.Hue(ngot, target)
 				placed = true
 				stall = 0
 				yielded = true

@@ -30,7 +30,7 @@ func TestStackSolid(t *testing.T) {
 	}
 }
 
-func TestStackTwoColorRMSEFalls(t *testing.T) {
+func TestStackTwoColorGetsBoth(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 8; x++ {
@@ -41,25 +41,42 @@ func TestStackTwoColorRMSEFalls(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	var last float64
-	n := 0
-	for doc, err := range (Stack{}).Search(t.Context(), img) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := render.Render(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r := loss.Hue(got, img)
-		if n > 0 && r >= last {
-			t.Fatalf("epoch %d hue %v not < %v", n, r, last)
-		}
-		last = r
-		n++
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n < 2 {
-		t.Fatalf("epochs=%d want >=2", n)
+	if n := len(doc.Children()); n < 2 {
+		t.Fatalf("paths=%d want >=2", n)
+	}
+}
+
+func TestStackMarkAfterPlate(t *testing.T) {
+	// navy field + black block: global hue must not block the mark
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			c := navy
+			if x >= 8 && x < 24 && y >= 8 && y < 24 {
+				c = color.NRGBA{A: 255}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n < 2 {
+		t.Fatalf("paths=%d want >=2 (plate + mark)", n)
+	}
+	empty := image.NewNRGBA(img.Rect)
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loss.Hue(got, img) >= loss.Hue(empty, img) {
+		t.Fatalf("final hue not better than empty")
 	}
 }
 
