@@ -35,6 +35,34 @@ func TestSimplifyNilPixmap(t *testing.T) {
 	}
 }
 
+func TestSimplifyDoesNotSplitNearCyan(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 12, G: 22, B: 36, A: 255})
+		}
+	}
+	for y := 6; y < 14; y++ {
+		for x := 8; x < 28; x++ {
+			c := color.NRGBA{G: 174, B: 248, A: 255}
+			switch (x + y) % 3 {
+			case 1:
+				c.G = 179
+			case 2:
+				c.B = 249
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	doc, err := (Simplify{}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n > 3 {
+		t.Fatalf("near-cyan AA split into %d paths", n)
+	}
+}
+
 func TestSimplifySolidIsBoxPath(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {

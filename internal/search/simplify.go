@@ -16,7 +16,7 @@ import (
 // Simplify traces each color island as a path, then drops points while
 // the island stays covered. Cubics replace long runs when they stay close.
 type Simplify struct {
-	Colors int // 0 = auto, cap 8
+	Colors int // 0 = grow k until Fit stalls; >0 = that many colors
 }
 
 var _ Search = Simplify{}
@@ -46,27 +46,9 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	if w <= 0 || h <= 0 {
 		return doc, nil
 	}
-	nPal := s.Colors
-	if nPal <= 0 {
-		nPal = 8
-	}
-	cmap, pal, err := palette.Auto(want, nPal)
-	if err != nil {
-		return doc, err
-	}
-	if len(pal) == 0 {
+	blobs := simpGrow(want, s.Colors)
+	if len(blobs) == 0 {
 		return doc, nil
-	}
-	blobs := simpBlobs(want, func(c color.NRGBA) color.NRGBA {
-		m := cmap.Map(c)
-		m.A = 255
-		return m
-	})
-	if len(blobs) > simpCands {
-		blobs = blobs[:simpCands]
-	}
-	for i := range blobs {
-		blobs[i].col = simpMean(want, blobs[i].pix)
 	}
 	items := make([]simpItem, 0, len(blobs))
 	for _, b := range blobs {
@@ -149,6 +131,58 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 		kids = append(kids, k.n)
 	}
 	return doc.Append(kids...), nil
+}
+
+func simpGrow(want *image.NRGBA, maxK int) []simpBlob {
+	w, h := want.Rect.Dx(), want.Rect.Dy()
+	nScore := simpScoredN(want)
+	lo, hi := 1, 32
+	if maxK > 0 {
+		lo, hi = maxK, maxK
+	}
+	var best []simpBlob
+	bestF := math.Inf(1)
+	stall := 0
+	for k := lo; k <= hi; k++ {
+		cmap, pal, err := palette.Auto(want, k)
+		if err != nil || len(pal) == 0 {
+			break
+		}
+		blobs := simpBlobs(want, func(c color.NRGBA) color.NRGBA {
+			m := cmap.Map(c)
+			m.A = 255
+			return m
+		})
+		if len(blobs) > simpCands {
+			blobs = blobs[:simpCands]
+		}
+		for i := range blobs {
+			blobs[i].col = simpMean(want, blobs[i].pix)
+		}
+		got := image.NewNRGBA(image.Rect(0, 0, w, h))
+		sse := simpEmptySSE(want)
+		for i := range blobs {
+			if simpPaint(got, want, blobs[i], false) >= 0 {
+				continue
+			}
+			sse += simpPaint(got, want, blobs[i], true)
+		}
+		f := simpFit(sse, nScore, len(pal))
+		if f >= bestF {
+			stall++
+			if stall >= 2 {
+				break
+			}
+			continue
+		}
+		stall = 0
+		bestF = f
+		best = blobs
+		if len(pal) < k {
+			break
+		}
+	}
+	return best
 }
 
 type simpBlob struct {
