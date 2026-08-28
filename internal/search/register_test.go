@@ -15,6 +15,16 @@ func TestNewDumb(t *testing.T) {
 	}
 }
 
+func TestNewResidual(t *testing.T) {
+	s, err := New("residual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.(*Residual); !ok {
+		t.Fatalf("got %T", s)
+	}
+}
+
 func TestNewUnknown(t *testing.T) {
 	if _, err := New("nope"); err == nil {
 		t.Fatal("expected error")
@@ -25,6 +35,18 @@ func TestNamesHasDumb(t *testing.T) {
 	found := false
 	for _, n := range Names() {
 		if n == "dumb" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Names=%v", Names())
+	}
+}
+
+func TestNamesHasResidual(t *testing.T) {
+	found := false
+	for _, n := range Names() {
+		if n == "residual" {
 			found = true
 		}
 	}
