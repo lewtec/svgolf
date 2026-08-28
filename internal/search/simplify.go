@@ -46,7 +46,11 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	if w <= 0 || h <= 0 {
 		return doc, nil
 	}
-	cmap, pal, err := palette.Auto(want, s.Colors)
+	nPal := s.Colors
+	if nPal <= 0 {
+		nPal = 8
+	}
+	cmap, pal, err := palette.Auto(want, nPal)
 	if err != nil {
 		return doc, err
 	}
@@ -60,6 +64,9 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	})
 	if len(blobs) > simpCands {
 		blobs = blobs[:simpCands]
+	}
+	for i := range blobs {
+		blobs[i].col = simpMean(want, blobs[i].pix)
 	}
 	items := make([]simpItem, 0, len(blobs))
 	for _, b := range blobs {
@@ -913,6 +920,29 @@ func simpEmit(loops [][][2]float64) []svg.PathCmd {
 	return cmds
 }
 
+func simpMean(want *image.NRGBA, pix []image.Point) color.NRGBA {
+	var r, g, b, n int64
+	for _, p := range pix {
+		c := want.NRGBAAt(p.X, p.Y)
+		if c.A == 0 {
+			continue
+		}
+		r += int64(c.R)
+		g += int64(c.G)
+		b += int64(c.B)
+		n++
+	}
+	if n == 0 {
+		return color.NRGBA{A: 255}
+	}
+	return color.NRGBA{
+		R: uint8((r + n/2) / n),
+		G: uint8((g + n/2) / n),
+		B: uint8((b + n/2) / n),
+		A: 255,
+	}
+}
+
 func simpSmooth(lp [][2]float64) []svg.PathCmd {
 	n := len(lp)
 	if n < 5 {
@@ -948,7 +978,7 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 		merged := false
 		for t := j; t >= i+3; t-- {
 			run := lp[i : t+1]
-			ok, c1, c2 := fitCubic(run, 6)
+			ok, c1, c2 := fitCubic(run, 8)
 			if !ok {
 				continue
 			}
@@ -967,14 +997,13 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 		}
 		a, b := lp[i], lp[(i+1)%n]
 		prev, next := lp[(i-1+n)%n], lp[(i+2)%n]
-		c1x := roundHalf(a[0] + (b[0]-prev[0])/6)
-		c1y := roundHalf(a[1] + (b[1]-prev[1])/6)
-		c2x := roundHalf(b[0] - (next[0]-a[0])/6)
-		c2y := roundHalf(b[1] - (next[1]-a[1])/6)
 		cmds = append(cmds, svg.PathCmd{
 			Kind: svg.CmdCubic,
-			X1:   c1x, Y1: c1y, X2: c2x, Y2: c2y,
-			X: b[0], Y: b[1],
+			X1:   roundHalf(a[0] + (b[0]-prev[0])/6),
+			Y1:   roundHalf(a[1] + (b[1]-prev[1])/6),
+			X2:   roundHalf(b[0] - (next[0]-a[0])/6),
+			Y2:   roundHalf(b[1] - (next[1]-a[1])/6),
+			X:    b[0], Y: b[1],
 		})
 		i++
 	}
@@ -1000,7 +1029,7 @@ func simpFourCubics(lp [][2]float64) []svg.PathCmd {
 			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
 			continue
 		}
-		ok, c1, c2 := fitCubic(run, 4)
+		ok, c1, c2 := fitCubic(run, 8)
 		end := run[len(run)-1]
 		if !ok {
 			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
@@ -1016,10 +1045,42 @@ func simpFourCubics(lp [][2]float64) []svg.PathCmd {
 	return cmds
 }
 
+func simpSpanSmooth(run [][2]float64) bool {
+	if len(run) < 3 {
+		return false
+	}
+	for i := 1; i < len(run)-1; i++ {
+		if turnDeg(run[i-1], run[i], run[i+1]) >= 35 {
+			return false
+		}
+	}
+	return true
+}
+
 func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
-	n := len(pts)
-	if n < 4 {
+	if len(pts) < 4 {
 		return false, [2]float64{}, [2]float64{}
+	}
+	c1, c2 := fitCubicAlways(pts)
+	p0, p3 := pts[0], pts[len(pts)-1]
+	eps2 := eps * eps
+	n := len(pts)
+	for k := 1; k < n-1; k++ {
+		t := float64(k) / float64(n-1)
+		u := 1 - t
+		x := u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p3[0]
+		y := u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p3[1]
+		if hypot2(x-pts[k][0], y-pts[k][1]) > eps2 {
+			return false, [2]float64{}, [2]float64{}
+		}
+	}
+	return true, c1, c2
+}
+
+func fitCubicAlways(pts [][2]float64) ([2]float64, [2]float64) {
+	n := len(pts)
+	if n < 3 {
+		return pts[0], pts[len(pts)-1]
 	}
 	p0, p3 := pts[0], pts[n-1]
 	var aa, ab, bb, rax, rbx, ray, rby float64
@@ -1040,21 +1101,11 @@ func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
 	}
 	det := aa*bb - ab*ab
 	if math.Abs(det) < 1e-12 {
-		return false, [2]float64{}, [2]float64{}
+		return p0, p3
 	}
 	c1 := [2]float64{roundHalf((bb*rax - ab*rbx) / det), roundHalf((bb*ray - ab*rby) / det)}
 	c2 := [2]float64{roundHalf((aa*rbx - ab*rax) / det), roundHalf((aa*rby - ab*ray) / det)}
-	eps2 := eps * eps
-	for k := 1; k < n-1; k++ {
-		t := float64(k) / float64(n-1)
-		u := 1 - t
-		x := u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p3[0]
-		y := u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p3[1]
-		if hypot2(x-pts[k][0], y-pts[k][1]) > eps2 {
-			return false, [2]float64{}, [2]float64{}
-		}
-	}
-	return true, c1, c2
+	return c1, c2
 }
 
 func turnDeg(a, b, c [2]float64) float64 {
