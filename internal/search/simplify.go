@@ -163,6 +163,9 @@ func simpPath(b simpBlob, w, h int) (svg.Node, bool) {
 		return svg.Node{}, false
 	}
 	core := simpErode(b.pix, w, h)
+	if er := simpErode(core, w, h); len(er) > 0 {
+		core = er
+	}
 	if len(core) == 0 {
 		core = b.pix
 	}
@@ -191,13 +194,32 @@ func simpPath(b simpBlob, w, h int) (svg.Node, bool) {
 
 type ipt struct{ x, y int }
 
-func simpStep(area int) int {
+func simpStep(b simpBlob) int {
+	minX, minY, maxX, maxY := b.pix[0].X, b.pix[0].Y, b.pix[0].X, b.pix[0].Y
+	for _, p := range b.pix[1:] {
+		if p.X < minX {
+			minX = p.X
+		}
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.X > maxX {
+			maxX = p.X
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	box := (maxX - minX + 1) * (maxY - minY + 1)
+	if box > 0 && b.area*10 >= box*3 {
+		return 1
+	}
 	switch {
-	case area > 200000:
+	case b.area > 200000:
 		return 8
-	case area > 40000:
+	case b.area > 40000:
 		return 4
-	case area > 10000:
+	case b.area > 10000:
 		return 2
 	default:
 		return 1
@@ -205,7 +227,10 @@ func simpStep(area int) int {
 }
 
 func simpTrace(b simpBlob, w, h int) [][][2]float64 {
-	step := simpStep(b.area)
+	if len(b.pix) == 0 {
+		return nil
+	}
+	step := simpStep(b)
 	tw := (w + step - 1) / step
 	th := (h + step - 1) / step
 	mask := make([]bool, tw*th)
@@ -381,10 +406,19 @@ func simpErode(pix []image.Point, w, h int) []image.Point {
 }
 
 func simpConverge(loops [][][2]float64, pix []image.Point) [][][2]float64 {
-	eps := []float64{0.5, 1, 2, 4, 8, 12, 16, 24, 32}
-	best := loops
-	bestN := simpCount(loops)
-	for _, e := range eps {
+	// 1px stairs sit 0.707 from the diagonal; eps>=1 kills them.
+	// Stay under ~3 so open bays (lewtec traces) are not filled in.
+	eps := []float64{1, 1.5, 2, 2.5, 3}
+	best := make([][][2]float64, 0, len(loops))
+	for _, lp := range loops {
+		got := simpRDPClosed(lp, 1)
+		if len(got) < 3 {
+			got = lp
+		}
+		best = append(best, got)
+	}
+	bestN := simpCount(best)
+	for _, e := range eps[1:] {
 		trial := make([][][2]float64, 0, len(loops))
 		ok := true
 		for _, lp := range loops {
@@ -555,15 +589,78 @@ func simpEmit(loops [][][2]float64) []svg.PathCmd {
 		if len(lp) < 3 {
 			continue
 		}
-		lines := simpLines(lp)
-		cub := simpCubics(lp)
-		if svg.PathCost(cub)+2 <= svg.PathCost(lines) {
-			cmds = append(cmds, cub...)
-			continue
-		}
-		cmds = append(cmds, lines...)
+		cmds = append(cmds, simpSmooth(lp)...)
 	}
 	return cmds
+}
+
+func simpSmooth(lp [][2]float64) []svg.PathCmd {
+	n := len(lp)
+	if n < 5 {
+		return simpLines(lp)
+	}
+	corner := make([]bool, n)
+	nCorner := 0
+	for i := 0; i < n; i++ {
+		if turnDeg(lp[(i-1+n)%n], lp[i], lp[(i+1)%n]) >= 40 {
+			corner[i] = true
+			nCorner++
+		}
+	}
+	if nCorner == n {
+		return simpLines(lp)
+	}
+	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: lp[0][0], Y: lp[0][1]}}
+	for i := 0; i < n; i++ {
+		a := lp[i]
+		b := lp[(i+1)%n]
+		if corner[i] || corner[(i+1)%n] || collinear3(lp[(i-1+n)%n], a, b) {
+			if i+1 == n {
+				break
+			}
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: b[0], Y: b[1]})
+			continue
+		}
+		prev := lp[(i-1+n)%n]
+		next := lp[(i+2)%n]
+		c1x := roundHalf(a[0] + (b[0]-prev[0])/6)
+		c1y := roundHalf(a[1] + (b[1]-prev[1])/6)
+		c2x := roundHalf(b[0] - (next[0]-a[0])/6)
+		c2y := roundHalf(b[1] - (next[1]-a[1])/6)
+		cmds = append(cmds, svg.PathCmd{
+			Kind: svg.CmdCubic,
+			X1:   c1x, Y1: c1y,
+			X2: c2x, Y2: c2y,
+			X: b[0], Y: b[1],
+		})
+		if i+1 == n {
+			break
+		}
+	}
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
+	return cmds
+}
+
+func turnDeg(a, b, c [2]float64) float64 {
+	v1x, v1y := a[0]-b[0], a[1]-b[1]
+	v2x, v2y := c[0]-b[0], c[1]-b[1]
+	n1 := math.Hypot(v1x, v1y)
+	n2 := math.Hypot(v2x, v2y)
+	if n1 < 1e-9 || n2 < 1e-9 {
+		return 0
+	}
+	cos := (v1x*v2x + v1y*v2y) / (n1 * n2)
+	if cos < -1 {
+		cos = -1
+	} else if cos > 1 {
+		cos = 1
+	}
+	// 180 = straight, 0 = U-turn. Corner = deviation from straight.
+	return 180 - math.Acos(cos)*180/math.Pi
+}
+
+func collinear3(a, b, c [2]float64) bool {
+	return math.Abs((b[0]-a[0])*(c[1]-b[1])-(b[1]-a[1])*(c[0]-b[0])) < 1e-6
 }
 
 func simpLines(lp [][2]float64) []svg.PathCmd {
@@ -574,105 +671,6 @@ func simpLines(lp [][2]float64) []svg.PathCmd {
 	}
 	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
 	return cmds
-}
-
-func simpCubics(lp [][2]float64) []svg.PathCmd {
-	n := len(lp)
-	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: lp[0][0], Y: lp[0][1]}}
-	i := 0
-	for i < n {
-		jBest := i + 1
-		var c1, c2 [2]float64
-		for j := n; j >= i+4; j-- { // 5+ verts including wrap handled below
-			end := j
-			wrap := false
-			if j == n {
-				end = n
-				wrap = true
-			}
-			var run [][2]float64
-			run = append(run, lp[i:end]...)
-			if wrap {
-				run = append(run, lp[0])
-			}
-			if len(run) < 5 {
-				continue
-			}
-			ok, a, b := fitCubic(run, 1.25)
-			if !ok {
-				continue
-			}
-			jBest = j
-			c1, c2 = a, b
-			break
-		}
-		if jBest >= i+4 {
-			endP := lp[0]
-			if jBest < n {
-				endP = lp[jBest]
-			}
-			cmds = append(cmds, svg.PathCmd{
-				Kind: svg.CmdCubic,
-				X1:   c1[0], Y1: c1[1],
-				X2: c2[0], Y2: c2[1],
-				X: endP[0], Y: endP[1],
-			})
-			if jBest >= n {
-				break
-			}
-			i = jBest
-			continue
-		}
-		nxt := lp[(i+1)%n]
-		if i+1 >= n {
-			break
-		}
-		cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: nxt[0], Y: nxt[1]})
-		i++
-	}
-	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
-	return cmds
-}
-
-func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
-	n := len(pts)
-	if n < 5 {
-		return false, [2]float64{}, [2]float64{}
-	}
-	p0, p3 := pts[0], pts[n-1]
-	var aa, ab, bb, rax, rbx, ray, rby float64
-	for k := 1; k < n-1; k++ {
-		t := float64(k) / float64(n-1)
-		u := 1 - t
-		A := 3 * u * u * t
-		B := 3 * u * t * t
-		rx := pts[k][0] - u*u*u*p0[0] - t*t*t*p3[0]
-		ry := pts[k][1] - u*u*u*p0[1] - t*t*t*p3[1]
-		aa += A * A
-		ab += A * B
-		bb += B * B
-		rax += A * rx
-		rbx += B * rx
-		ray += A * ry
-		rby += B * ry
-	}
-	det := aa*bb - ab*ab
-	if math.Abs(det) < 1e-12 {
-		return false, [2]float64{}, [2]float64{}
-	}
-	c1 := [2]float64{roundHalf((bb*rax - ab*rbx) / det), roundHalf((bb*ray - ab*rby) / det)}
-	c2 := [2]float64{roundHalf((aa*rbx - ab*rax) / det), roundHalf((aa*rby - ab*ray) / det)}
-	eps2 := eps * eps
-	for k := 1; k < n-1; k++ {
-		t := float64(k) / float64(n-1)
-		u := 1 - t
-		x := u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p3[0]
-		y := u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p3[1]
-		if hypot2(x-pts[k][0], y-pts[k][1]) > eps2 {
-			return false, [2]float64{}, [2]float64{}
-		}
-	}
-	return true, c1, c2
 }
 
 func simpPrune(ctx context.Context, want *image.NRGBA, w, h int, kids []svg.Node) []svg.Node {
