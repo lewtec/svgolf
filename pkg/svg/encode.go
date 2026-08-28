@@ -10,7 +10,7 @@ import (
 
 const (
 	svgNS       = "http://www.w3.org/2000/svg"
-	maxCanvas   = 4096
+	maxCanvas   = 8191
 	maxChildren = 4096
 	xmlDecl     = `<?xml version="1.0" encoding="UTF-8"?>`
 )

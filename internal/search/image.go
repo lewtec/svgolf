@@ -5,8 +5,8 @@ import (
 	"image/draw"
 )
 
-// MaxCanvas is the Render/Encode edge cap. Search a FitCanvas copy above this.
-const MaxCanvas = 4096
+// MaxCanvas is the Encode/Render edge cap (tiny-skia pixmap limit).
+const MaxCanvas = 8191
 
 // FromImage copies img into an origin-zero NRGBA.
 func FromImage(img image.Image) *image.NRGBA {

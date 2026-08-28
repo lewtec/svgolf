@@ -40,7 +40,7 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	if target == nil {
 		return svg.Document{}, fmt.Errorf("search: nil pixmap")
 	}
-	want := FitCanvas(FromImage(target), MaxCanvas)
+	want := FromImage(target)
 	w, h := want.Rect.Dx(), want.Rect.Dy()
 	doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
 	if w <= 0 || h <= 0 {
@@ -82,36 +82,33 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 	nScore := simpScoredN(want)
 	got := image.NewNRGBA(image.Rect(0, 0, w, h))
 	sse := simpEmptySSE(want)
-	k := 0
-	cur := simpFit(sse, nScore, 0)
-	for {
+	// Layer: largest island is the back plate. Each next island
+	// that still cuts residual SSE paints on top.
+	for i := range items {
 		if err := ctx.Err(); err != nil {
 			break
 		}
-		best, bestF := -1, cur
-		for i := range items {
-			if items[i].on {
-				continue
-			}
-			f := simpFit(sse+simpPaint(got, want, items[i].b, false), nScore, k+1)
-			if f < bestF {
-				best, bestF = i, f
-			}
+		d := simpPaint(got, want, items[i].b, false)
+		if d >= 0 {
+			continue
 		}
-		if best < 0 {
-			break
-		}
-		sse += simpPaint(got, want, items[best].b, true)
-		items[best].on = true
-		k++
-		cur = bestF
+		sse += simpPaint(got, want, items[i].b, true)
+		items[i].on = true
 	}
+	// Converge: peel a layer if Fit drops (coverage is already there).
 	for {
 		if err := ctx.Err(); err != nil {
 			break
 		}
+		k := 0
+		for _, it := range items {
+			if it.on {
+				k++
+			}
+		}
+		cur := simpFit(sse, nScore, k)
 		improved := false
-		for i := range items {
+		for i := len(items) - 1; i >= 0; i-- {
 			if !items[i].on {
 				continue
 			}
@@ -125,10 +122,9 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 				sse2 += simpPaint(got2, want, items[j].b, true)
 				k2++
 			}
-			f := simpFit(sse2, nScore, k2)
-			if f < cur {
+			if simpFit(sse2, nScore, k2) < cur {
 				items[i].on = false
-				got, sse, k, cur = got2, sse2, k2, f
+				got, sse = got2, sse2
 				improved = true
 				break
 			}

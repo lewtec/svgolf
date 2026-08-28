@@ -232,3 +232,24 @@ func TestSimplifyRingHasHole(t *testing.T) {
 		t.Fatal("frame empty")
 	}
 }
+
+func TestSimplifyKeepsNativeSize(t *testing.T) {
+	// Wider than the old 4096 Encode cap. Must not FitCanvas-shrink.
+	const w, h = 4100, 8
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 200, A: 255})
+		}
+	}
+	doc, err := (Simplify{}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.Width() != w || doc.Height() != h {
+		t.Fatalf("canvas %g×%g, want %d×%d", doc.Width(), doc.Height(), w, h)
+	}
+	if _, err := svg.EncodeToString(doc); err != nil {
+		t.Fatal(err)
+	}
+}

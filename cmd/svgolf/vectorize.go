@@ -32,7 +32,7 @@ func newVectorizeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			want := search.FitCanvas(search.FromImage(img), search.MaxCanvas)
+			want := search.FromImage(img)
 			doc, err := s.Search(cmd.Context(), want)
 			if err != nil {
 				return err

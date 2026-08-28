@@ -521,7 +521,7 @@ A path stores only absolute `M` / `L` / `C` / `Z`. Relative `m/l/c/z` and `H/V/S
 
 | Input | Parse | Encode / Render |
 | --- | --- | --- |
-| Document `width`/`height` non-finite, `≤ 0`, `> 4096`, or not a whole number | error | error |
+| Document `width`/`height` non-finite, `≤ 0`, `> 8191`, or not a whole number | error | error |
 | Shape `width`/`height`/`r`/`rx`/`ry` non-finite or `< 0` | error | error |
 | Shape `r==0` or `width==0` or `height==0` | valid | no-op paint (match resvg) |
 | Unknown enum (`fill-rule="winding"`, `stroke-linecap="foo"`) | error | n/a |
@@ -705,7 +705,7 @@ Contract:
 
 Identity viewport until PR 12. If `ViewBox().Set()` is true before that PR, `Render` returns an error (`viewBox not implemented`). Do not silently ignore it.
 
-tiny-skia pixmap width is capped at 8191. v1 max is 4096, so no tiled draw.
+tiny-skia pixmap width is capped at 8191. Document max is 8191, so no tiled draw.
 
 #### Rasterizer port
 
@@ -861,7 +861,7 @@ func Register(name string, make func() Search)
 func New(name string) (Search, error)
 func Names() []string
 func FromImage(img image.Image) *image.NRGBA
-func FitCanvas(src *image.NRGBA, max int) *image.NRGBA // max≤0 → MaxCanvas (4096)
+func FitCanvas(src *image.NRGBA, max int) *image.NRGBA // max≤0 → MaxCanvas (8191)
 
 type Dumb struct {
     Colors int // 0 = auto, cap 8
@@ -878,14 +878,14 @@ func (s Simplify) Search(ctx context.Context, target *image.NRGBA) (svg.Document
 
 A new adapter is one file plus `init { Register("name", ...) }`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`. `simplify` traces islands as paths, then greedily adds/removes on `loss.Fit` until a pass does nothing. Fill is the mean of the island’s PNG pixels (palette is only for grouping). Smooth spans emit one cubic.
+Search has autonomy over palette, Loss, and mutate. The CLI does not inject a ColorMap or a color count. `--search` selects the registry name. Default `dumb`. `simplify` paints islands back-to-front (largest first) while residual SSE drops, then peels a layer when Fit improves. Fill is the mean of the island’s PNG pixels. Smooth spans emit one cubic.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME
 svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview]
 ```
 
-`preview` walks eval PNGs, `FitCanvas` to 4096, writes `want-<scene>.png` (480), `<scene>.svg`, and `<scene>.png` via `resvg --width 480`. That is the PR-body render path.
+`preview` walks eval PNGs at native size, writes `want-<scene>.png` (480), `<scene>.svg` at that canvas, and `<scene>.png` via `resvg --width 480`. That 480 is display only. Search does not shrink the PNG.
 
 `mise run preview -- --search NAME`
 
@@ -994,7 +994,7 @@ svgolf preview --search NAME
 | --- | --- | --- |
 | `render` | Parse → Render → `png.Encode` | 1 on error |
 | `verify` | `verify.File` (oracle = original bytes); write diff PNG on pixel mismatch of equal size | 0 iff ours matches resvg(original) and Encode does not drift; 1 otherwise |
-| `vectorize` | `png.Decode` → `FitCanvas` → `search.New` → Encode | 1 on error |
+| `vectorize` | `png.Decode` → `FromImage` → `search.New` → Encode | 1 on error |
 | `preview` | eval PNGs → Search → `testdata/preview` (want PNG, SVG, resvg 480) | 1 on error |
 
 Flags:
@@ -1243,7 +1243,7 @@ Do not install resvg globally. Linters later.
 | --- | --- | --- |
 | XXE / external entity in Parse | Low | `encoding/xml` does not resolve external entities by default. Do not enable them. |
 | Oracle argv injection | Medium | Fixed argv. No shell. User SVG is stdin bytes, not interpolated. |
-| Huge canvas / many nodes | Medium | Max 4096×4096. Parse and Encode reject more than 4096 children per parent. |
+| Huge canvas / many nodes | Medium | Max 8191×8191 (tiny-skia pixmap). Parse and Encode reject more than 4096 children per parent. |
 | Polygon vertex bomb | Medium | Cap vertices at 1024 in Parse and `WithPoints`. |
 | Path traversal on `-o` | Low | Write the path the user passed. This is a local CLI. |
 | Temp file leaks from resvg | Low | Prefer stdin/stdout (`- -c`). No temp SVG. |

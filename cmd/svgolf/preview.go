@@ -17,9 +17,9 @@ import (
 
 func newPreviewCmd() *cobra.Command {
 	var (
-		algo   string
-		eval   string
-		out    string
+		algo  string
+		eval  string
+		out   string
 		width int
 	)
 	cmd := &cobra.Command{
@@ -75,7 +75,7 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 	if err != nil {
 		return err
 	}
-	want := search.FitCanvas(search.FromImage(img), search.MaxCanvas)
+	want := search.FromImage(img)
 	if err := writePNGFile(filepath.Join(out, "want-"+scene+".png"), search.FitCanvas(want, width)); err != nil {
 		return err
 	}
