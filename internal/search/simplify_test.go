@@ -91,6 +91,39 @@ func TestSimplifyTwoIslands(t *testing.T) {
 	}
 }
 
+func TestSimplifyCircleConverges(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	cx, cy, r := 32.0, 32.0, 26.0
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			dx, dy := float64(x)+0.5-cx, float64(y)+0.5-cy
+			if dx*dx+dy*dy <= r*r {
+				img.SetNRGBA(x, y, color.NRGBA{B: 180, A: 255})
+			}
+		}
+	}
+	doc, err := (Simplify{Colors: 1}).Search(t.Context(), img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Children()) != 1 {
+		t.Fatalf("kids=%d", len(doc.Children()))
+	}
+	p, ok := doc.Children()[0].Path()
+	if !ok {
+		t.Fatal("not path")
+	}
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			n++
+		}
+	}
+	if n > 20 {
+		t.Fatalf("circle did not converge: %d cmds %+v", n, p.Commands())
+	}
+}
+
 func TestSimplifyDropsStairPoints(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	for y := 0; y < 8; y++ {

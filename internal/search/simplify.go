@@ -21,11 +21,14 @@ type Simplify struct {
 var _ Search = Simplify{}
 
 const (
-	simpCover    = 0.97
+	simpCover    = 0.96
 	simpMaxKids  = 24
 	simpCycleλ   = 0.04 // extra closed path must cut RMSE by ~10
 	simpMergeD2  = 48 * 48
 	simpMinColor = 0.02 // extra palette slots need ≥2% of scored pixels
+	simpDropMax  = 4000
+	simpRounds   = 8
+	simpEarMax   = 16 // only nibble pixel jaggies; larger ears stay
 )
 
 func init() {
@@ -329,7 +332,8 @@ func simpPath(b simpBlob, w, h int) (svg.Node, bool) {
 		core = b.pix
 	}
 	core = simpSample(core, 1500)
-	best := simpConverge(loops, core)
+	outp := simpOutside(b, w, h, 1500)
+	best := simpConverge(loops, core, outp)
 	if len(best) == 0 {
 		return svg.Node{}, false
 	}
@@ -564,42 +568,142 @@ func simpErode(pix []image.Point, w, h int) []image.Point {
 	return out
 }
 
-func simpConverge(loops [][][2]float64, pix []image.Point) [][][2]float64 {
-	// 1px stairs sit 0.707 from the diagonal; eps>=1 kills them.
-	// Stay under ~3 so open bays (lewtec traces) are not filled in.
+func simpOutside(b simpBlob, w, h, max int) []image.Point {
+	in := make([]bool, w*h)
+	minX, minY, maxX, maxY := w, h, 0, 0
+	for _, p := range b.pix {
+		in[p.Y*w+p.X] = true
+		if p.X < minX {
+			minX = p.X
+		}
+		if p.Y < minY {
+			minY = p.Y
+		}
+		if p.X > maxX {
+			maxX = p.X
+		}
+		if p.Y > maxY {
+			maxY = p.Y
+		}
+	}
+	var out []image.Point
+	for y := minY; y <= maxY; y++ {
+		for x := minX; x <= maxX; x++ {
+			if !in[y*w+x] {
+				out = append(out, image.Point{x, y})
+			}
+		}
+	}
+	return simpSample(out, max)
+}
+
+func simpConverge(loops [][][2]float64, pix, outp []image.Point) [][][2]float64 {
 	eps := []float64{1, 1.5, 2, 2.5, 3}
-	best := make([][][2]float64, 0, len(loops))
+	cur := make([][][2]float64, 0, len(loops))
 	for _, lp := range loops {
 		got := simpRDPClosed(lp, 1)
 		if len(got) < 3 {
 			got = lp
 		}
-		best = append(best, got)
+		cur = append(cur, got)
 	}
-	bestN := simpCount(best)
-	for _, e := range eps[1:] {
-		trial := make([][][2]float64, 0, len(loops))
-		ok := true
-		for _, lp := range loops {
-			got := simpRDPClosed(lp, e)
-			if len(got) < 3 {
-				ok = false
-				break
+	for r := 0; r < simpRounds; r++ {
+		n0 := simpCount(cur)
+		for _, e := range eps[1:] {
+			trial := make([][][2]float64, 0, len(cur))
+			ok := true
+			for _, lp := range cur {
+				got := simpRDPClosed(lp, e)
+				if len(got) < 3 {
+					ok = false
+					break
+				}
+				trial = append(trial, got)
 			}
-			trial = append(trial, got)
+			if !ok || !simpCovers(trial, pix) || simpSpills(trial, outp) {
+				continue
+			}
+			cur = trial
 		}
-		if !ok {
-			continue
-		}
-		trial = simpDrop(trial, pix)
-		if !simpCovers(trial, pix) {
-			continue
-		}
-		if n := simpCount(trial); n <= bestN {
-			best, bestN = trial, n
+		cur = simpDrop(cur, pix, outp)
+		if simpCount(cur) >= n0 {
+			break
 		}
 	}
-	return best
+	return cur
+}
+
+// simpSpanRDP splits each loop at sharp corners and RDP's each arc alone,
+// so a long circle can collapse without filling open bays.
+func simpSpanRDP(loops [][][2]float64, pix, outp []image.Point) [][][2]float64 {
+	eps := []float64{2, 3, 4, 6, 8}
+	out := copyLoops(loops)
+	for li := range out {
+		for _, e := range eps {
+			trial := copyLoops(out)
+			got := simpRDPBySpan(trial[li], e)
+			if len(got) < 3 {
+				continue
+			}
+			trial[li] = got
+			if simpCovers(trial, pix) && !simpSpills(trial, outp) {
+				out = trial
+			}
+		}
+	}
+	return out
+}
+
+func simpRDPBySpan(lp [][2]float64, eps float64) [][2]float64 {
+	n := len(lp)
+	if n < 4 {
+		return lp
+	}
+	corner := simpCorners(lp)
+	var cuts []int
+	for i := 0; i < n; i++ {
+		if corner[i] {
+			cuts = append(cuts, i)
+		}
+	}
+	if len(cuts) < 2 {
+		return simpRDPClosed(lp, eps)
+	}
+	var out [][2]float64
+	for i := 0; i < len(cuts); i++ {
+		a := cuts[i]
+		b := cuts[(i+1)%len(cuts)]
+		var span [][2]float64
+		if b > a {
+			span = append([][2]float64(nil), lp[a:b+1]...)
+		} else {
+			span = append([][2]float64(nil), lp[a:]...)
+			span = append(span, lp[:b+1]...)
+		}
+		span = simpRDPOpen(span, eps)
+		if i > 0 && len(out) > 0 && len(span) > 0 {
+			span = span[1:]
+		}
+		out = append(out, span...)
+	}
+	if len(out) > 1 && out[0] == out[len(out)-1] {
+		out = out[:len(out)-1]
+	}
+	if len(out) < 3 {
+		return lp
+	}
+	return out
+}
+
+func simpCorners(lp [][2]float64) []bool {
+	n := len(lp)
+	out := make([]bool, n)
+	for i := 0; i < n; i++ {
+		if turnDeg(lp[(i-1+n)%n], lp[i], lp[(i+1)%n]) >= 40 {
+			out[i] = true
+		}
+	}
+	return out
 }
 
 func simpCount(loops [][][2]float64) int {
@@ -610,31 +714,76 @@ func simpCount(loops [][][2]float64) int {
 	return n
 }
 
-func simpDrop(loops [][][2]float64, pix []image.Point) [][][2]float64 {
+func simpDrop(loops [][][2]float64, pix, outp []image.Point) [][][2]float64 {
 	cur := copyLoops(loops)
-	changed := true
-	for changed {
-		changed = false
-		for li := range cur {
-			if len(cur[li]) <= 3 || len(cur[li]) > 48 {
-				continue
-			}
-			for i := 0; i < len(cur[li]); i++ {
-				trial := copyLoops(cur)
-				trial[li] = append(append([][2]float64(nil), cur[li][:i]...), cur[li][i+1:]...)
-				if len(trial[li]) < 3 || !simpCovers(trial, pix) {
-					continue
-				}
-				cur = trial
-				changed = true
+	drops := 0
+	for li := range cur {
+		for drops < simpDropMax && len(cur[li]) > 4 {
+			i := simpDropAt(cur[li], pix, outp)
+			if i < 0 {
 				break
 			}
-			if changed {
-				break
-			}
+			cur[li] = append(cur[li][:i], cur[li][i+1:]...)
+			drops++
 		}
 	}
 	return cur
+}
+
+func simpDropAt(lp [][2]float64, pix, outp []image.Point) int {
+	n := len(lp)
+	if n <= 4 {
+		return -1
+	}
+	ccw := simpFArea(lp) > 0
+	best, bestA := -1, math.MaxFloat64
+	for i := 0; i < n; i++ {
+		a, b, c := lp[(i-1+n)%n], lp[i], lp[(i+1)%n]
+		area := math.Abs((b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]))
+		if area > simpEarMax || area >= bestA {
+			continue
+		}
+		if !simpEarOK(a, b, c, ccw, pix, outp) {
+			continue
+		}
+		best, bestA = i, area
+	}
+	return best
+}
+
+func simpEarOK(a, b, c [2]float64, ccw bool, pix, outp []image.Point) bool {
+	cross := (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+	convex := cross > 0
+	if !ccw {
+		convex = cross < 0
+	}
+	check := pix
+	if !convex {
+		check = outp
+	}
+	minX := math.Min(a[0], math.Min(b[0], c[0]))
+	maxX := math.Max(a[0], math.Max(b[0], c[0]))
+	minY := math.Min(a[1], math.Min(b[1], c[1]))
+	maxY := math.Max(a[1], math.Max(b[1], c[1]))
+	for _, p := range check {
+		x, y := float64(p.X)+0.5, float64(p.Y)+0.5
+		if x < minX || x > maxX || y < minY || y > maxY {
+			continue
+		}
+		if inTri(x, y, a, b, c) {
+			return false
+		}
+	}
+	return true
+}
+
+func inTri(x, y float64, a, b, c [2]float64) bool {
+	d1 := (x-a[0])*(b[1]-a[1]) - (y-a[1])*(b[0]-a[0])
+	d2 := (x-b[0])*(c[1]-b[1]) - (y-b[1])*(c[0]-b[0])
+	d3 := (x-c[0])*(a[1]-c[1]) - (y-c[1])*(c[0]-c[0])
+	hasNeg := d1 < 0 || d2 < 0 || d3 < 0
+	hasPos := d1 > 0 || d2 > 0 || d3 > 0
+	return !(hasNeg && hasPos)
 }
 
 func copyLoops(in [][][2]float64) [][][2]float64 {
@@ -643,6 +792,19 @@ func copyLoops(in [][][2]float64) [][][2]float64 {
 		out[i] = append([][2]float64(nil), lp...)
 	}
 	return out
+}
+
+func simpSpills(loops [][][2]float64, outp []image.Point) bool {
+	if len(outp) == 0 {
+		return false
+	}
+	n := 0
+	for _, p := range outp {
+		if simpPIP(float64(p.X)+0.5, float64(p.Y)+0.5, loops) {
+			n++
+		}
+	}
+	return float64(n) > 0.07*float64(len(outp))
 }
 
 func simpCovers(loops [][][2]float64, pix []image.Point) bool {
@@ -758,46 +920,143 @@ func simpSmooth(lp [][2]float64) []svg.PathCmd {
 	if n < 5 {
 		return simpLines(lp)
 	}
-	corner := make([]bool, n)
+	corner := simpCorners(lp)
 	nCorner := 0
-	for i := 0; i < n; i++ {
-		if turnDeg(lp[(i-1+n)%n], lp[i], lp[(i+1)%n]) >= 40 {
-			corner[i] = true
+	for _, c := range corner {
+		if c {
 			nCorner++
 		}
 	}
 	if nCorner == n {
 		return simpLines(lp)
 	}
+	if nCorner == 0 && n >= 8 {
+		return simpFourCubics(lp)
+	}
 	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: lp[0][0], Y: lp[0][1]}}
-	for i := 0; i < n; i++ {
-		a := lp[i]
-		b := lp[(i+1)%n]
-		if corner[i] || corner[(i+1)%n] || collinear3(lp[(i-1+n)%n], a, b) {
-			if i+1 == n {
-				break
-			}
-			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: b[0], Y: b[1]})
+	for i := 0; i < n; {
+		j := i + 1
+		if j >= n {
+			break
+		}
+		if corner[i] || corner[j] || collinear3(lp[(i-1+n)%n], lp[i], lp[j]) {
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: lp[j][0], Y: lp[j][1]})
+			i = j
 			continue
 		}
-		prev := lp[(i-1+n)%n]
-		next := lp[(i+2)%n]
+		for j+1 < n && !corner[j] && !corner[j+1] {
+			j++
+		}
+		merged := false
+		for t := j; t >= i+3; t-- {
+			run := lp[i : t+1]
+			ok, c1, c2 := fitCubic(run, 6)
+			if !ok {
+				continue
+			}
+			end := run[len(run)-1]
+			cmds = append(cmds, svg.PathCmd{
+				Kind: svg.CmdCubic,
+				X1:   c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1],
+				X: end[0], Y: end[1],
+			})
+			i = t
+			merged = true
+			break
+		}
+		if merged {
+			continue
+		}
+		a, b := lp[i], lp[(i+1)%n]
+		prev, next := lp[(i-1+n)%n], lp[(i+2)%n]
 		c1x := roundHalf(a[0] + (b[0]-prev[0])/6)
 		c1y := roundHalf(a[1] + (b[1]-prev[1])/6)
 		c2x := roundHalf(b[0] - (next[0]-a[0])/6)
 		c2y := roundHalf(b[1] - (next[1]-a[1])/6)
 		cmds = append(cmds, svg.PathCmd{
 			Kind: svg.CmdCubic,
-			X1:   c1x, Y1: c1y,
-			X2: c2x, Y2: c2y,
+			X1:   c1x, Y1: c1y, X2: c2x, Y2: c2y,
 			X: b[0], Y: b[1],
 		})
-		if i+1 == n {
-			break
-		}
+		i++
 	}
 	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
 	return cmds
+}
+
+func simpFourCubics(lp [][2]float64) []svg.PathCmd {
+	n := len(lp)
+	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: lp[0][0], Y: lp[0][1]}}
+	for q := 0; q < 4; q++ {
+		a := q * n / 4
+		b := (q + 1) * n / 4
+		if q == 3 {
+			b = n
+		}
+		run := append([][2]float64(nil), lp[a:min(b+1, n)]...)
+		if q == 3 {
+			run = append(run, lp[0])
+		}
+		if len(run) < 4 {
+			end := run[len(run)-1]
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
+			continue
+		}
+		ok, c1, c2 := fitCubic(run, 4)
+		end := run[len(run)-1]
+		if !ok {
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: end[0], Y: end[1]})
+			continue
+		}
+		cmds = append(cmds, svg.PathCmd{
+			Kind: svg.CmdCubic,
+			X1:   c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1],
+			X: end[0], Y: end[1],
+		})
+	}
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
+	return cmds
+}
+
+func fitCubic(pts [][2]float64, eps float64) (bool, [2]float64, [2]float64) {
+	n := len(pts)
+	if n < 4 {
+		return false, [2]float64{}, [2]float64{}
+	}
+	p0, p3 := pts[0], pts[n-1]
+	var aa, ab, bb, rax, rbx, ray, rby float64
+	for k := 1; k < n-1; k++ {
+		t := float64(k) / float64(n-1)
+		u := 1 - t
+		A := 3 * u * u * t
+		B := 3 * u * t * t
+		rx := pts[k][0] - u*u*u*p0[0] - t*t*t*p3[0]
+		ry := pts[k][1] - u*u*u*p0[1] - t*t*t*p3[1]
+		aa += A * A
+		ab += A * B
+		bb += B * B
+		rax += A * rx
+		rbx += B * rx
+		ray += A * ry
+		rby += B * ry
+	}
+	det := aa*bb - ab*ab
+	if math.Abs(det) < 1e-12 {
+		return false, [2]float64{}, [2]float64{}
+	}
+	c1 := [2]float64{roundHalf((bb*rax - ab*rbx) / det), roundHalf((bb*ray - ab*rby) / det)}
+	c2 := [2]float64{roundHalf((aa*rbx - ab*rax) / det), roundHalf((aa*rby - ab*ray) / det)}
+	eps2 := eps * eps
+	for k := 1; k < n-1; k++ {
+		t := float64(k) / float64(n-1)
+		u := 1 - t
+		x := u*u*u*p0[0] + 3*u*u*t*c1[0] + 3*u*t*t*c2[0] + t*t*t*p3[0]
+		y := u*u*u*p0[1] + 3*u*u*t*c1[1] + 3*u*t*t*c2[1] + t*t*t*p3[1]
+		if hypot2(x-pts[k][0], y-pts[k][1]) > eps2 {
+			return false, [2]float64{}, [2]float64{}
+		}
+	}
+	return true, c1, c2
 }
 
 func turnDeg(a, b, c [2]float64) float64 {
