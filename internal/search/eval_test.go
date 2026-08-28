@@ -1,15 +1,13 @@
-package loss
+package search
 
 import (
-	"image"
-	"image/draw"
 	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/svgolf/internal/loss"
 )
 
 func TestEvalScenes(t *testing.T) {
@@ -35,17 +33,17 @@ func TestEvalScenes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := toNRGBA(img)
+			want := FromImage(img)
 			w, h := want.Rect.Dx(), want.Rect.Dy()
-			doc, err := (search.Dumb{}).Search(t.Context(), want)
+			doc, err := (Dumb{}).Search(t.Context(), want)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if w > 4096 || h > 4096 {
-				t.Logf("canvas %d×%d over Render cap; Search kids=%d", w, h, len(doc.Children()))
+			if w > MaxCanvas || h > MaxCanvas {
+				t.Logf("canvas %d×%d over cap; kids=%d", w, h, len(doc.Children()))
 				return
 			}
-			s, err := Of(doc, want)
+			s, err := loss.Of(doc, want)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,14 +53,4 @@ func TestEvalScenes(t *testing.T) {
 	if n == 0 {
 		t.Fatal("no eval pngs")
 	}
-}
-
-func toNRGBA(img image.Image) *image.NRGBA {
-	if n, ok := img.(*image.NRGBA); ok && n.Rect.Min == (image.Point{}) {
-		return n
-	}
-	b := img.Bounds()
-	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	draw.Draw(out, out.Bounds(), img, b.Min, draw.Src)
-	return out
 }

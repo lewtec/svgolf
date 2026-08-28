@@ -45,4 +45,7 @@ func TestCost(t *testing.T) {
 	if got := CostDocument(doc); got != 2 {
 		t.Errorf("CostDocument = %d; want 2", got)
 	}
+	if got := PartsDocument(doc); got != 2 {
+		t.Errorf("PartsDocument = %d; want 2", got)
+	}
 }

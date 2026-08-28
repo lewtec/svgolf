@@ -36,3 +36,27 @@ func CostDocument(d Document) int {
 	}
 	return sum
 }
+
+// Parts counts paintable primitives (groups are walked, not counted).
+func Parts(n Node) int {
+	switch n.kind {
+	case KindInvalid:
+		return 0
+	case KindGroup:
+		sum := 0
+		for _, c := range n.group.children {
+			sum += Parts(c)
+		}
+		return sum
+	default:
+		return 1
+	}
+}
+
+func PartsDocument(d Document) int {
+	sum := 0
+	for _, c := range d.children {
+		sum += Parts(c)
+	}
+	return sum
+}
