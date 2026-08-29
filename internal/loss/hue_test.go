@@ -31,6 +31,20 @@ func TestHueAtGray(t *testing.T) {
 	}
 }
 
+func TestColorAtSameHueDifferentValue(t *testing.T) {
+	dark := color.NRGBA{R: 80, A: 255}
+	light := color.NRGBA{R: 255, A: 255}
+	if HueAt(dark, light) > 1 {
+		t.Fatalf("hue-only dark/light=%v", HueAt(dark, light))
+	}
+	if d := ColorAt(dark, light); d < 80 {
+		t.Fatalf("ColorAt dark/light=%v want large", d)
+	}
+	if ColorAt(dark, dark) != 0 {
+		t.Fatalf("ColorAt same=%v", ColorAt(dark, dark))
+	}
+}
+
 func TestHueMean(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 2, 1))
 	got := image.NewNRGBA(image.Rect(0, 0, 2, 1))

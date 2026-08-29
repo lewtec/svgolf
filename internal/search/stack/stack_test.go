@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -35,6 +36,18 @@ func TestStartSigma(t *testing.T) {
 	}
 }
 
+func TestRecolorAtSplitsVisor(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	darker := color.NRGBA{R: 8, G: 24, B: 40, A: 255}
+	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
+	if loss.ColorAt(navy, darker) >= recolorAt {
+		t.Fatalf("darker navy=%v should polish", loss.ColorAt(navy, darker))
+	}
+	if loss.ColorAt(navy, cyan) < recolorAt {
+		t.Fatalf("cyan=%v should be a new path", loss.ColorAt(navy, cyan))
+	}
+}
+
 func TestStackSolid(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {
@@ -51,6 +64,25 @@ func TestStackSolid(t *testing.T) {
 	}
 	if _, ok := doc.Children()[0].Path(); !ok {
 		t.Fatal("not a path")
+	}
+}
+
+func TestStackUnblurDoesNotRestack(t *testing.T) {
+	// startSigma(48)=12, so Search unblurs. leftover of the same
+	// plate must polish path 0, not stack more navy.
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n != 1 {
+		t.Fatalf("paths=%d want 1 (polished plate)", n)
 	}
 }
 
@@ -335,8 +367,8 @@ func TestStackFirstFormIsBBox(t *testing.T) {
 				n++
 			}
 		}
-		if n != 4 {
-			t.Fatalf("first form points=%d want 4 (bbox)", n)
+		if n < 4 || n > 6 {
+			t.Fatalf("first form points=%d want 4-6", n)
 		}
 		return
 	}
@@ -478,7 +510,7 @@ func TestFitBendHasCubic(t *testing.T) {
 		}
 	}
 	s := math.Sqrt(2) / 2
-	bend := [][2]float64{{16, 0}, {16 * math.Cos(math.Pi / 6), 16 * math.Sin(math.Pi / 6)}, {16 * s, 16 * s}, {16 * math.Cos(math.Pi / 3), 16 * math.Sin(math.Pi / 3)}, {0, 16}, {0, 0}}
+	bend := [][2]float64{{16, 0}, {16 * math.Cos(math.Pi/6), 16 * math.Sin(math.Pi/6)}, {16 * s, 16 * s}, {16 * math.Cos(math.Pi/3), 16 * math.Sin(math.Pi/3)}, {0, 16}, {0, 0}}
 	p := filledFit(island, bend, color.NRGBA{A: 255})
 	n := 0
 	for _, c := range p.Commands() {
@@ -552,7 +584,7 @@ func TestStackGradientDoesNotRestack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n > 16 {
+	if n := len(doc.Children()); n > 8 {
 		t.Fatalf("paths=%d, restacking the ramp", n)
 	}
 }

@@ -42,7 +42,27 @@ func HueAt(got, want color.NRGBA) float64 {
 	if sg < satMin || sw < satMin {
 		return 180
 	}
-	d := math.Abs(hg - hw)
+	return hueDelta(hg, hw)
+}
+
+// ColorAt is HSV distance 0..180. HueAt ignores value on saturated
+// pixels, so dark and light navy look like a match.
+func ColorAt(got, want color.NRGBA) float64 {
+	hg, sg, vg := hsv(got)
+	hw, sw, vw := hsv(want)
+	dv := math.Abs(vg-vw) * 180
+	ds := math.Abs(sg-sw) * 180
+	if sg < satMin && sw < satMin {
+		return dv
+	}
+	if sg < satMin || sw < satMin {
+		return 180
+	}
+	return max(hueDelta(hg, hw), ds, dv)
+}
+
+func hueDelta(a, b float64) float64 {
+	d := math.Abs(a - b)
 	if d > 180 {
 		d = 360 - d
 	}

@@ -14,13 +14,86 @@ func coarse(c color.NRGBA) int {
 		return -1
 	}
 	h, s, v := loss.HSV(c)
-	if s < 0.08 {
-		if v < 0.5 {
-			return 0
-		}
-		return 1
+	vb := int(v * 4)
+	if vb > 3 {
+		vb = 3
 	}
-	return 2 + int(h/30)%12
+	if s < 0.08 {
+		return vb
+	}
+	return 4 + vb*12 + int(h/30)%12
+}
+
+func majorityOwner(owner []uint16, island []pix, w int) (int, bool) {
+	hist := map[uint16]int{}
+	for _, p := range island {
+		id := owner[p.y*w+p.x]
+		if id != 0 {
+			hist[id]++
+		}
+	}
+	var best uint16
+	n := 0
+	for id, c := range hist {
+		if c > n {
+			best, n = id, c
+		}
+	}
+	if best == 0 || n*2 <= len(island) {
+		return 0, false
+	}
+	return int(best - 1), true
+}
+
+func claim(owner []uint16, island []pix, w int, id uint16) {
+	for _, p := range island {
+		owner[p.y*w+p.x] = id
+	}
+}
+
+func clearOwner(owner []uint16, id uint16) {
+	for i, v := range owner {
+		if v == id {
+			owner[i] = 0
+		}
+	}
+}
+
+func ownedUnion(owner []uint16, island []pix, w, h int, id uint16) []pix {
+	seed := make(map[pix]bool, len(island))
+	seen := make([]byte, w*h)
+	var st, out []pix
+	for _, p := range island {
+		seed[p] = true
+		i := p.y*w + p.x
+		if seen[i] != 0 {
+			continue
+		}
+		seen[i] = 1
+		st = append(st, p)
+	}
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for len(st) > 0 {
+		p := st[len(st)-1]
+		st = st[:len(st)-1]
+		out = append(out, p)
+		for _, d := range dirs {
+			q := pix{p.x + d.x, p.y + d.y}
+			if q.x < 0 || q.y < 0 || q.x >= w || q.y >= h {
+				continue
+			}
+			i := q.y*w + q.x
+			if seen[i] != 0 {
+				continue
+			}
+			if owner[i] != id && !seed[q] {
+				continue
+			}
+			seen[i] = 1
+			st = append(st, q)
+		}
+	}
+	return out
 }
 
 func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
@@ -264,5 +337,3 @@ func voids(island []pix) [][]pix {
 	}
 	return holes
 }
-
-

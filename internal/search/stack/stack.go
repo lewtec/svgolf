@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"iter"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -17,6 +18,9 @@ const (
 	stallLimit = 24
 	minIsland  = 8
 	minErr     = 8
+	// leftover closer than this to the overlapping path is a polish,
+	// not a new plate. 90 is half of ColorAt's 180.
+	recolorAt = 90
 )
 
 // Stack covers leftover regions on a blurred copy of the pixmap, then halves
@@ -49,6 +53,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			return
 		}
 		skip := make([]byte, w*h)
+		owner := make([]uint16, w*h)
+		var fills []color.NRGBA
 		stall := 0
 		yielded := false
 		n := 0
@@ -74,46 +80,32 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				continue
 			}
 
-			placed := false
-			var last svg.Node
-			dirty0 := islandRect(island)
-			for _, cand := range formPaths(island, col) {
-				var next svg.Document
-				if !placed {
-					next = doc.Append(cand.Node())
-				} else {
-					next = replaceAt(doc, n, cand.Node())
-				}
-				ngot, err := render.Render(next)
-				if err != nil {
-					yield(svg.Document{}, err)
-					return
-				}
-				nn := n
-				if !placed {
-					nn++
-				}
-				dirty := dirty0.Union(nodeRect(cand.Node(), last)).Inset(-2)
-				delta := ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
-				nerr := errSum + delta
-				if !acceptSum(errSum, nerr, n, nn, last, cand.Node()) {
-					continue
-				}
-				doc, got, last, errSum = next, ngot, cand.Node(), nerr
-				placed = true
-				yielded = true
+			pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
+			if err != nil {
+				yield(svg.Document{}, err)
+				return
+			}
+			if pick.ok {
+				doc, got, errSum, yielded = pick.doc, pick.got, pick.errSum, true
 				if !yield(doc, nil) {
 					return
+				}
+				stall = 0
+				if pick.replace >= 0 {
+					clearOwner(owner, uint16(pick.replace+1))
+					claim(owner, pick.work, w, uint16(pick.replace+1))
+					fills[pick.replace] = pick.fill
+				} else {
+					claim(owner, pick.work, w, uint16(n+1))
+					fills = append(fills, pick.fill)
+					n++
 				}
 			}
 			// one cover per CC at this blur. leftover of a flat fill
 			// on a gradient is the same island; without skip we restack
 			// it up to maxPaths. unblur clears skip.
 			markSkip(skip, island, w)
-			if placed {
-				n++
-				stall = 0
-			} else {
+			if !pick.ok {
 				stall++
 				if stall >= stallLimit && !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
 					break
@@ -124,6 +116,82 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			yield(doc, nil)
 		}
 	}
+}
+
+type formPick struct {
+	doc     svg.Document
+	got     *image.NRGBA
+	errSum  float64
+	replace int
+	work    []pix
+	fill    color.NRGBA
+	ok      bool
+}
+
+// pickForm scores a polish of the overlapping path (same parts) against
+// a new path. Leftover of the same body should refine; a mark on top
+// should pay pathCost and append.
+func pickForm(
+	doc svg.Document,
+	got, want *image.NRGBA,
+	island []pix,
+	col color.NRGBA,
+	owner []uint16,
+	fills []color.NRGBA,
+	n int,
+	errSum float64,
+	w, h int,
+) (formPick, error) {
+	best := formPick{replace: -1}
+	bestA := errSum + pathCost*float64(n)
+	curA := bestA
+	var bestLen int
+	consider := func(work []pix, fill color.NRGBA, replace int) error {
+		parts := n
+		dirty0 := islandRect(work)
+		if replace >= 0 {
+			dirty0 = dirty0.Union(nodeRect(doc.Children()[replace]))
+		} else {
+			parts = n + 1
+		}
+		for _, cand := range formPaths(work, fill) {
+			var next svg.Document
+			if replace >= 0 {
+				next = replaceAt(doc, replace, cand.Node())
+			} else {
+				next = doc.Append(cand.Node())
+			}
+			ngot, err := render.Render(next)
+			if err != nil {
+				return err
+			}
+			dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
+			nerr := errSum + ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
+			a := nerr + pathCost*float64(parts)
+			plen := pathLen(cand.Node())
+			if a > bestA || a > curA {
+				continue
+			}
+			if a == bestA && (!best.ok || plen >= bestLen) {
+				continue
+			}
+			bestA = a
+			bestLen = plen
+			best = formPick{doc: next, got: ngot, errSum: nerr, replace: replace, work: work, fill: fill, ok: true}
+		}
+		return nil
+	}
+	if idx, ok := majorityOwner(owner, island, w); ok && loss.ColorAt(fills[idx], col) < recolorAt {
+		union := ownedUnion(owner, island, w, h, uint16(idx+1))
+		if err := consider(union, meanFill(want, union), idx); err != nil {
+			return formPick{}, err
+		}
+		return best, nil
+	}
+	if err := consider(island, col, -1); err != nil {
+		return formPick{}, err
+	}
+	return best, nil
 }
 
 func markSkip(skip []byte, island []pix, w int) {
@@ -179,9 +247,7 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 			out = append(out, filledEllipse(cx, cy, rx, ry, col))
 		}
 	}
-	if len(out) == 0 {
-		out = append(out, filledPath(bb, col))
-	}
+	out = append(out, filledPath(bb, col))
 	return out
 }
 
