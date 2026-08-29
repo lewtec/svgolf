@@ -6,13 +6,34 @@ import (
 	"testing"
 )
 
+func TestScoreTransparentIsMiss(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	clear := color.NRGBA{}
+	if colorErr(clear, navy) != 180 {
+		t.Fatalf("clear on navy=%v", colorErr(clear, navy))
+	}
+	if colorErr(clear, clear) != 180 {
+		t.Fatalf("clear on hole=%v want 180", colorErr(clear, clear))
+	}
+}
+
+func TestScoreHoleWantsPaper(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	hole := color.NRGBA{}
+	if colorErr(paper, hole) != 0 {
+		t.Fatalf("paper on hole=%v", colorErr(paper, hole))
+	}
+	if colorErr(navy, hole) < 90 {
+		t.Fatalf("navy on hole=%v want a miss", colorErr(navy, hole))
+	}
+}
+
 func TestScoreHoles(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	want.SetNRGBA(0, 0, navy)
 	want.SetNRGBA(1, 0, navy)
 	want.SetNRGBA(0, 1, navy)
-	// (1,1) is a hole
 	empty := image.NewNRGBA(want.Rect)
 	allNavy := image.NewNRGBA(want.Rect)
 	for y := 0; y < 2; y++ {
@@ -24,11 +45,12 @@ func TestScoreHoles(t *testing.T) {
 	tight.SetNRGBA(0, 0, navy)
 	tight.SetNRGBA(1, 0, navy)
 	tight.SetNRGBA(0, 1, navy)
+	tight.SetNRGBA(1, 1, paper)
 	if !(Score(allNavy, want, 0) < Score(empty, want, 0)) {
 		t.Fatalf("plate error should beat empty: plate=%v empty=%v", Score(allNavy, want, 0), Score(empty, want, 0))
 	}
 	if !(Score(tight, want, 1) < Score(allNavy, want, 1)) {
-		t.Fatalf("hole empty should beat filled hole: tight=%v plate=%v", Score(tight, want, 1), Score(allNavy, want, 1))
+		t.Fatalf("paper hole should beat filled hole: tight=%v plate=%v", Score(tight, want, 1), Score(allNavy, want, 1))
 	}
 }
 
@@ -42,11 +64,12 @@ func TestScoreBlackOnHoleCosts(t *testing.T) {
 	tight.SetNRGBA(0, 0, navy)
 	tight.SetNRGBA(1, 0, navy)
 	tight.SetNRGBA(0, 1, navy)
+	tight.SetNRGBA(1, 1, paper)
 	black := image.NewNRGBA(want.Rect)
 	copy(black.Pix, tight.Pix)
 	black.SetNRGBA(1, 1, color.NRGBA{A: 255})
 	if !(Score(tight, want, 1) < Score(black, want, 1)) {
-		t.Fatalf("empty hole should beat black fill: tight=%v black=%v", Score(tight, want, 1), Score(black, want, 1))
+		t.Fatalf("paper hole should beat black fill: tight=%v black=%v", Score(tight, want, 1), Score(black, want, 1))
 	}
 }
 

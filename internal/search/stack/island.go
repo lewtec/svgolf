@@ -102,9 +102,6 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	}
 	q := want.NRGBAAt(want.Rect.Min.X+x, want.Rect.Min.Y+y)
 	g := got.NRGBAAt(got.Rect.Min.X+x, got.Rect.Min.Y+y)
-	if q.A == 0 {
-		return g.A != 0
-	}
 	return colorErr(g, q) > minErr
 }
 
@@ -221,9 +218,9 @@ func meanFill(want *image.NRGBA, island []pix) color.NRGBA {
 	}
 	n := len(island)
 	if sa/n < 128 {
-		return color.NRGBA{A: 255}
+		return paper
 	}
-	return color.NRGBA{R: uint8(sr / n), G: uint8(sg / n), B: uint8(sb / n), A: uint8(sa / n)}
+	return color.NRGBA{R: uint8(sr / n), G: uint8(sg / n), B: uint8(sb / n), A: 255}
 }
 
 func bbox(island []pix) [][2]float64 {
@@ -249,17 +246,6 @@ func bbox(island []pix) [][2]float64 {
 		{float64(maxX), float64(maxY)},
 		{float64(minX), float64(maxY)},
 	}
-}
-
-func transparentIsland(want *image.NRGBA, island []pix) bool {
-	if len(island) == 0 {
-		return false
-	}
-	var sa int
-	for _, p := range island {
-		sa += int(want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y).A)
-	}
-	return sa/len(island) < 128
 }
 
 // voids are enclosed non-island pockets (4-connected), not the exterior.

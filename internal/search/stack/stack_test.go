@@ -14,6 +14,14 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
+func forms(d svg.Document) []svg.Node {
+	kids := d.Children()
+	if len(kids) == 0 {
+		return kids
+	}
+	return kids[1:]
+}
+
 func TestBoxBlurSpreads(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 5, 5))
 	img.SetNRGBA(2, 2, color.NRGBA{R: 255, A: 255})
@@ -59,10 +67,10 @@ func TestStackSolid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n != 1 {
+	if n := len(forms(doc)); n != 1 {
 		t.Fatalf("paths=%d want 1", n)
 	}
-	if _, ok := doc.Children()[0].Path(); !ok {
+	if _, ok := forms(doc)[0].Path(); !ok {
 		t.Fatal("not a path")
 	}
 }
@@ -81,7 +89,7 @@ func TestStackUnblurDoesNotRestack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n != 1 {
+	if n := len(forms(doc)); n != 1 {
 		t.Fatalf("paths=%d want 1 (polished plate)", n)
 	}
 }
@@ -101,7 +109,7 @@ func TestStackTwoColorGetsBoth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n < 2 {
+	if n := len(forms(doc)); n < 2 {
 		t.Fatalf("paths=%d want >=2", n)
 	}
 }
@@ -123,7 +131,7 @@ func TestStackMarkAfterPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n < 2 {
+	if n := len(forms(doc)); n < 2 {
 		t.Fatalf("paths=%d want >=2 (plate + mark)", n)
 	}
 	empty := image.NewNRGBA(img.Rect)
@@ -131,7 +139,7 @@ func TestStackMarkAfterPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if Score(got, img, len(doc.Children())) >= Score(empty, img, 0) {
+	if Score(got, img, len(forms(doc))) >= Score(empty, img, 0) {
 		t.Fatalf("final score not better than empty")
 	}
 }
@@ -153,7 +161,7 @@ func TestStackKeepsGoingAfterReject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n < 3 {
+	if n := len(forms(doc)); n < 3 {
 		t.Fatalf("paths=%d want >=3", n)
 	}
 }
@@ -250,8 +258,8 @@ func TestStackDoesNotKeepFilledHoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := got.NRGBAAt(16, 16)
-	if c.A != 0 && c.B > 40 {
-		t.Fatalf("hole still navy %+v paths=%d", c, len(doc.Children()))
+	if c.B > 40 && c.R < 200 {
+		t.Fatalf("hole still navy %+v paths=%d", c, len(forms(doc)))
 	}
 }
 
@@ -272,7 +280,7 @@ func TestStackTinyMark(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n < 2 {
+	if n := len(forms(doc)); n < 2 {
 		t.Fatalf("paths=%d want plate + mark", n)
 	}
 }
@@ -301,8 +309,12 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		kids = append(kids, len(doc.Children()))
-		first = append(first, pathPts(doc.Children()[0]))
+		kids = append(kids, len(forms(doc)))
+		if fk := forms(doc); len(fk) > 0 {
+			first = append(first, pathPts(fk[0]))
+		} else {
+			first = append(first, 0)
+		}
 	}
 	grew := false
 	for i := 1; i < len(kids); i++ {
@@ -357,7 +369,11 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, ok := doc.Children()[0].Path()
+		fk := forms(doc)
+		if len(fk) == 0 {
+			t.Fatal("no form")
+		}
+		p, ok := fk[0].Path()
 		if !ok {
 			t.Fatal("not a path")
 		}
@@ -564,7 +580,7 @@ func TestStackDiskUsesCubics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := cubics(doc.Children()[0]); n < 4 {
+	if n := cubics(forms(doc)[0]); n < 4 {
 		t.Fatalf("cubics=%d want >=4", n)
 	}
 }
@@ -584,7 +600,7 @@ func TestStackGradientDoesNotRestack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n > 8 {
+	if n := len(forms(doc)); n > 8 {
 		t.Fatalf("paths=%d, restacking the ramp", n)
 	}
 }
@@ -608,7 +624,7 @@ func TestStackSkipsSpeckles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(doc.Children()); n > 2 {
+	if n := len(forms(doc)); n > 2 {
 		t.Fatalf("paths=%d want plate, not 3x3 sprinkles", n)
 	}
 }

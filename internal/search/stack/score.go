@@ -13,10 +13,13 @@ import (
 // makes a miss cost far more than AA leftover.
 const pathCost = 180 * 180 * minIsland
 
+// paper is the empty pane. Source holes (want.A==0) must look like paper.
+// got.A==0 is always a full miss — no transparent holes.
+var paper = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+
 // Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels
-// use ColorAt². A hole (want.A==0) costs 180² if painted — black is not
-// a hole. Missing paint on an opaque pixel also costs 180². Mean would
-// hide letters on a large canvas; sum does not.
+// use ColorAt². A hole (want.A==0) must match paper. Transparent got is
+// 180². Mean would hide letters on a large canvas; sum does not.
 func Score(got, want *image.NRGBA, parts int) float64 {
 	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return math.Inf(1)
@@ -57,14 +60,11 @@ func errAt(g, q color.NRGBA) float64 {
 }
 
 func colorErr(g, q color.NRGBA) float64 {
-	if q.A == 0 {
-		if g.A == 0 {
-			return 0
-		}
-		return 180
-	}
 	if g.A == 0 {
 		return 180
+	}
+	if q.A == 0 {
+		return loss.ColorAt(g, paper)
 	}
 	return loss.ColorAt(g, q)
 }

@@ -47,6 +47,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		b := target.Bounds()
 		w, h := b.Dx(), b.Dy()
 		doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
+		doc = doc.Append(whitePane(w, h).Node())
 		got, err := render.Render(doc)
 		if err != nil {
 			yield(svg.Document{}, err)
@@ -75,7 +76,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				}
 				continue
 			}
-			if transparentIsland(want, island) || thinIsland(island) {
+			if thinIsland(island) {
 				markSkip(skip, island, w)
 				continue
 			}
@@ -150,14 +151,14 @@ func pickForm(
 		parts := n
 		dirty0 := islandRect(work)
 		if replace >= 0 {
-			dirty0 = dirty0.Union(nodeRect(doc.Children()[replace]))
+			dirty0 = dirty0.Union(nodeRect(doc.Children()[replace+1]))
 		} else {
 			parts = n + 1
 		}
 		for _, cand := range formPaths(work, fill) {
 			var next svg.Document
 			if replace >= 0 {
-				next = replaceAt(doc, replace, cand.Node())
+				next = replaceAt(doc, replace+1, cand.Node())
 			} else {
 				next = doc.Append(cand.Node())
 			}
@@ -226,6 +227,12 @@ func acceptSum(err0, err1 float64, parts, nparts int, old, cand svg.Node) bool {
 	return pathLen(cand) < pathLen(old)
 }
 
+func whitePane(w, h int) svg.Path {
+	return filledPath([][2]float64{
+		{0, 0}, {float64(w), 0}, {float64(w), float64(h)}, {0, float64(h)},
+	}, paper)
+}
+
 func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	poly := fitPoly(contour(island), 2)
 	if len(poly) < 3 {
@@ -289,11 +296,7 @@ func appendRing(p svg.Path, ring [][2]float64) svg.Path {
 }
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
-	p := appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
-	if col.A != 255 {
-		p = p.WithFillOpacity(float64(col.A) / 255)
-	}
-	return p
+	return appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
 }
 
 func islandRect(island []pix) image.Rectangle {
