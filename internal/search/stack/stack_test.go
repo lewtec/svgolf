@@ -303,6 +303,39 @@ func TestStackDoesNotKeepFilledHoles(t *testing.T) {
 	}
 }
 
+func TestStackFirstFormIsSolid(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 4; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 12; y < 20; y++ {
+		for x := 12; x < 20; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{})
+		}
+	}
+	for doc, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		fk := forms(doc)
+		if len(fk) == 0 {
+			continue
+		}
+		p, ok := fk[0].Path()
+		if !ok {
+			t.Fatal("not a path")
+		}
+		if p.FillRule() == svg.FillEvenOdd {
+			t.Fatal("first form carved holes; want a solid plate")
+		}
+		return
+	}
+	t.Fatal("no form")
+}
+
 func TestStackTinyMark(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 40, 40))

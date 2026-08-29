@@ -14,18 +14,17 @@ import (
 )
 
 const (
-	maxPaths   = 512
-	stallLimit = 24
-	minIsland  = 8
-	minErr     = 8
+	maxPaths  = 512
+	minIsland = 8
+	minErr    = 8
 	// leftover closer than this to the overlapping path is a polish,
 	// not a new plate. 90 is half of ColorAt's 180.
 	recolorAt = 90
 )
 
-// Stack covers leftover regions on a blurred copy of the pixmap, then halves
-// the blur when the search stalls, down to the original. Each island keeps the
-// best of polygon / cubics (evenodd if it has holes). Accept if Score drops.
+// Stack expands (cover leftover), then contracts (drop a path if Score
+// holds), then unblurs. Forms are solid — holes and marks are later
+// layers, not carved into the plate.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -56,56 +55,45 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		skip := make([]byte, w*h)
 		owner := make([]uint16, w*h)
 		var fills []color.NRGBA
-		stall := 0
 		yielded := false
 		n := 0
 		sigma := startSigma(w, h)
 		want := wantAt(target, sigma)
 		errSum := Score(got, want, 0)
-		for n < maxPaths {
+		for {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
 					yield(svg.Document{}, err)
 				}
 				return
 			}
-			col, island := largestIsland(got, want, skip)
-			if len(island) < minIsland {
-				if !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
-					break
-				}
-				continue
-			}
-			if thinIsland(island) {
-				markSkip(skip, island, w)
-				continue
-			}
-
-			pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
-			if err != nil {
-				yield(svg.Document{}, err)
-				return
-			}
-			if pick.ok {
-				doc, got, errSum, yielded = pick.doc, pick.got, pick.errSum, true
-				if !yield(doc, nil) {
-					return
-				}
-				stall = 0
-				if pick.replace >= 0 {
-					clearOwner(owner, uint16(pick.replace+1))
-					claim(owner, pick.work, w, uint16(pick.replace+1))
-					fills[pick.replace] = pick.fill
-				} else {
-					claim(owner, pick.work, w, uint16(n+1))
-					fills = append(fills, pick.fill)
-					n++
+			if n < maxPaths {
+				col, island := largestIsland(got, want, skip)
+				if len(island) >= minIsland {
+					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
+					if err != nil {
+						yield(svg.Document{}, err)
+						return
+					}
+					markSkip(skip, island, w)
+					if pick.ok {
+						doc, got, errSum, yielded = pick.doc, pick.got, pick.errSum, true
+						if !yield(doc, nil) {
+							return
+						}
+						if pick.replace >= 0 {
+							clearOwner(owner, uint16(pick.replace+1))
+							claim(owner, pick.work, w, uint16(pick.replace+1))
+							fills[pick.replace] = pick.fill
+						} else {
+							claim(owner, pick.work, w, uint16(n+1))
+							fills = append(fills, pick.fill)
+							n++
+						}
+					}
+					continue
 				}
 			}
-			// one cover per CC at this blur. leftover of a flat fill
-			// on a gradient is the same island; without skip we restack
-			// it up to maxPaths. unblur clears skip.
-			markSkip(skip, island, w)
 			dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
 			if err != nil {
 				yield(svg.Document{}, err)
@@ -116,12 +104,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				if !yield(doc, nil) {
 					return
 				}
-				stall = 0
-			} else if !pick.ok {
-				stall++
-				if stall >= stallLimit && !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
-					break
-				}
+				continue
+			}
+			if !unblur(target, &sigma, &want, skip, &errSum, got) {
+				break
 			}
 		}
 		if !yielded {
@@ -287,7 +273,7 @@ func markSkip(skip []byte, island []pix, w int) {
 	}
 }
 
-func unblur(orig *image.NRGBA, sigma *int, want **image.NRGBA, skip []byte, stall *int, errSum *float64, got *image.NRGBA) bool {
+func unblur(orig *image.NRGBA, sigma *int, want **image.NRGBA, skip []byte, errSum *float64, got *image.NRGBA) bool {
 	if *sigma <= 0 {
 		return false
 	}
@@ -296,7 +282,6 @@ func unblur(orig *image.NRGBA, sigma *int, want **image.NRGBA, skip []byte, stal
 	for i := range skip {
 		skip[i] = 0
 	}
-	*stall = 0
 	*errSum = Score(got, *want, 0)
 	return true
 }
@@ -324,10 +309,6 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	if len(poly) < 3 {
 		return nil
 	}
-	hs := holeRings(island)
-	if len(hs) > 0 {
-		return []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
-	}
 	return []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
 }
 
@@ -347,17 +328,6 @@ func docCmdLen(d svg.Document) int {
 	return n
 }
 
-func holeRings(island []pix) [][][2]float64 {
-	var rings [][][2]float64
-	for _, h := range voids(island) {
-		r := fitPoly(contour(h), 2)
-		if len(r) >= 3 {
-			rings = append(rings, r)
-		}
-	}
-	return rings
-}
-
 func thinIsland(island []pix) bool {
 	if len(island) == 0 {
 		return false
@@ -366,13 +336,6 @@ func thinIsland(island []pix) bool {
 	w := bb[1][0] - bb[0][0]
 	h := bb[2][1] - bb[1][1]
 	return w <= 1 || h <= 1
-}
-
-func withHoles(p svg.Path, holes [][][2]float64) svg.Path {
-	for _, h := range holes {
-		p = appendRing(p, h)
-	}
-	return p.WithFillRule(svg.FillEvenOdd)
 }
 
 func appendRing(p svg.Path, ring [][2]float64) svg.Path {
