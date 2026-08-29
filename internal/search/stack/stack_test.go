@@ -270,8 +270,8 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 		t.Fatalf("never covered both, kids=%v", kids)
 	}
 	for i := 0; i <= lastGrow; i++ {
-		if firstPts[i] != 4 {
-			t.Fatalf("epoch %d: still covering (kids=%d) but first path pts=%d want 4", i, kids[i], firstPts[i])
+		if firstPts[i] != firstPts[0] {
+			t.Fatalf("epoch %d: refined first path while still covering (pts %d -> %d)", i, firstPts[0], firstPts[i])
 		}
 	}
 }
@@ -319,11 +319,116 @@ func TestStackFirstFormIsBBox(t *testing.T) {
 	t.Fatal("no epoch")
 }
 
+func TestSmoothPullsStairInward(t *testing.T) {
+	stair := [][2]float64{{0, 0}, {1, 0}, {1, 1}, {2, 1}, {2, 2}, {3, 2}}
+	got := smooth(stair, 2)
+	if len(got) != len(stair) {
+		t.Fatalf("len=%d", len(got))
+	}
+	// the (1,0) corner should move up/right toward the diagonal
+	if got[1][1] <= 0 {
+		t.Fatalf("stair still on axis: %v", got[1])
+	}
+}
+
+func TestFitPolyShorterThanContour(t *testing.T) {
+	var ring [][2]float64
+	for i := 0; i < 40; i++ {
+		ring = append(ring, [2]float64{float64(i), 0})
+	}
+	for i := 0; i < 40; i++ {
+		ring = append(ring, [2]float64{40, float64(i)})
+	}
+	got := fitPoly(ring, 4)
+	if len(got) >= len(ring) {
+		t.Fatalf("fitPoly=%d contour=%d", len(got), len(ring))
+	}
+	if len(got) < 3 {
+		t.Fatalf("fitPoly=%v", got)
+	}
+}
+
+func TestThinIsland(t *testing.T) {
+	var bar []pix
+	for x := 0; x < 12; x++ {
+		bar = append(bar, pix{x, 3})
+	}
+	if !thinIsland(bar) {
+		t.Fatal("1px bar should be scatter")
+	}
+	var box []pix
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			box = append(box, pix{x, y})
+		}
+	}
+	if thinIsland(box) {
+		t.Fatal("4x4 not scatter")
+	}
+}
+
 func TestRDPCollinear(t *testing.T) {
 	got := rdp([][2]float64{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, 0.5)
 	if len(got) != 2 {
 		t.Fatalf("rdp=%v", got)
 	}
+}
+
+func TestStackDiskUsesCubics(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			dx, dy := float64(x)-15.5, float64(y)-15.5
+			if dx*dx+dy*dy <= 12*12 {
+				img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+			}
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := cubics(doc.Children()[0]); n < 4 {
+		t.Fatalf("cubics=%d want >=4", n)
+	}
+}
+
+func TestStackSkipsSpeckles(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for _, o := range [][2]int{{4, 4}, {20, 6}, {36, 5}, {8, 22}, {28, 24}, {12, 38}} {
+		for y := 0; y < 3; y++ {
+			for x := 0; x < 3; x++ {
+				img.SetNRGBA(o[0]+x, o[1]+y, color.NRGBA{A: 255})
+			}
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n > 2 {
+		t.Fatalf("paths=%d want plate, not 3x3 sprinkles", n)
+	}
+}
+
+func cubics(n svg.Node) int {
+	p, ok := n.Path()
+	if !ok {
+		return 0
+	}
+	k := 0
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			k++
+		}
+	}
+	return k
 }
 
 func TestFilledEllipseUsesCubics(t *testing.T) {

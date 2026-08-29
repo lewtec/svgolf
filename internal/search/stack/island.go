@@ -32,7 +32,7 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	if q.A == 0 {
 		return g.A != 0
 	}
-	return errAt(g, q) > 1
+	return errAt(g, q) > minErr
 }
 
 func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
@@ -70,6 +70,7 @@ func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 			mark[y*w+x] = 1
 		}
 	}
+	despeckle(mark, w, h)
 	best := []pix{}
 	var cur []pix
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
@@ -103,6 +104,34 @@ func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 		}
 	}
 	return meanFill(want, best), best
+}
+
+func despeckle(mark []byte, w, h int) {
+	drop := make([]int, 0, 32)
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mark[y*w+x] != 1 {
+				continue
+			}
+			n := 0
+			for _, d := range dirs {
+				nx, ny := x+d.x, y+d.y
+				if nx < 0 || ny < 0 || nx >= w || ny >= h {
+					continue
+				}
+				if mark[ny*w+nx] == 1 {
+					n++
+				}
+			}
+			if n < 2 {
+				drop = append(drop, y*w+x)
+			}
+		}
+	}
+	for _, i := range drop {
+		mark[i] = 0
+	}
 }
 
 func meanFill(want *image.NRGBA, island []pix) color.NRGBA {
@@ -228,7 +257,7 @@ func voids(island []pix) [][]pix {
 					stack = append(stack, pix{nx, ny})
 				}
 			}
-			if len(cur) >= 4 {
+			if len(cur) >= minIsland && !thinIsland(cur) {
 				holes = append(holes, append([]pix{}, cur...))
 			}
 		}
@@ -236,16 +265,4 @@ func voids(island []pix) [][]pix {
 	return holes
 }
 
-func corners(island []pix) [][2]float64 {
-	out := make([][2]float64, 0, len(island)*4)
-	for _, p := range island {
-		x, y := float64(p.x), float64(p.y)
-		out = append(out,
-			[2]float64{x, y},
-			[2]float64{x + 1, y},
-			[2]float64{x + 1, y + 1},
-			[2]float64{x, y + 1},
-		)
-	}
-	return out
-}
+

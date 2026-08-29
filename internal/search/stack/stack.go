@@ -17,6 +17,7 @@ const (
 	maxPaths   = 512
 	stallLimit = 24
 	minIsland  = 8
+	minErr     = 8
 )
 
 // Stack covers every leftover region with a simple path, then tightens those paths.
@@ -62,11 +63,14 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			if len(island) < minIsland {
 				break
 			}
-			if transparentIsland(target, island) {
+			if transparentIsland(target, island) || thinIsland(island) {
 				for _, p := range island {
 					skip[p.y*w+p.x] = 1
 				}
 				continue
+			}
+			if len(island) < minIsland+2*len(layers) {
+				break
 			}
 			cands := formPaths(island, col)
 			next := doc.Append(cands[0].Node())
@@ -152,51 +156,34 @@ func accept(got, ngot, want *image.NRGBA, parts, nparts int, old, cand svg.Node)
 
 func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	bb := bbox(island)
-	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	c := contour(island)
-	out := holedForms(island, c, col)
+	poly := fitPoly(c, 6)
+	hs := holeRings(island)
+	if len(hs) > 0 && len(poly) >= 3 {
+		out := []svg.Path{withHoles(filledPath(poly, col), hs)}
+		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
+			out = append(out, withHoles(filledEllipse(cx, cy, rx, ry, col), hs))
+		}
+		return out
+	}
+	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	if boxA > 2*float64(len(island)) {
-		return append(out, filledPath(rdp(c, 4), col), filledPath(rdp(c, 1), col))
+		return []svg.Path{filledPath(poly, col)}
 	}
-	out = append(out, filledPath(bb, col))
+	out := []svg.Path{filledPath(bb, col)}
 	if cx, cy, rx, ry, ok := fitEllipse(island); ok {
-		el := filledEllipse(cx, cy, rx, ry, col)
-		if hs := holeRings(island, 4); len(hs) > 0 {
-			out = append(out, withHoles(el, hs))
-		}
-		out = append(out, el)
-		if r := (rx + ry) / 2; r >= 1 {
-			out = append(out, filledEllipse(cx, cy, r, r, col))
-		}
+		out = append(out, filledEllipse(cx, cy, rx, ry, col))
 	}
-	out = append(out,
-		filledPath(convexHull(corners(island)), col),
-		filledPath(rdp(c, 8), col),
-		filledPath(rdp(c, 2), col),
-	)
-	return out
-}
-
-func holedForms(island []pix, outer [][2]float64, col color.NRGBA) []svg.Path {
-	hs := holeRings(island, 4)
-	if len(hs) == 0 || len(outer) < 3 {
-		return nil
-	}
-	out := []svg.Path{filledEvenOdd(rdp(outer, 4), hs, col)}
-	if tight := holeRings(island, 1); len(tight) > 0 {
-		out = append(out, filledEvenOdd(rdp(outer, 1), tight, col))
+	if len(poly) >= 3 {
+		out = append(out, filledPath(poly, col))
 	}
 	return out
 }
 
-func holeRings(island []pix, eps float64) [][][2]float64 {
+func holeRings(island []pix) [][][2]float64 {
 	var rings [][][2]float64
 	for _, h := range voids(island) {
-		c := contour(h)
-		if len(c) < 3 {
-			continue
-		}
-		r := rdp(c, eps)
+		r := fitPoly(contour(h), 6)
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}
@@ -204,8 +191,14 @@ func holeRings(island []pix, eps float64) [][][2]float64 {
 	return rings
 }
 
-func filledEvenOdd(outer [][2]float64, holes [][][2]float64, col color.NRGBA) svg.Path {
-	return withHoles(filledPath(outer, col), holes)
+func thinIsland(island []pix) bool {
+	if len(island) == 0 {
+		return false
+	}
+	bb := bbox(island)
+	w := bb[1][0] - bb[0][0]
+	h := bb[2][1] - bb[1][1]
+	return w <= 1 || h <= 1
 }
 
 func withHoles(p svg.Path, holes [][][2]float64) svg.Path {
@@ -219,11 +212,14 @@ func appendRing(p svg.Path, ring [][2]float64) svg.Path {
 	if len(ring) < 3 {
 		return p
 	}
-	p = p.MoveTo(ring[0][0], ring[0][1])
+	cmds := p.Commands()
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdMove, X: ring[0][0], Y: ring[0][1]})
 	for _, q := range ring[1:] {
-		p = p.LineTo(q[0], q[1])
+		cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: q[0], Y: q[1]})
 	}
-	return p.Close()
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
+	p, _ = p.WithCommands(cmds)
+	return p
 }
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
