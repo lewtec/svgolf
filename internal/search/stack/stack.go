@@ -22,9 +22,10 @@ const (
 )
 
 // Stack expands (cover leftover), then contracts (drop a path if Score
-// holds), then unblurs. Forms are filled paths; a ramp may take a
-// 2-stop linear fill instead of stacked flats. Holes and marks are
-// later layers, not carved into the plate.
+// holds), then raises the want scale (downscale, then native). Forms
+// are filled paths; a ramp may take a 2-stop linear fill instead of
+// stacked flats. Holes and marks are later layers, not carved into
+// the plate.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -33,14 +34,14 @@ func init() {
 	search.Register("stack", func() search.Search { return Stack{} })
 }
 
-func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error] {
-	return func(yield func(svg.Document, error) bool) {
+func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
+	return func(yield func(search.Epoch, error) bool) {
 		if err := ctx.Err(); err != nil {
-			yield(svg.Document{}, err)
+			yield(search.Epoch{}, err)
 			return
 		}
 		if target == nil {
-			yield(svg.Document{}, fmt.Errorf("search: nil pixmap"))
+			yield(search.Epoch{}, fmt.Errorf("search: nil pixmap"))
 			return
 		}
 		b := target.Bounds()
@@ -49,7 +50,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		doc = doc.Append(whitePane(w, h).Node())
 		got, err := render.Render(doc)
 		if err != nil {
-			yield(svg.Document{}, err)
+			yield(search.Epoch{}, err)
 			return
 		}
 		skip := make([]byte, w*h)
@@ -57,13 +58,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		var fills []color.NRGBA
 		yielded := false
 		n := 0
-		sigma := startSigma(w, h)
-		want := wantAt(target, sigma)
+		scale := startSigma(w, h)
+		want := wantAt(target, scale)
 		errSum := Score(got, want, 0)
 		for {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
-					yield(svg.Document{}, err)
+					yield(search.Epoch{}, err)
 				}
 				return
 			}
@@ -72,13 +73,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				if len(island) >= minIsland {
 					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
 					if err != nil {
-						yield(svg.Document{}, err)
+						yield(search.Epoch{}, err)
 						return
 					}
 					markSkip(skip, island, w)
 					if pick.ok {
 						doc, got, errSum, yielded = pick.doc, pick.got, pick.errSum, true
-						if !yield(doc, nil) {
+						if !yield(epochOf(doc, scale), nil) {
 							return
 						}
 						if len(pick.reclaims) > 0 {
@@ -106,24 +107,31 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			}
 			dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
 			if err != nil {
-				yield(svg.Document{}, err)
+				yield(search.Epoch{}, err)
 				return
 			}
 			if dropped {
 				yielded = true
-				if !yield(doc, nil) {
+				if !yield(epochOf(doc, scale), nil) {
 					return
 				}
 				continue
 			}
-			if !unblur(target, &sigma, &want, skip, &errSum, got) {
+			if !unblur(target, &scale, &want, skip, &errSum, got) {
 				break
 			}
 		}
 		if !yielded {
-			yield(doc, nil)
+			yield(epochOf(doc, scale), nil)
 		}
 	}
+}
+
+func epochOf(doc svg.Document, scale int) search.Epoch {
+	if scale < 2 {
+		scale = 1
+	}
+	return search.Epoch{Document: doc, Scale: scale}
 }
 
 type formPick struct {
@@ -396,7 +404,7 @@ func markSkip(skip []byte, island []pix, w int) {
 }
 
 func unblur(orig *image.NRGBA, sigma *int, want **image.NRGBA, skip []byte, errSum *float64, got *image.NRGBA) bool {
-	if *sigma <= 0 {
+	if *sigma < 2 {
 		return false
 	}
 	*sigma /= 2
@@ -430,12 +438,7 @@ func formPaths(island []pix, col color.NRGBA, punch bool, want *image.NRGBA) []s
 	// A new plate is the convex hull. Tight contour hugs every cloud
 	// bay; Score then picks that because painting over the bay costs
 	// more than the extra commands. Holes and marks are later layers.
-	var ring [][2]float64
-	if punch {
-		ring = fitPoly(contour(island), 2)
-	} else {
-		ring = convexHull(islandPoints(island))
-	}
+	ring := convexHull(islandPoints(island))
 	if len(ring) < 3 {
 		return nil
 	}
@@ -460,7 +463,7 @@ func formPaths(island []pix, col color.NRGBA, punch bool, want *image.NRGBA) []s
 func holeRings(island []pix) [][][2]float64 {
 	var rings [][][2]float64
 	for _, h := range voids(island) {
-		r := fitPoly(contour(h), 2)
+		r := convexHull(islandPoints(h))
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}

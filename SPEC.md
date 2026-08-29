@@ -752,7 +752,7 @@ Same Go type, different origin: `want` is the scene (decoded PNG). `got` is `Ren
 PNG ──Decode──► want *image.NRGBA
                     │
                     ▼
-              Search(ctx, want) ──► epoch Documents ── Last ──► Encode──► XML
+              Search(ctx, want) ──► Epoch{Document, Scale} ── Last ──► Encode──► XML
                     │
                     └── (inside Search, per epoch)
                           got = Render(doc)
@@ -761,7 +761,7 @@ PNG ──Decode──► want *image.NRGBA
 
 | Fn | Takes | Gives |
 | --- | --- | --- |
-| `Search` | `ctx`, `want *image.NRGBA` | `iter.Seq2[svg.Document, error]` |
+| `Search` | `ctx`, `want *image.NRGBA` | `iter.Seq2[Epoch, error]` |
 | `Last` | that sequence | last successful `svg.Document` |
 | `Render` | `svg.Document` | `got *image.NRGBA` |
 | `Encode` | `svg.Document` | XML |
@@ -769,7 +769,7 @@ PNG ──Decode──► want *image.NRGBA
 Invariants:
 
 - `want` is the original pixmap (`FromImage` only). Host does not scale. Only a Search adapter may scale, as its own algorithm.
-- `want` size is the canvas. A yielded Document uses that `Dx()×Dy()`. Internal scale stays inside the adapter.
+- `want` size is the canvas. A yielded Document uses that `Dx()×Dy()`. `Epoch.Scale` is the adapter's working scale (`1` = native).
 - `got` and `want` must share bounds or Loss is `+Inf`.
 - `want.A==0` is don't-care. Loss does not score those pixels.
 - Color is not a gene. An adapter may sample fills from `want`.
@@ -781,20 +781,25 @@ Invariants:
 ```go
 package search
 
+type Epoch struct {
+    Document svg.Document
+    Scale    int // 1 = native
+}
+
 type Search interface {
-    Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error]
+    Search(ctx context.Context, target *image.NRGBA) iter.Seq2[Epoch, error]
 }
 
 func Register(name string, make func() Search)
 func New(name string) (Search, error)
 func Names() []string
-func Last(seq iter.Seq2[svg.Document, error]) (svg.Document, error)
+func Last(seq iter.Seq2[Epoch, error]) (svg.Document, error)
 func FromImage(img image.Image) *image.NRGBA
 ```
 
 A new adapter is a subpackage plus `init { Register("name", ...) }`. Blank-import it from `internal/search/prelude`. Do not add `cmd/primpreview` or `hack_preview.go`.
 
-Search is the whole problem: `want` pixmap in, one `Document` per epoch. Host does not scale. Only a Search adapter may scale, as its own algorithm. A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject them. `--search` selects the registry name. Default `dumb` (via prelude). `vectorize` and `preview` Encode `Last` (the last successful epoch). Zero epochs or a yielded error fail.
+Search is the whole problem: `want` pixmap in, one `Epoch` per step. Host does not scale. Only a Search adapter may scale, as its own algorithm; it reports that scale on `Epoch.Scale` (`1` = native). A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject them. `--search` selects the registry name. Default `dumb` (via prelude). `vectorize` and `preview` Encode `Last` (the last successful epoch's Document). Zero epochs or a yielded error fail.
 
 ```
 svgolf vectorize in.png -o out.svg --search NAME

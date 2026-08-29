@@ -8,23 +8,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
-	"github.com/spf13/cobra"
 )
 
-func TestWriteEpochOverwritesLast(t *testing.T) {
+func TestTraceOverwritesLast(t *testing.T) {
 	dir := t.TempDir()
-	cmd := &cobra.Command{}
-	cmd.SetOut(&bytes.Buffer{})
+	log := &bytes.Buffer{}
 	d0 := svg.NewDocument(2, 2)
 	d1 := svg.NewDocument(4, 4)
 	w0 := image.NewNRGBA(image.Rect(0, 0, 2, 2))
-	w1 := image.NewNRGBA(image.Rect(0, 0, 4, 4))
-	if err := writeEpoch(cmd, dir, 0, d0, w0); err != nil {
+	tr, err := NewTrace(dir, log, w0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeEpoch(cmd, dir, 1, d1, w1); err != nil {
+	if err := tr.Record(search.Epoch{Document: d0, Scale: 8}); err != nil {
 		t.Fatal(err)
+	}
+	if err := tr.Record(search.Epoch{Document: d1, Scale: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "scale=8") {
+		t.Fatalf("missing scale in log: %s", log.String())
 	}
 	sameFile(t, filepath.Join(dir, "001.svg"), filepath.Join(dir, "last.svg"))
 	sameFile(t, filepath.Join(dir, "001.png"), filepath.Join(dir, "last.png"))

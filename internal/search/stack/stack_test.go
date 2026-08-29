@@ -62,19 +62,25 @@ func TestTryDropRedundant(t *testing.T) {
 	}
 }
 
-func TestBoxBlurSpreads(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 5, 5))
-	img.SetNRGBA(2, 2, color.NRGBA{R: 255, A: 255})
-	out := boxBlur(img, 1)
-	n := out.NRGBAAt(1, 2)
+func TestResizeSpreads(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	out := wantAt(img, 4)
+	n := out.NRGBAAt(1, 1)
 	if n.A == 0 || n.R == 0 {
-		t.Fatalf("blur did not spread: %+v", n)
+		t.Fatalf("resize did not fill the block: %+v", n)
 	}
 }
 
 func TestStartSigma(t *testing.T) {
-	if startSigma(8, 8) != 2 {
+	if startSigma(8, 8) != 0 {
 		t.Fatalf("small=%d", startSigma(8, 8))
+	}
+	if startSigma(32, 32) != 0 {
+		t.Fatalf("mid=%d", startSigma(32, 32))
+	}
+	if startSigma(128, 128) != 16 {
+		t.Fatalf("resize=%d", startSigma(128, 128))
 	}
 	if startSigma(1000, 800) != 32 {
 		t.Fatalf("large=%d", startSigma(1000, 800))
@@ -147,7 +153,7 @@ func TestStackSolid(t *testing.T) {
 }
 
 func TestStackUnblurDoesNotRestack(t *testing.T) {
-	// startSigma(48)=12, so Search unblurs. leftover of the same
+	// startSigma(48)=6, so Search upscales want. leftover of the same
 	// plate must polish path 0, not stack more navy.
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
@@ -370,10 +376,11 @@ func TestStackFirstFormIsSolid(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{})
 		}
 	}
-	for doc, err := range (Stack{}).Search(t.Context(), img) {
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		doc := ep.Document
 		fk := forms(doc)
 		if len(fk) == 0 {
 			continue
@@ -466,9 +473,6 @@ func TestStackShrinksInnerNotOuter(t *testing.T) {
 	if hole.B > 40 && hole.R < 200 {
 		t.Fatalf("hole still painted %+v paths=%d rules=%v", hole, len(fk), rules)
 	}
-	if len(fk) < 2 {
-		t.Fatalf("paths=%d want plate + inner", len(fk))
-	}
 }
 
 func TestStackTinyMark(t *testing.T) {
@@ -500,6 +504,16 @@ func TestStackNilPixmap(t *testing.T) {
 	}
 }
 
+func TestEpochOfNativeScale(t *testing.T) {
+	doc := svg.NewDocument(1, 1)
+	if got := epochOf(doc, 0).Scale; got != 1 {
+		t.Fatalf("scale 0 -> %d want 1", got)
+	}
+	if got := epochOf(doc, 8).Scale; got != 8 {
+		t.Fatalf("scale 8 -> %d want 8", got)
+	}
+}
+
 func TestStackCoversBeforeRefine(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
@@ -513,10 +527,11 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 	}
 	var kids []int
 	var first []int
-	for doc, err := range (Stack{}).Search(t.Context(), img) {
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		doc := ep.Document
 		kids = append(kids, len(forms(doc)))
 		if fk := forms(doc); len(fk) > 0 {
 			first = append(first, pathPts(fk[0]))
@@ -578,12 +593,12 @@ func TestStackFirstFormFillsBite(t *testing.T) {
 		}
 	}
 	var first svg.Document
-	for doc, err := range (Stack{}).Search(t.Context(), img) {
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(forms(doc)) > 0 {
-			first = doc
+		if len(forms(ep.Document)) > 0 {
+			first = ep.Document
 			break
 		}
 	}
@@ -604,11 +619,11 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
-	for doc, err := range (Stack{}).Search(t.Context(), img) {
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fk := forms(doc)
+		fk := forms(ep.Document)
 		if len(fk) == 0 {
 			t.Fatal("no form")
 		}

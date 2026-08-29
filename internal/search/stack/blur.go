@@ -10,107 +10,93 @@ func startSigma(w, h int) int {
 	if h > m {
 		m = h
 	}
-	s := m / 4
+	if m < 64 {
+		return 0
+	}
+	s := m / 8
 	if s > 32 {
 		s = 32
 	}
-	if s < 1 {
+	if s < 2 {
 		return 0
 	}
 	return s
 }
 
-func wantAt(src *image.NRGBA, sigma int) *image.NRGBA {
-	if src == nil || sigma < 1 {
+func wantAt(src *image.NRGBA, scale int) *image.NRGBA {
+	if src == nil || scale < 2 {
 		return src
 	}
-	return boxBlur(src, sigma)
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	return upscaleNearest(downscaleArea(src, scale), w, h)
 }
 
-// boxBlur is a separable box filter of radius r. RGB is weighted by alpha
-// so transparent pixels do not bleed black into the edge.
-func boxBlur(src *image.NRGBA, r int) *image.NRGBA {
-	if src == nil || r < 1 {
-		return src
-	}
+// downscaleArea averages each scale×scale block. RGB is weighted by
+// alpha so transparent pixels do not bleed black into the edge.
+func downscaleArea(src *image.NRGBA, scale int) *image.NRGBA {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
-	tmp := image.NewNRGBA(b)
-	out := image.NewNRGBA(b)
-	blur1(src, tmp, w, h, r, true)
-	blur1(tmp, out, w, h, r, false)
+	sw := (w + scale - 1) / scale
+	sh := (h + scale - 1) / scale
+	if sw < 1 {
+		sw = 1
+	}
+	if sh < 1 {
+		sh = 1
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, sw, sh))
+	for y := 0; y < sh; y++ {
+		for x := 0; x < sw; x++ {
+			var sr, sg, sb, sa, n int
+			x0, y0 := x*scale, y*scale
+			x1, y1 := x0+scale, y0+scale
+			if x1 > w {
+				x1 = w
+			}
+			if y1 > h {
+				y1 = h
+			}
+			for yy := y0; yy < y1; yy++ {
+				for xx := x0; xx < x1; xx++ {
+					c := src.NRGBAAt(b.Min.X+xx, b.Min.Y+yy)
+					aa := int(c.A)
+					sr += int(c.R) * aa
+					sg += int(c.G) * aa
+					sb += int(c.B) * aa
+					sa += aa
+					n++
+				}
+			}
+			px := color.NRGBA{}
+			if sa > 0 {
+				px.R = uint8(sr / sa)
+				px.G = uint8(sg / sa)
+				px.B = uint8(sb / sa)
+				av := sa / n
+				if av > 255 {
+					av = 255
+				}
+				px.A = uint8(av)
+			}
+			out.SetNRGBA(x, y, px)
+		}
+	}
 	return out
 }
 
-func blur1(src, dst *image.NRGBA, w, h, r int, horiz bool) {
-	span := w
-	if !horiz {
-		span = h
+func upscaleNearest(src *image.NRGBA, w, h int) *image.NRGBA {
+	b := src.Bounds()
+	sw, sh := b.Dx(), b.Dy()
+	out := image.NewNRGBA(image.Rect(0, 0, w, h))
+	if sw < 1 || sh < 1 {
+		return out
 	}
-	outer := h
-	if !horiz {
-		outer = w
-	}
-	win := 2*r + 1
-	for o := 0; o < outer; o++ {
-		var sr, sg, sb, sa int
-		for i := -r; i <= r; i++ {
-			cr, cg, cb, ca := sample(src, w, h, o, i, horiz)
-			sr += cr
-			sg += cg
-			sb += cb
-			sa += ca
-		}
-		for i := 0; i < span; i++ {
-			put(dst, o, i, horiz, sr, sg, sb, sa, win)
-			or, og, ob, oa := sample(src, w, h, o, i-r, horiz)
-			nr, ng, nb, na := sample(src, w, h, o, i+r+1, horiz)
-			sr += nr - or
-			sg += ng - og
-			sb += nb - ob
-			sa += na - oa
+	for y := 0; y < h; y++ {
+		sy := y * sh / h
+		for x := 0; x < w; x++ {
+			sx := x * sw / w
+			out.SetNRGBA(x, y, src.NRGBAAt(b.Min.X+sx, b.Min.Y+sy))
 		}
 	}
-}
-
-func sample(src *image.NRGBA, w, h, o, i int, horiz bool) (r, g, b, a int) {
-	if i < 0 {
-		i = 0
-	}
-	var x, y int
-	if horiz {
-		if i >= w {
-			i = w - 1
-		}
-		x, y = i, o
-	} else {
-		if i >= h {
-			i = h - 1
-		}
-		x, y = o, i
-	}
-	c := src.NRGBAAt(src.Rect.Min.X+x, src.Rect.Min.Y+y)
-	aa := int(c.A)
-	return int(c.R) * aa, int(c.G) * aa, int(c.B) * aa, aa
-}
-
-func put(dst *image.NRGBA, o, i int, horiz bool, sr, sg, sb, sa, win int) {
-	var x, y int
-	if horiz {
-		x, y = i, o
-	} else {
-		x, y = o, i
-	}
-	c := color.NRGBA{}
-	if sa > 0 {
-		c.R = uint8(sr / sa)
-		c.G = uint8(sg / sa)
-		c.B = uint8(sb / sa)
-		av := sa / win
-		if av > 255 {
-			av = 255
-		}
-		c.A = uint8(av)
-	}
-	dst.SetNRGBA(dst.Rect.Min.X+x, dst.Rect.Min.Y+y, c)
+	return out
 }

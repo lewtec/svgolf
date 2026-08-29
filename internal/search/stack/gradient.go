@@ -10,6 +10,15 @@ import (
 
 // hueFamily is leftover grouping for polish: same hue, any value.
 // Greys stay in value bins so black type on a grey plate is not one wash.
+func sameRampFamily(a, b color.NRGBA) bool {
+	fa, fb := hueFamily(a), hueFamily(b)
+	if fa == fb {
+		return true
+	}
+	// Value ramps may end in grey (black / white).
+	return fa < 4 || fb < 4
+}
+
 func hueFamily(c color.NRGBA) int {
 	if c.A == 0 {
 		return -1
@@ -56,6 +65,9 @@ func fitLinearFill(island []pix, want *image.NRGBA) (svg.LinearFill, bool) {
 	for _, axis := range axes {
 		start, end := endQuartileColors(island, want, axis[0], axis[1], axis[2], axis[3])
 		if loss.ColorAt(start, end) < 24 {
+			continue
+		}
+		if !sameRampFamily(start, end) {
 			continue
 		}
 		gradient := svg.NewLinearFill(axis[0], axis[1], axis[2], axis[3], start, end)

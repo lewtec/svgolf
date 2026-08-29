@@ -8,7 +8,7 @@ import (
 )
 
 func TestLastNoEpoch(t *testing.T) {
-	_, err := Last(func(yield func(svg.Document, error) bool) {})
+	_, err := Last(func(yield func(Epoch, error) bool) {})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -16,11 +16,11 @@ func TestLastNoEpoch(t *testing.T) {
 
 func TestLastStopsOnError(t *testing.T) {
 	boom := errors.New("boom")
-	seq := func(yield func(svg.Document, error) bool) {
-		if !yield(svg.NewDocument(1, 1), nil) {
+	seq := func(yield func(Epoch, error) bool) {
+		if !yield(Epoch{Document: svg.NewDocument(1, 1), Scale: 1}, nil) {
 			return
 		}
-		yield(svg.Document{}, boom)
+		yield(Epoch{}, boom)
 	}
 	_, err := Last(seq)
 	if !errors.Is(err, boom) {

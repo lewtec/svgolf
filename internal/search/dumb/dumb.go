@@ -22,9 +22,10 @@ func init() {
 	search.Register("dumb", func() search.Search { return Dumb{} })
 }
 
-func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Document, error] {
-	return func(yield func(svg.Document, error) bool) {
-		yield(d.epoch(ctx, target))
+func (d Dumb) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
+	return func(yield func(search.Epoch, error) bool) {
+		doc, err := d.epoch(ctx, target)
+		yield(search.Epoch{Document: doc, Scale: 1}, err)
 	}
 }
 

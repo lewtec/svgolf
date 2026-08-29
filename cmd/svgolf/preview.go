@@ -11,7 +11,6 @@ import (
 
 	"github.com/lewtec/svgolf/internal/resvg"
 	"github.com/lewtec/svgolf/internal/search"
-	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/spf13/cobra"
 )
 
@@ -82,15 +81,9 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 		return err
 	}
 	svgPath := filepath.Join(out, scene+".svg")
-	sf, err := os.Create(svgPath)
-	if err != nil {
+	if err := NewSVGFile(svgPath).Render(doc); err != nil {
 		return err
 	}
-	if err := svg.Encode(sf, doc); err != nil {
-		sf.Close()
-		return err
-	}
-	sf.Close()
 	pngPath := filepath.Join(out, scene+".png")
 	c := exec.CommandContext(cmd.Context(), resvgBin, svgPath, pngPath)
 	c.Stderr = os.Stderr
