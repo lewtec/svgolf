@@ -4,3 +4,4 @@
 - Don't abbreviate. There are no good reasons, ever.
 - Proactively find ways to simplify the project
 - Plan decently how objects relate and interact in the codebase so it doesn't become a mess
+- Don't introduce thresholds, algorithms here are iterative and have to converge to a good solution
