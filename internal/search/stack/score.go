@@ -8,13 +8,15 @@ import (
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
-// pathCost is the error-sum one extra path must buy (minIsland pixels at 180°).
-const pathCost = 180 * minIsland
+// pathCost is the error-sum one extra path must buy (minIsland pixels
+// at full 180²). Linear ColorAt let a mild rim buy a path; square
+// makes a miss cost far more than AA leftover.
+const pathCost = 180 * 180 * minIsland
 
-// Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels use
-// ColorAt (hue, sat, value). A hole (want.A==0) costs 180 if painted —
-// black is not a hole. Missing paint on an opaque pixel also costs 180.
-// Mean would hide letters on a large canvas; sum does not.
+// Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels
+// use ColorAt². A hole (want.A==0) costs 180² if painted — black is not
+// a hole. Missing paint on an opaque pixel also costs 180². Mean would
+// hide letters on a large canvas; sum does not.
 func Score(got, want *image.NRGBA, parts int) float64 {
 	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return math.Inf(1)
@@ -50,6 +52,11 @@ func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
 }
 
 func errAt(g, q color.NRGBA) float64 {
+	e := colorErr(g, q)
+	return e * e
+}
+
+func colorErr(g, q color.NRGBA) float64 {
 	if q.A == 0 {
 		if g.A == 0 {
 			return 0

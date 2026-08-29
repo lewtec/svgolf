@@ -66,6 +66,29 @@ func TestScoreChargesPaths(t *testing.T) {
 	}
 }
 
+func TestScoreMildRimDoesNotPayPath(t *testing.T) {
+	// 80 pixels of ColorAt=20 used to buy a path (80*20 > 8*180).
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	// same hue, slightly brighter: ColorAt is ΔV, well under 40.
+	tint := color.NRGBA{R: 18, G: 70, B: 110, A: 255}
+	if d := colorErr(navy, tint); d < 8 || d > 40 {
+		t.Fatalf("tint ColorAt=%v want a mild miss", d)
+	}
+	want := image.NewNRGBA(image.Rect(0, 0, 20, 4))
+	got := image.NewNRGBA(want.Rect)
+	fixed := image.NewNRGBA(want.Rect)
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 20; x++ {
+			want.SetNRGBA(x, y, navy)
+			got.SetNRGBA(x, y, tint)
+			fixed.SetNRGBA(x, y, navy)
+		}
+	}
+	if Score(fixed, want, 2) < Score(got, want, 1) {
+		t.Fatalf("mild 80px rim paid for a path: after=%v before=%v", Score(fixed, want, 2), Score(got, want, 1))
+	}
+}
+
 func TestScoreSmallMarkPaysOnLargeCanvas(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 200, 200))

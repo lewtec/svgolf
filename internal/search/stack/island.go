@@ -105,7 +105,7 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	if q.A == 0 {
 		return g.A != 0
 	}
-	return errAt(g, q) > minErr
+	return colorErr(g, q) > minErr
 }
 
 func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
