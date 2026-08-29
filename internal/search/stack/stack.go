@@ -16,9 +16,6 @@ const (
 	maxPaths  = 512
 	minIsland = 8
 	minErr    = 8
-	// leftover closer than this to the overlapping path is a polish,
-	// not a new plate. 90 is half of ColorAt's 180.
-	recolorAt = 90
 )
 
 // Stack expands (cover leftover), then contracts (drop a path if Score
@@ -145,9 +142,8 @@ type formPick struct {
 	ok       bool
 }
 
-// pickForm refits the owned path when leftover sits on it (grow if the
-// fill matches, shrink if not). New paths only on unowned leftover —
-// never a cover stacked to fake a shrink.
+// pickForm puts every connecting path on the table as a refit, and the
+// leftover hull as a new path. Score picks. Color bins do not.
 func pickForm(
 	doc svg.Document,
 	got, want *image.NRGBA,
@@ -203,52 +199,19 @@ func pickForm(
 		return nil
 	}
 	if paperLeftover(col) && n > 0 {
-		if err := punchThrough(&best, &bestA, curA, doc, got, want, island, owner, fills, n, errSum, w); err != nil {
+		if err := punchThrough(&best, &bestA, curA, doc, want, island, owner, fills, n, errSum, w); err != nil {
 			return formPick{}, err
 		}
 		return best, nil
 	}
-	if idx, ok := topPainter(island, got, fills, doc.Children()); ok {
-		id := uint16(idx + 1)
-		if sameLayer(doc.Children()[idx+1], fills[idx], col, island, want) {
-			work := ownedUnion(owner, island, w, h, id)
-			if err := consider(work, meanFill(want, work), idx, true); err != nil {
-				return formPick{}, err
-			}
-			return best, nil
-		}
-		// Different color on this plate: refit it if the union is a
-		// ramp. A solid wash of two flats is a cheat.
-		work := ownedUnion(owner, island, w, h, id)
-		if _, ramp := fitLinearFill(work, want); ramp {
-			if err := consider(work, meanFill(want, work), idx, true); err != nil {
-				return formPick{}, err
-			}
-			if best.ok {
-				return best, nil
-			}
-		}
-	} else if idx, ok := majorityOwner(owner, island, w); ok && sameLayer(doc.Children()[idx+1], fills[idx], col, island, want) {
-		work := ownedUnion(owner, island, w, h, uint16(idx+1))
-		if err := consider(work, meanFill(want, work), idx, true); err != nil {
-			return formPick{}, err
-		}
-		return best, nil
-	}
-	// Adjacent leftover of the same hue can be the rest of a ramp.
-	// Score rejects a wash over two flats. A cover plate is still
-	// only allowed when that polish does not take.
-	for i, fill := range fills {
-		if hueFamily(fill) != hueFamily(col) {
+	for i := range fills {
+		work := ownedUnion(owner, island, w, h, uint16(i+1))
+		if len(work) <= len(island) && !paintsIsland(doc.Children()[i+1], island, w, h) {
 			continue
 		}
-		work := ownedUnion(owner, island, w, h, uint16(i+1))
 		if err := consider(work, meanFill(want, work), i, true); err != nil {
 			return formPick{}, err
 		}
-	}
-	if best.ok {
-		return best, nil
 	}
 	if err := consider(island, col, -1, false); err != nil {
 		return formPick{}, err
@@ -279,7 +242,7 @@ func punchThrough(
 	bestA *float64,
 	curA float64,
 	doc svg.Document,
-	got, want *image.NRGBA,
+	want *image.NRGBA,
 	island []pix,
 	owner []uint16,
 	fills []color.NRGBA,
@@ -291,7 +254,7 @@ func punchThrough(
 	reclaims := make([][]pix, n)
 	any := false
 	for i := 0; i < n; i++ {
-		if !layerCovers(island, got, fills[i], owner, w, i, doc.Children()[i+1]) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
+		if !ownsAny(owner, island, w, uint16(i+1)) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
 			continue
 		}
 		work := ownedMinus(owner, island, w, uint16(i+1))
@@ -449,7 +412,10 @@ func formPaths(island []pix, col color.NRGBA, punch bool, want *image.NRGBA) []s
 		}
 	}
 	if out == nil {
-		out = []svg.Path{filledPath(ring, col), filledFit(island, ring, col)}
+		out = []svg.Path{filledPath(ring, col)}
+		if punch {
+			out = append(out, filledFit(island, ring, col))
+		}
 	}
 	if gradient, ok := fitLinearFill(island, want); ok {
 		n := len(out)

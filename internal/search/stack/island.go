@@ -5,7 +5,6 @@ import (
 	"image/color"
 
 	"github.com/lewtec/svgolf/internal/loss"
-	"github.com/lewtec/svgolf/pkg/svg"
 )
 
 type pix struct{ x, y int }
@@ -25,80 +24,17 @@ func coarse(c color.NRGBA) int {
 	return 4 + vb*12 + int(h/30)%12
 }
 
-func layerCovers(island []pix, got *image.NRGBA, fill color.NRGBA, owner []uint16, w, idx int, node svg.Node) bool {
-	id := uint16(idx + 1)
-	for _, p := range island {
-		if owner[p.y*w+p.x] == id {
-			return true
-		}
-		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
-		if loss.ColorAt(g, layerSample(node, fill, p.x, p.y)) < recolorAt {
-			return true
-		}
-	}
-	return false
-}
-
-func sameObject(fill, col color.NRGBA) bool {
-	return coarse(fill) == coarse(col) && loss.ColorAt(fill, col) < recolorAt
-}
-
 func paperLeftover(col color.NRGBA) bool {
 	return loss.ColorAt(col, paper) <= minErr
 }
 
-// topPainter is the highest path whose fill matches what is showing
-// on the leftover. Owner-at-place-time tags the plate under an inner
-// mark, so a hole in the mark would shrink the plate.
-func topPainter(island []pix, got *image.NRGBA, fills []color.NRGBA, kids []svg.Node) (int, bool) {
-	if len(fills) == 0 || got == nil {
-		return 0, false
-	}
-	hist := make([]int, len(fills))
+func ownsAny(owner []uint16, island []pix, w int, id uint16) bool {
 	for _, p := range island {
-		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
-		for i := len(fills) - 1; i >= 0; i-- {
-			sample := fills[i]
-			if i+1 < len(kids) {
-				sample = layerSample(kids[i+1], fills[i], p.x, p.y)
-			}
-			if loss.ColorAt(g, sample) < recolorAt {
-				hist[i]++
-				break
-			}
+		if owner[p.y*w+p.x] == id {
+			return true
 		}
 	}
-	best, n := 0, 0
-	for i, c := range hist {
-		if c > n {
-			best, n = i, c
-		}
-	}
-	if n*2 <= len(island) {
-		return 0, false
-	}
-	return best, true
-}
-
-func majorityOwner(owner []uint16, island []pix, w int) (int, bool) {
-	hist := map[uint16]int{}
-	for _, p := range island {
-		id := owner[p.y*w+p.x]
-		if id != 0 {
-			hist[id]++
-		}
-	}
-	var best uint16
-	n := 0
-	for id, c := range hist {
-		if c > n {
-			best, n = id, c
-		}
-	}
-	if best == 0 || n*2 <= len(island) {
-		return 0, false
-	}
-	return int(best - 1), true
+	return false
 }
 
 func claim(owner []uint16, island []pix, w int, id uint16) {

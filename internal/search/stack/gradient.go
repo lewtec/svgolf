@@ -8,7 +8,7 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
-// hueFamily is leftover grouping for polish: same hue, any value.
+// hueFamily groups a 2-stop fit: same hue, any value.
 // Greys stay in value bins so black type on a grey plate is not one wash.
 func sameRampFamily(a, b color.NRGBA) bool {
 	fa, fb := hueFamily(a), hueFamily(b)
@@ -152,23 +152,4 @@ func endQuartileColors(island []pix, want *image.NRGBA, x1, y1, x2, y2 float64) 
 		color.NRGBA{R: uint8(endR / endN), G: uint8(endG / endN), B: uint8(endB / endN), A: 255}
 }
 
-func sameLayer(n svg.Node, fill, col color.NRGBA, island []pix, want *image.NRGBA) bool {
-	if gradient, ok := n.LinearFill(); ok && want != nil && len(island) > 0 {
-		hit := 0
-		for _, p := range island {
-			c := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
-			if loss.ColorAt(c, gradient.ColorAt(float64(p.x)+0.5, float64(p.y)+0.5)) < recolorAt {
-				hit++
-			}
-		}
-		return hit*2 > len(island)
-	}
-	return sameObject(fill, col)
-}
 
-func layerSample(n svg.Node, fill color.NRGBA, x, y int) color.NRGBA {
-	if gradient, ok := n.LinearFill(); ok {
-		return gradient.ColorAt(float64(x)+0.5, float64(y)+0.5)
-	}
-	return fill
-}

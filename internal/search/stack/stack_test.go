@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -121,15 +120,34 @@ func TestHottestIslandPrefersFullMiss(t *testing.T) {
 	}
 }
 
-func TestRecolorAtSplitsVisor(t *testing.T) {
-	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
-	darker := color.NRGBA{R: 8, G: 24, B: 40, A: 255}
-	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
-	if loss.ColorAt(navy, darker) >= recolorAt {
-		t.Fatalf("darker navy=%v should polish", loss.ColorAt(navy, darker))
+func TestStackRampOnePathNative(t *testing.T) {
+	// startSigma(48)=0. coarse() splits this ramp. Score must still
+	// keep one linear instead of a second flat for the light band.
+	a := color.NRGBA{R: 40, G: 80, B: 200, A: 255}
+	b := color.NRGBA{R: 180, G: 220, B: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		t := float64(y) / 47
+		c := color.NRGBA{
+			R: uint8(float64(a.R)*(1-t) + float64(b.R)*t),
+			G: uint8(float64(a.G)*(1-t) + float64(b.G)*t),
+			B: uint8(float64(a.B)*(1-t) + float64(b.B)*t),
+			A: 255,
+		}
+		for x := 0; x < 48; x++ {
+			img.SetNRGBA(x, y, c)
+		}
 	}
-	if loss.ColorAt(navy, cyan) < recolorAt {
-		t.Fatalf("cyan=%v should be a new path", loss.ColorAt(navy, cyan))
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := forms(doc)
+	if len(fs) != 1 {
+		t.Fatalf("paths=%d want 1 gradient", len(fs))
+	}
+	if _, ok := fs[0].LinearFill(); !ok {
+		t.Fatal("ramp stayed stacked flats")
 	}
 }
 
