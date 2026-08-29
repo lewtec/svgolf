@@ -25,7 +25,7 @@ const (
 
 // Stack covers leftover regions on a blurred copy of the pixmap, then halves
 // the blur when the search stalls, down to the original. Each island keeps the
-// best of polygon / ellipse (evenodd if it has holes). Accept if Score drops.
+// best of polygon / cubics (evenodd if it has holes). Accept if Score drops.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -227,28 +227,23 @@ func acceptSum(err0, err1 float64, parts, nparts int, old, cand svg.Node) bool {
 }
 
 func formPaths(island []pix, col color.NRGBA) []svg.Path {
-	bb := bbox(island)
 	poly := fitPoly(contour(island), 2)
+	if len(poly) < 3 {
+		return nil
+	}
 	hs := holeRings(island)
-	if len(hs) > 0 && len(poly) >= 3 {
-		out := []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
-		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
-			out = append(out, withHoles(filledEllipse(cx, cy, rx, ry, col), hs))
-		}
-		return out
+	if len(hs) > 0 {
+		return []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
 	}
-	var out []svg.Path
-	if len(poly) >= 3 {
-		out = append(out, filledPath(poly, col), filledFit(island, poly, col))
+	return []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
+}
+
+func pathLen(n svg.Node) int {
+	p, ok := n.Path()
+	if !ok {
+		return 0
 	}
-	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
-	if boxA <= 2*float64(len(island)) {
-		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
-			out = append(out, filledEllipse(cx, cy, rx, ry, col))
-		}
-	}
-	out = append(out, filledPath(bb, col))
-	return out
+	return len(p.Commands())
 }
 
 func holeRings(island []pix) [][][2]float64 {

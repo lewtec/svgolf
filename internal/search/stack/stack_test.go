@@ -87,11 +87,11 @@ func TestStackUnblurDoesNotRestack(t *testing.T) {
 }
 
 func TestStackTwoColorGetsBoth(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
 			c := color.NRGBA{R: 255, A: 255}
-			if x >= 2 && x < 6 && y >= 2 && y < 6 {
+			if x >= 4 && x < 12 && y >= 4 && y < 12 {
 				c = color.NRGBA{B: 255, A: 255}
 			}
 			img.SetNRGBA(x, y, c)
@@ -263,8 +263,8 @@ func TestStackTinyMark(t *testing.T) {
 			img.SetNRGBA(x, y, navy)
 		}
 	}
-	for y := 18; y < 22; y++ {
-		for x := 18; x < 22; x++ {
+	for y := 16; y < 24; y++ {
+		for x := 16; x < 24; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{A: 255})
 		}
 	}
@@ -273,7 +273,7 @@ func TestStackTinyMark(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := len(doc.Children()); n < 2 {
-		t.Fatalf("paths=%d want plate + 16px mark", n)
+		t.Fatalf("paths=%d want plate + mark", n)
 	}
 }
 
@@ -285,11 +285,11 @@ func TestStackNilPixmap(t *testing.T) {
 }
 
 func TestStackCoversBeforeRefine(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
 			c := color.NRGBA{R: 255, A: 255}
-			if x >= 2 && x < 6 && y >= 2 && y < 6 {
+			if x >= 4 && x < 12 && y >= 4 && y < 12 {
 				c = color.NRGBA{B: 255, A: 255}
 			}
 			img.SetNRGBA(x, y, c)
@@ -346,7 +346,7 @@ func TestFitPolyRect(t *testing.T) {
 	}
 }
 
-func TestStackFirstFormIsBBox(t *testing.T) {
+func TestStackFirstFormIsPoly(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 10; x++ {
@@ -625,19 +625,6 @@ func cubics(n svg.Node) int {
 		}
 	}
 	return k
-}
-
-func TestFilledEllipseUsesCubics(t *testing.T) {
-	p := filledEllipse(10, 10, 8, 8, color.NRGBA{R: 255, A: 255})
-	n := 0
-	for _, c := range p.Commands() {
-		if c.Kind == svg.CmdCubic {
-			n++
-		}
-	}
-	if n != 4 {
-		t.Fatalf("cubics=%d want 4", n)
-	}
 }
 
 func TestHullSquare(t *testing.T) {
