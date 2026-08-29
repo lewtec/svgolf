@@ -84,6 +84,37 @@ func TestStartSigma(t *testing.T) {
 	}
 }
 
+func TestHottestIslandPrefersFullMiss(t *testing.T) {
+	// 20×20 almost-white leftover is more pixels; 8×8 black is more Score.
+	got := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	want := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
+	for y := 4; y < 24; y++ {
+		for x := 4; x < 24; x++ {
+			want.SetNRGBA(x, y, pale)
+		}
+	}
+	black := color.NRGBA{A: 255}
+	for y := 30; y < 38; y++ {
+		for x := 30; x < 38; x++ {
+			want.SetNRGBA(x, y, black)
+		}
+	}
+	col, island := hottestIsland(got, want, nil)
+	if len(island) != 64 {
+		t.Fatalf("island=%d want 64 (black miss), fill=%+v", len(island), col)
+	}
+	if col.R > 16 || col.G > 16 || col.B > 16 {
+		t.Fatalf("fill=%+v want black", col)
+	}
+}
+
 func TestRecolorAtSplitsVisor(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	darker := color.NRGBA{R: 8, G: 24, B: 40, A: 255}

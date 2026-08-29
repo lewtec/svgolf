@@ -183,43 +183,27 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	return colorErr(g, q) > minErr
 }
 
-func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
+// hottestIsland is the leftover blob Score would miss the most:
+// same-coarse 4-connected leftover, ranked by ΣerrAt. Pixel count
+// preferred a huge mild rim over a small full miss. A later spike
+// or gap detector would feed the same ranking, not a second loop.
+func hottestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 	b := want.Bounds()
 	w, h := b.Dx(), b.Dy()
-	hist := map[int]int{}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if !residual(got, want, skip, x, y, w) {
-				continue
-			}
-			q := want.NRGBAAt(b.Min.X+x, b.Min.Y+y)
-			hist[coarse(q)]++
-		}
-	}
-	top, topN := -1, 0
-	for k, n := range hist {
-		if n > topN || (n == topN && k < top) {
-			top, topN = k, n
-		}
-	}
-	if topN == 0 {
-		return color.NRGBA{}, nil
-	}
 	mark := make([]byte, w*h)
+	family := make([]int, w*h)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if !residual(got, want, skip, x, y, w) {
-				continue
-			}
-			q := want.NRGBAAt(b.Min.X+x, b.Min.Y+y)
-			if coarse(q) != top {
 				continue
 			}
 			mark[y*w+x] = 1
+			family[y*w+x] = coarse(want.NRGBAAt(b.Min.X+x, b.Min.Y+y))
 		}
 	}
 	despeckle(mark, w, h)
 	best := []pix{}
+	var bestErr float64
 	var cur []pix
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 	for y := 0; y < h; y++ {
@@ -228,25 +212,35 @@ func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 				continue
 			}
 			cur = cur[:0]
-			stack := []pix{{x, y}}
+			bin := family[y*w+x]
+			var errSum float64
+			pending := []pix{{x, y}}
 			mark[y*w+x] = 2
-			for len(stack) > 0 {
-				p := stack[len(stack)-1]
-				stack = stack[:len(stack)-1]
+			for len(pending) > 0 {
+				p := pending[len(pending)-1]
+				pending = pending[:len(pending)-1]
 				cur = append(cur, p)
+				errSum += errAt(
+					got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y),
+					want.NRGBAAt(b.Min.X+p.x, b.Min.Y+p.y),
+				)
 				for _, d := range dirs {
 					nx, ny := p.x+d.x, p.y+d.y
 					if nx < 0 || ny < 0 || nx >= w || ny >= h {
 						continue
 					}
-					if mark[ny*w+nx] != 1 {
+					if mark[ny*w+nx] != 1 || family[ny*w+nx] != bin {
 						continue
 					}
 					mark[ny*w+nx] = 2
-					stack = append(stack, pix{nx, ny})
+					pending = append(pending, pix{nx, ny})
 				}
 			}
-			if len(cur) > len(best) {
+			if len(cur) < minIsland {
+				continue
+			}
+			if errSum > bestErr {
+				bestErr = errSum
 				best = append(best[:0], cur...)
 			}
 		}

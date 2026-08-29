@@ -68,7 +68,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				return
 			}
 			if n < maxPaths {
-				col, island := largestIsland(got, want, skip)
+				col, island := hottestIsland(got, want, skip)
 				if len(island) >= minIsland {
 					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
 					if err != nil {
@@ -320,7 +320,9 @@ func tryDrop(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []ui
 	nerr := Score(ngot, want, 0)
 	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
 	a := nerr + pathCost*float64(*n-1) + cmdCost*float64(docCmdLen(next))
-	if a >= curA {
+	// cmd tax can exceed a real mark's pixel win. Do not drop if
+	// the pixmap gets worse — only redundant paint.
+	if a >= curA || nerr > *errSum {
 		return false, nil
 	}
 	*doc, *got, *errSum = next, ngot, nerr
