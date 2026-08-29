@@ -206,6 +206,29 @@ func TestStackKeepsGoingAfterReject(t *testing.T) {
 	}
 }
 
+func TestVoidsInnerCyanRing(t *testing.T) {
+	var island []pix
+	for y := 10; y < 22; y++ {
+		for x := 10; x < 22; x++ {
+			if x >= 13 && x < 19 && y >= 13 && y < 19 {
+				continue
+			}
+			island = append(island, pix{x, y})
+		}
+	}
+	hs := voids(island)
+	if len(hs) != 1 {
+		t.Fatalf("voids=%d want 1 (inner hole)", len(hs))
+	}
+	if n := len(formPaths(island, color.NRGBA{B: 255, A: 255}, true)); n < 1 {
+		t.Fatal("no punched form")
+	}
+	p := formPaths(island, color.NRGBA{B: 255, A: 255}, true)[0]
+	if p.FillRule() != svg.FillEvenOdd {
+		t.Fatal("punched form not evenodd")
+	}
+}
+
 func TestVoidsFindsEnclosedHole(t *testing.T) {
 	var island []pix
 	for y := 0; y < 8; y++ {
@@ -371,6 +394,49 @@ func TestStackShrinksHoleNotCover(t *testing.T) {
 	}
 	if len(fk) > 1 && p.FillRule() != svg.FillEvenOdd {
 		t.Fatalf("hole covered by %d layers; want the plate to shrink", len(fk))
+	}
+}
+
+func TestStackShrinksInnerNotOuter(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 4; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 10; y < 22; y++ {
+		for x := 10; x < 22; x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	for y := 13; y < 19; y++ {
+		for x := 13; x < 19; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{})
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk := forms(doc)
+	rules := make([]svg.FillRule, 0, len(fk))
+	for _, n := range fk {
+		if p, ok := n.Path(); ok {
+			rules = append(rules, p.FillRule())
+		}
+	}
+	hole := got.NRGBAAt(16, 16)
+	if hole.B > 40 && hole.R < 200 {
+		t.Fatalf("hole still painted %+v paths=%d rules=%v", hole, len(fk), rules)
+	}
+	if len(fk) < 2 {
+		t.Fatalf("paths=%d want plate + inner", len(fk))
 	}
 }
 

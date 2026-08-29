@@ -24,6 +24,57 @@ func coarse(c color.NRGBA) int {
 	return 4 + vb*12 + int(h/30)%12
 }
 
+func layerCovers(island []pix, got *image.NRGBA, fill color.NRGBA, owner []uint16, w, idx int) bool {
+	id := uint16(idx + 1)
+	for _, p := range island {
+		if owner[p.y*w+p.x] == id {
+			return true
+		}
+		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
+		if loss.ColorAt(g, fill) < recolorAt {
+			return true
+		}
+	}
+	return false
+}
+
+func sameObject(fill, col color.NRGBA) bool {
+	return coarse(fill) == coarse(col) && loss.ColorAt(fill, col) < recolorAt
+}
+
+func paperLeftover(col color.NRGBA) bool {
+	return loss.ColorAt(col, paper) <= minErr
+}
+
+// topPainter is the highest path whose fill matches what is showing
+// on the leftover. Owner-at-place-time tags the plate under an inner
+// mark, so a hole in the mark would shrink the plate.
+func topPainter(island []pix, got *image.NRGBA, fills []color.NRGBA) (int, bool) {
+	if len(fills) == 0 || got == nil {
+		return 0, false
+	}
+	hist := make([]int, len(fills))
+	for _, p := range island {
+		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
+		for i := len(fills) - 1; i >= 0; i-- {
+			if loss.ColorAt(g, fills[i]) < recolorAt {
+				hist[i]++
+				break
+			}
+		}
+	}
+	best, n := 0, 0
+	for i, c := range hist {
+		if c > n {
+			best, n = i, c
+		}
+	}
+	if n*2 <= len(island) {
+		return 0, false
+	}
+	return best, true
+}
+
 func majorityOwner(owner []uint16, island []pix, w int) (int, bool) {
 	hist := map[uint16]int{}
 	for _, p := range island {
@@ -47,7 +98,10 @@ func majorityOwner(owner []uint16, island []pix, w int) (int, bool) {
 
 func claim(owner []uint16, island []pix, w int, id uint16) {
 	for _, p := range island {
-		owner[p.y*w+p.x] = id
+		i := p.y*w + p.x
+		if owner[i] == 0 || owner[i] <= id {
+			owner[i] = id
+		}
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"iter"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -81,9 +80,19 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 						if !yield(doc, nil) {
 							return
 						}
-						if pick.replace >= 0 {
-							clearOwner(owner, uint16(pick.replace+1))
-							claim(owner, pick.work, w, uint16(pick.replace+1))
+						if len(pick.reclaims) > 0 {
+							for i, work := range pick.reclaims {
+								if work == nil {
+									continue
+								}
+								id := uint16(i + 1)
+								clearOwner(owner, id)
+								claim(owner, work, w, id)
+							}
+						} else if pick.replace >= 0 {
+							id := uint16(pick.replace + 1)
+							clearOwner(owner, id)
+							claim(owner, pick.work, w, id)
 							fills[pick.replace] = pick.fill
 						} else {
 							claim(owner, pick.work, w, uint16(n+1))
@@ -117,13 +126,14 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 }
 
 type formPick struct {
-	doc     svg.Document
-	got     *image.NRGBA
-	errSum  float64
-	replace int
-	work    []pix
-	fill    color.NRGBA
-	ok      bool
+	doc      svg.Document
+	got      *image.NRGBA
+	errSum   float64
+	replace  int
+	work     []pix
+	fill     color.NRGBA
+	reclaims [][]pix
+	ok       bool
 }
 
 // pickForm refits the owned path when leftover sits on it (grow if the
@@ -166,7 +176,11 @@ func pickForm(
 			dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
 			nerr := errSum + ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
 			plen := pathLen(cand.Node())
-			a := nerr + pathCost*float64(parts) + cmdCost*float64(docCmdLen(next))
+			cmds := docCmdLen(next)
+			if replace >= 0 && cand.FillRule() == svg.FillEvenOdd {
+				cmds = docCmdLen(doc)
+			}
+			a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
 			if a > bestA || a > curA {
 				continue
 			}
@@ -179,26 +193,96 @@ func pickForm(
 		}
 		return nil
 	}
-	if idx, ok := majorityOwner(owner, island, w); ok {
+	if paperLeftover(col) && n > 0 {
+		if err := punchThrough(&best, &bestA, curA, doc, got, want, island, owner, fills, n, errSum, w); err != nil {
+			return formPick{}, err
+		}
+		return best, nil
+	}
+	if idx, ok := topPainter(island, got, fills); ok {
 		id := uint16(idx + 1)
-		if loss.ColorAt(fills[idx], col) < recolorAt {
+		if sameObject(fills[idx], col) {
 			work := ownedUnion(owner, island, w, h, id)
 			if err := consider(work, meanFill(want, work), idx, true); err != nil {
 				return formPick{}, err
 			}
 			return best, nil
 		}
-		work := ownedMinus(owner, island, w, id)
-		if len(work) >= minIsland {
-			if err := consider(work, meanFill(want, work), idx, true); err != nil {
-				return formPick{}, err
-			}
+	} else if idx, ok := majorityOwner(owner, island, w); ok && sameObject(fills[idx], col) {
+		work := ownedUnion(owner, island, w, h, uint16(idx+1))
+		if err := consider(work, meanFill(want, work), idx, true); err != nil {
+			return formPick{}, err
 		}
+		return best, nil
 	}
 	if err := consider(island, col, -1, false); err != nil {
 		return formPick{}, err
 	}
 	return best, nil
+}
+
+// punchThrough shrinks every path that covers a paper leftover so the
+// hole opens to the pane. Punching only the top layer reveals the
+// plate underneath and Score gets worse.
+func paintsIsland(node svg.Node, island []pix, w, h int) bool {
+	d := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
+	d = d.Append(whitePane(w, h).Node()).Append(node)
+	img, err := render.Render(d)
+	if err != nil {
+		return false
+	}
+	for _, p := range island {
+		if colorErr(img.NRGBAAt(p.x, p.y), paper) > minErr {
+			return true
+		}
+	}
+	return false
+}
+
+func punchThrough(
+	best *formPick,
+	bestA *float64,
+	curA float64,
+	doc svg.Document,
+	got, want *image.NRGBA,
+	island []pix,
+	owner []uint16,
+	fills []color.NRGBA,
+	n int,
+	errSum float64,
+	w int,
+) error {
+	next := doc
+	reclaims := make([][]pix, n)
+	any := false
+	for i := 0; i < n; i++ {
+		if !layerCovers(island, got, fills[i], owner, w, i) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
+			continue
+		}
+		work := ownedMinus(owner, island, w, uint16(i+1))
+		fs := formPaths(work, fills[i], true)
+		if len(fs) == 0 {
+			continue
+		}
+		next = replaceAt(next, i+1, fs[0].Node())
+		reclaims[i] = work
+		any = true
+	}
+	if !any {
+		return nil
+	}
+	ngot, err := render.Render(next)
+	if err != nil {
+		return err
+	}
+	nerr := Score(ngot, want, 0)
+	a := nerr + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+	if a >= curA || nerr >= errSum {
+		return nil
+	}
+	*bestA = a
+	*best = formPick{doc: next, got: ngot, errSum: nerr, replace: -1, work: island, reclaims: reclaims, ok: true}
+	return nil
 }
 
 // tryDrop removes the smallest claimed path if Score does not rise.
