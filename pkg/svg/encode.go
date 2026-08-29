@@ -2,6 +2,7 @@ package svg
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 	"math"
 	"strconv"
@@ -46,6 +47,10 @@ func Encode(w io.Writer, d Document) error {
 		return e.err
 	}
 	e.str(">\n")
+	e.linears = collectLinears(d.children)
+	if err := e.defs(); err != nil {
+		return err
+	}
 	for _, n := range d.children {
 		if err := e.node(n, 1); err != nil {
 			return err
@@ -56,8 +61,9 @@ func Encode(w io.Writer, d Document) error {
 }
 
 type encoder struct {
-	w   io.Writer
-	err error
+	w       io.Writer
+	err     error
+	linears []LinearFill
 }
 
 func (e *encoder) str(s string) {
@@ -216,9 +222,83 @@ func (e *encoder) numAttr(name string, v, def float64) {
 	e.attr(name, fmtNum(v))
 }
 
+func collectLinears(nodes []Node) []LinearFill {
+	var out []LinearFill
+	var walk func([]Node)
+	walk = func(ns []Node) {
+		for _, n := range ns {
+			if n.kind == KindGroup {
+				walk(n.group.children)
+				continue
+			}
+			g, ok := n.LinearFill()
+			if !ok {
+				continue
+			}
+			seen := false
+			for _, x := range out {
+				if x == g {
+					seen = true
+					break
+				}
+			}
+			if !seen {
+				out = append(out, g)
+			}
+		}
+	}
+	walk(nodes)
+	return out
+}
+
+func (e *encoder) defs() error {
+	if len(e.linears) == 0 {
+		return e.err
+	}
+	e.indent(1)
+	e.str("<defs>\n")
+	for i, g := range e.linears {
+		e.indent(2)
+		e.str("<linearGradient")
+		e.attr("id", "linear"+strconv.Itoa(i))
+		e.attr("gradientUnits", "userSpaceOnUse")
+		e.attr("x1", fmtNum(g.x1))
+		e.attr("y1", fmtNum(g.y1))
+		e.attr("x2", fmtNum(g.x2))
+		e.attr("y2", fmtNum(g.y2))
+		e.str(">\n")
+		e.stop(g.C0(), "0")
+		e.stop(g.C1(), "1")
+		e.indent(2)
+		e.str("</linearGradient>\n")
+	}
+	e.indent(1)
+	e.str("</defs>\n")
+	return e.err
+}
+
+func (e *encoder) stop(c color.NRGBA, offset string) {
+	e.indent(3)
+	e.str("<stop")
+	e.attr("offset", offset)
+	e.attr("stop-color", hexRGB(c.R, c.G, c.B))
+	e.str("/>\n")
+}
+
+func (e *encoder) linearID(g LinearFill) string {
+	for i, x := range e.linears {
+		if x == g {
+			return "linear" + strconv.Itoa(i)
+		}
+	}
+	return "linear0"
+}
+
 func (e *encoder) paint(p paint) {
 	if p.fillNone {
 		e.attr("fill", "none")
+	} else if p.linearOn {
+		e.attr("fill", "url(#"+e.linearID(p.linear)+")")
 	} else if p.fr != 0 || p.fg != 0 || p.fb != 0 {
 		e.attr("fill", hexRGB(p.fr, p.fg, p.fb))
 	}

@@ -73,6 +73,16 @@ func TestEncodeGoldens(t *testing.T) {
 			),
 		},
 		{name: "viewbox.svg", doc: NewDocument(256, 256).WithViewBox(0, 0, 100, 50)},
+		{
+			name: "linear.svg",
+			doc: NewDocument(64, 16).Append(
+				NewRect().WithWidth(64).WithHeight(16).
+					WithLinearFill(NewLinearFill(0, 8, 64, 8,
+						color.NRGBA{R: 255, A: 255},
+						color.NRGBA{A: 255},
+					)).Node(),
+			),
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

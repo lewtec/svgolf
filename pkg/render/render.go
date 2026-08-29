@@ -66,7 +66,9 @@ func paintPrimitive(pm *pixmap, n svg.Node, sx, sy, tx, ty float32) error {
 	}
 	p.transform(sx, sy, tx, ty)
 	fill, fillOn, fillRule, stroke, strokeOn := paintOf(n)
-	if fillOn {
+	if lin, ok := linearOf(n); ok {
+		fillPathGrad(pm, p, fillRule != svg.FillEvenOdd, lin, fill.a, sx, sy, tx, ty)
+	} else if fillOn {
 		fillPath(pm, p, fillRule != svg.FillEvenOdd, fill.col, fill.a)
 	}
 	if strokeOn && stroke.Width() > 0 {
@@ -133,6 +135,31 @@ func takePaint(
 	a := uint8(opFn()*255 + 0.5)
 	st, son := strokeFn()
 	return fillCol{col: col, a: a}, on, ruleFn(), st, son
+}
+
+func linearOf(n svg.Node) (svg.LinearFill, bool) {
+	return n.LinearFill()
+}
+
+func fillPathGrad(pm *pixmap, p path, nonzero bool, g svg.LinearFill, a uint8, sx, sy, tx, ty float32) {
+	bl := &gradientBlitter{
+		pm: pm,
+		x1: float32(g.X1())*sx + tx,
+		y1: float32(g.Y1())*sy + ty,
+		x2: float32(g.X2())*sx + tx,
+		y2: float32(g.Y2())*sy + ty,
+		c0: g.C0(),
+		c1: g.C1(),
+		a:  a,
+	}
+	dx := bl.x2 - bl.x1
+	dy := bl.y2 - bl.y1
+	len2 := dx*dx + dy*dy
+	bl.dx, bl.dy = dx, dy
+	if len2 > 0 {
+		bl.inv = 1 / len2
+	}
+	fillPathAA(p, nonzero, uint32(pm.w), uint32(pm.h), bl)
 }
 
 func fillPath(pm *pixmap, p path, nonzero bool, col color.NRGBA, a uint8) {

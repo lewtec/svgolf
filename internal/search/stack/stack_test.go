@@ -220,10 +220,10 @@ func TestVoidsInnerCyanRing(t *testing.T) {
 	if len(hs) != 1 {
 		t.Fatalf("voids=%d want 1 (inner hole)", len(hs))
 	}
-	if n := len(formPaths(island, color.NRGBA{B: 255, A: 255}, true)); n < 1 {
+	if n := len(formPaths(island, color.NRGBA{B: 255, A: 255}, true, nil)); n < 1 {
 		t.Fatal("no punched form")
 	}
-	p := formPaths(island, color.NRGBA{B: 255, A: 255}, true)[0]
+	p := formPaths(island, color.NRGBA{B: 255, A: 255}, true, nil)[0]
 	if p.FillRule() != svg.FillEvenOdd {
 		t.Fatal("punched form not evenodd")
 	}
@@ -793,6 +793,65 @@ func TestStackGradientDoesNotRestack(t *testing.T) {
 	}
 	if n := len(forms(doc)); n > 8 {
 		t.Fatalf("paths=%d, restacking the ramp", n)
+	}
+}
+
+func TestStackRampUsesLinear(t *testing.T) {
+	// stay saturated so the dark end is still red, not a grey bin.
+	img := image.NewNRGBA(image.Rect(0, 0, 80, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 80; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(40 + x*2), A: 255})
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	doc, err := search.Last((Stack{}).Search(ctx, img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := forms(doc)
+	if len(fs) != 1 {
+		t.Fatalf("paths=%d want 1 gradient", len(fs))
+	}
+	if _, ok := fs[0].LinearFill(); !ok {
+		t.Fatal("ramp stayed a solid fill")
+	}
+}
+
+func TestFitLinearHorizontal(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 40, 8))
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 40; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 6), A: 255})
+			island = append(island, pix{x, y})
+		}
+	}
+	g, ok := fitLinearFill(island, img)
+	if !ok {
+		t.Fatal("fitLinearFill rejected a ramp")
+	}
+	if g.C0().R >= g.C1().R {
+		t.Fatalf("ends %+v → %+v want dark→bright or the reverse axis", g.C0(), g.C1())
+	}
+}
+
+func TestFitLinearFillRejectsTwoFlats(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	var island []pix
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			c := color.NRGBA{R: 255, A: 255}
+			if x >= 16 {
+				c = color.NRGBA{R: 40, A: 255}
+			}
+			img.SetNRGBA(x, y, c)
+			island = append(island, pix{x, y})
+		}
+	}
+	if _, ok := fitLinearFill(island, img); ok {
+		t.Fatal("two flats became a smear")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"image/color"
 
 	"github.com/lewtec/svgolf/internal/loss"
+	"github.com/lewtec/svgolf/pkg/svg"
 )
 
 type pix struct{ x, y int }
@@ -24,14 +25,14 @@ func coarse(c color.NRGBA) int {
 	return 4 + vb*12 + int(h/30)%12
 }
 
-func layerCovers(island []pix, got *image.NRGBA, fill color.NRGBA, owner []uint16, w, idx int) bool {
+func layerCovers(island []pix, got *image.NRGBA, fill color.NRGBA, owner []uint16, w, idx int, node svg.Node) bool {
 	id := uint16(idx + 1)
 	for _, p := range island {
 		if owner[p.y*w+p.x] == id {
 			return true
 		}
 		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
-		if loss.ColorAt(g, fill) < recolorAt {
+		if loss.ColorAt(g, layerSample(node, fill, p.x, p.y)) < recolorAt {
 			return true
 		}
 	}
@@ -49,7 +50,7 @@ func paperLeftover(col color.NRGBA) bool {
 // topPainter is the highest path whose fill matches what is showing
 // on the leftover. Owner-at-place-time tags the plate under an inner
 // mark, so a hole in the mark would shrink the plate.
-func topPainter(island []pix, got *image.NRGBA, fills []color.NRGBA) (int, bool) {
+func topPainter(island []pix, got *image.NRGBA, fills []color.NRGBA, kids []svg.Node) (int, bool) {
 	if len(fills) == 0 || got == nil {
 		return 0, false
 	}
@@ -57,7 +58,11 @@ func topPainter(island []pix, got *image.NRGBA, fills []color.NRGBA) (int, bool)
 	for _, p := range island {
 		g := got.NRGBAAt(got.Rect.Min.X+p.x, got.Rect.Min.Y+p.y)
 		for i := len(fills) - 1; i >= 0; i-- {
-			if loss.ColorAt(g, fills[i]) < recolorAt {
+			sample := fills[i]
+			if i+1 < len(kids) {
+				sample = layerSample(kids[i+1], fills[i], p.x, p.y)
+			}
+			if loss.ColorAt(g, sample) < recolorAt {
 				hist[i]++
 				break
 			}
@@ -170,7 +175,7 @@ func ownedMinus(owner []uint16, drop []pix, w int, id uint16) []pix {
 }
 
 func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
-	if skip[y*w+x] != 0 {
+	if skip != nil && skip[y*w+x] != 0 {
 		return false
 	}
 	q := want.NRGBAAt(want.Rect.Min.X+x, want.Rect.Min.Y+y)
@@ -193,7 +198,7 @@ func largestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
 	}
 	top, topN := -1, 0
 	for k, n := range hist {
-		if n > topN {
+		if n > topN || (n == topN && k < top) {
 			top, topN = k, n
 		}
 	}

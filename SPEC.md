@@ -132,7 +132,8 @@ Out of the tree, parser, encoder, renderer, and CLI:
 
 - text, image, use, symbol
 - polyline
-- gradients, patterns, filters
+- radial/mesh gradients, patterns, filters
+- linear gradients with more than two stops or objectBoundingBox units
 - mask, clipPath, marker
 - dasharray, dashoffset
 - z-index
@@ -606,8 +607,8 @@ Rules:
 
 - Unknown tag → error.
 - Unknown attribute → error.
-- Allowed tags: `svg`, `g`, `circle`, `ellipse`, `rect`, `polygon`, `path`.
-- Allowed attributes: the Encode lists plus `xmlns` on `<svg>` only. `d` on `<path>`.
+- Allowed tags: `svg`, `g`, `defs`, `linearGradient`, `stop`, `circle`, `ellipse`, `rect`, `polygon`, `path`.
+- Allowed attributes: the Encode lists plus `xmlns` on `<svg>` only. `d` on `<path>`. `id`, `gradientUnits`, `x1`, `y1`, `x2`, `y2` on `<linearGradient>`. `offset`, `stop-color`, `stop-opacity` on `<stop>`. `fill="url(#id)"` on shapes.
 - `<g>` has **no** presentation attributes. `fill` or `stroke` on `<g>` is an unknown attribute. There is no inheritance in v1. Each shape carries its own paint. resvg would inherit; our subset forbids the parent attributes so both sides see the same per-shape defaults.
 - `xmlns` must be `http://www.w3.org/2000/svg` when present. Missing `xmlns` is accepted. Other namespaces → error.
 - Token names: accept both `Name.Local=="svg"` with empty `Name.Space` and `Name.Space=="http://www.w3.org/2000/svg"` with `Name.Local=="svg"` (and the same for child tags). Both xmlns-present and xmlns-absent files must parse.
@@ -1202,7 +1203,7 @@ Unlocked. Do not implement as if decided.
 2. Search method (looping adapter).
 3. Color / palette logic beyond Dumb's private `auto`.
 4. Primitive weight iteration; polygon vertex tax formula.
-5. Gradients.
+5. ~~Gradients~~ — locked: 2-stop `linearGradient` only, `gradientUnits="userSpaceOnUse"`. `Path`/`Rect`/… `WithLinearFill`. Encode emits `<defs>`. Render samples pad-spread RGB lerp. Radial, mesh, and extra stops stay out.
 6. Union / boolean.
 7. ~~Path / Bézier primitives~~ — locked: `Path` is absolute `M`/`L`/`C`/`Z`. Parse also accepts relative and `H`/`V`/`S`. `Q`/`T`/`A` stay out.
 8. Transform, if a mark needs it.

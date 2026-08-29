@@ -28,6 +28,11 @@ func (e Ellipse) WithFill(col color.NRGBA) Ellipse {
 	return e
 }
 
+func (e Ellipse) WithLinearFill(g LinearFill) Ellipse {
+	e.paint = e.paint.withLinear(g)
+	return e
+}
+
 func (e Ellipse) WithFillOpacity(a float64) Ellipse {
 	e.paint = e.paint.withFillOpacity(a)
 	return e
@@ -53,7 +58,8 @@ func (e Ellipse) WithoutStroke() Ellipse {
 	return e
 }
 
-func (e Ellipse) Fill() (color.NRGBA, bool) { return e.paint.fill() }
-func (e Ellipse) FillOpacity() float64      { return e.paint.fillOpacity() }
-func (e Ellipse) FillRule() FillRule        { return e.paint.fillRule }
-func (e Ellipse) Stroke() (Stroke, bool)    { return e.paint.stroke() }
+func (e Ellipse) Fill() (color.NRGBA, bool)      { return e.paint.fill() }
+func (e Ellipse) LinearFill() (LinearFill, bool) { return e.paint.linearFill() }
+func (e Ellipse) FillOpacity() float64           { return e.paint.fillOpacity() }
+func (e Ellipse) FillRule() FillRule             { return e.paint.fillRule }
+func (e Ellipse) Stroke() (Stroke, bool)         { return e.paint.stroke() }

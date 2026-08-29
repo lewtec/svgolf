@@ -157,6 +157,8 @@ func TestParseRejects(t *testing.T) {
 		{name: "too many points", xml: tooManyPointsXML()},
 		{name: "stroke width only", xml: `<svg width="256" height="256"><circle r="1" stroke-width="2"/></svg>`},
 		{name: "doctype", xml: `<!DOCTYPE svg><svg width="256" height="256"/>`},
+		{name: "objectBoundingBox", xml: `<svg width="64" height="16"><defs><linearGradient id="lg0"><stop offset="0" stop-color="#FF0000"/><stop offset="1" stop-color="#000000"/></linearGradient></defs><rect width="64" height="16" fill="url(#lg0)"/></svg>`},
+		{name: "unknown gradient", xml: `<svg width="64" height="16"><rect width="64" height="16" fill="url(#lg0)"/></svg>`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

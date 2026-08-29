@@ -60,6 +60,11 @@ func (r Rect) WithFill(col color.NRGBA) Rect {
 	return r
 }
 
+func (r Rect) WithLinearFill(g LinearFill) Rect {
+	r.paint = r.paint.withLinear(g)
+	return r
+}
+
 func (r Rect) WithFillOpacity(a float64) Rect {
 	r.paint = r.paint.withFillOpacity(a)
 	return r
@@ -85,7 +90,8 @@ func (r Rect) WithoutStroke() Rect {
 	return r
 }
 
-func (r Rect) Fill() (color.NRGBA, bool) { return r.paint.fill() }
-func (r Rect) FillOpacity() float64      { return r.paint.fillOpacity() }
-func (r Rect) FillRule() FillRule        { return r.paint.fillRule }
-func (r Rect) Stroke() (Stroke, bool)    { return r.paint.stroke() }
+func (r Rect) Fill() (color.NRGBA, bool)      { return r.paint.fill() }
+func (r Rect) LinearFill() (LinearFill, bool) { return r.paint.linearFill() }
+func (r Rect) FillOpacity() float64           { return r.paint.fillOpacity() }
+func (r Rect) FillRule() FillRule             { return r.paint.fillRule }
+func (r Rect) Stroke() (Stroke, bool)         { return r.paint.stroke() }

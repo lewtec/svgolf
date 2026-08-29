@@ -1,6 +1,7 @@
 package svg
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
@@ -22,6 +23,18 @@ func ParseFile(path string) (Document, error) {
 }
 
 func Parse(r io.Reader) (Document, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return Document{}, fmt.Errorf("parse: %w", err)
+	}
+	grads, err := collectGrads(bytes.NewReader(raw))
+	if err != nil {
+		return Document{}, err
+	}
+	return parseXML(bytes.NewReader(raw), grads)
+}
+
+func parseXML(r io.Reader, grads map[string]LinearFill) (Document, error) {
 	dec := xml.NewDecoder(r)
 	for {
 		tok, err := dec.Token()
@@ -40,7 +53,7 @@ func Parse(r io.Reader) (Document, error) {
 			if name != "svg" {
 				return Document{}, fmt.Errorf("parse: root is %s, want svg", name)
 			}
-			doc, err := parseSVG(dec, t)
+			doc, err := parseSVG(dec, t, grads)
 			if err != nil {
 				return Document{}, err
 			}
@@ -82,7 +95,7 @@ func drain(dec *xml.Decoder) error {
 	}
 }
 
-func parseSVG(dec *xml.Decoder, start xml.StartElement) (Document, error) {
+func parseSVG(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Document, error) {
 	var width, height *float64
 	var vb *ViewBox
 	for _, a := range start.Attr {
@@ -127,14 +140,14 @@ func parseSVG(dec *xml.Decoder, start xml.StartElement) (Document, error) {
 	if vb != nil {
 		doc = doc.WithViewBox(vb.minX, vb.minY, vb.w, vb.h)
 	}
-	kids, err := parseChildren(dec, "svg")
+	kids, err := parseChildren(dec, "svg", grads)
 	if err != nil {
 		return Document{}, err
 	}
 	return doc.Append(kids...), nil
 }
 
-func parseChildren(dec *xml.Decoder, parent string) ([]Node, error) {
+func parseChildren(dec *xml.Decoder, parent string, grads map[string]LinearFill) ([]Node, error) {
 	var kids []Node
 	for {
 		tok, err := dec.Token()
@@ -158,7 +171,17 @@ func parseChildren(dec *xml.Decoder, parent string) ([]Node, error) {
 			}
 			return kids, nil
 		case xml.StartElement:
-			n, err := parseChild(dec, t)
+			name, err := elemName(t.Name)
+			if err != nil {
+				return nil, err
+			}
+			if parent == "svg" && name == "defs" {
+				if err := parseDefs(dec, t); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			n, err := parseChild(dec, t, grads)
 			if err != nil {
 				return nil, err
 			}
@@ -177,30 +200,30 @@ func parseChildren(dec *xml.Decoder, parent string) ([]Node, error) {
 	}
 }
 
-func parseChild(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parseChild(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	name, err := elemName(start.Name)
 	if err != nil {
 		return Node{}, err
 	}
 	switch name {
 	case "g":
-		return parseGroup(dec, start)
+		return parseGroup(dec, start, grads)
 	case "circle":
-		return parseCircle(dec, start)
+		return parseCircle(dec, start, grads)
 	case "ellipse":
-		return parseEllipse(dec, start)
+		return parseEllipse(dec, start, grads)
 	case "rect":
-		return parseRect(dec, start)
+		return parseRect(dec, start, grads)
 	case "polygon":
-		return parsePolygon(dec, start)
+		return parsePolygon(dec, start, grads)
 	case "path":
-		return parsePath(dec, start)
+		return parsePath(dec, start, grads)
 	default:
 		return Node{}, fmt.Errorf("parse: unknown tag %s", name)
 	}
 }
 
-func parseGroup(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parseGroup(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	if len(start.Attr) > 0 {
 		key, err := attrName(start.Attr[0].Name)
 		if err != nil {
@@ -208,14 +231,14 @@ func parseGroup(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 		}
 		return Node{}, fmt.Errorf("parse: unknown attribute %s on g", key)
 	}
-	kids, err := parseChildren(dec, "g")
+	kids, err := parseChildren(dec, "g", grads)
 	if err != nil {
 		return Node{}, err
 	}
 	return NewGroup().Append(kids...).Node(), nil
 }
 
-func parseCircle(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parseCircle(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	c := NewCircle()
 	var pa paintAttrs
 	for _, a := range start.Attr {
@@ -248,7 +271,7 @@ func parseCircle(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 			}
 		}
 	}
-	c, err := applyCirclePaint(c, pa)
+	c, err := applyCirclePaint(c, pa, grads)
 	if err != nil {
 		return Node{}, err
 	}
@@ -258,7 +281,7 @@ func parseCircle(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 	return c.Node(), nil
 }
 
-func parseEllipse(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parseEllipse(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	el := NewEllipse()
 	var pa paintAttrs
 	for _, a := range start.Attr {
@@ -297,7 +320,7 @@ func parseEllipse(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 			}
 		}
 	}
-	el, err := applyEllipsePaint(el, pa)
+	el, err := applyEllipsePaint(el, pa, grads)
 	if err != nil {
 		return Node{}, err
 	}
@@ -307,7 +330,7 @@ func parseEllipse(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 	return el.Node(), nil
 }
 
-func parseRect(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parseRect(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	r := NewRect()
 	var (
 		pa     paintAttrs
@@ -369,7 +392,7 @@ func parseRect(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 	case ry != nil:
 		r = r.WithRX(*ry).WithRY(*ry)
 	}
-	r, err := applyRectPaint(r, pa)
+	r, err := applyRectPaint(r, pa, grads)
 	if err != nil {
 		return Node{}, err
 	}
@@ -379,7 +402,7 @@ func parseRect(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 	return r.Node(), nil
 }
 
-func parsePolygon(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parsePolygon(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	p := NewPolygon()
 	var pa paintAttrs
 	var havePts bool
@@ -410,7 +433,7 @@ func parsePolygon(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 			return Node{}, err
 		}
 	}
-	p, err := applyPolygonPaint(p, pa)
+	p, err := applyPolygonPaint(p, pa, grads)
 	if err != nil {
 		return Node{}, err
 	}
@@ -420,7 +443,7 @@ func parsePolygon(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 	return p.Node(), nil
 }
 
-func parsePath(dec *xml.Decoder, start xml.StartElement) (Node, error) {
+func parsePath(dec *xml.Decoder, start xml.StartElement, grads map[string]LinearFill) (Node, error) {
 	p := NewPath()
 	var pa paintAttrs
 	for _, a := range start.Attr {
@@ -444,7 +467,7 @@ func parsePath(dec *xml.Decoder, start xml.StartElement) (Node, error) {
 			}
 		}
 	}
-	p, err := applyPathPaint(p, pa)
+	p, err := applyPathPaint(p, pa, grads)
 	if err != nil {
 		return Node{}, err
 	}
@@ -490,6 +513,288 @@ func skipEmpty(dec *xml.Decoder, tag string) error {
 	}
 }
 
+func collectGrads(r io.Reader) (map[string]LinearFill, error) {
+	dec := xml.NewDecoder(r)
+	grads := map[string]LinearFill{}
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return grads, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse: %w", err)
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		name, err := elemName(start.Name)
+		if err != nil {
+			return nil, err
+		}
+		if name != "linearGradient" {
+			continue
+		}
+		id, g, err := parseLinearGradient(dec, start)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := grads[id]; exists {
+			return nil, fmt.Errorf("parse: duplicate gradient %s", id)
+		}
+		grads[id] = g
+	}
+}
+
+func parseDefs(dec *xml.Decoder, start xml.StartElement) error {
+	for _, a := range start.Attr {
+		key, err := attrName(a.Name)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("parse: unknown attribute %s on defs", key)
+	}
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return fmt.Errorf("parse: unclosed defs")
+		}
+		if err != nil {
+			return fmt.Errorf("parse: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.EndElement:
+			name, err := elemName(t.Name)
+			if err != nil {
+				return err
+			}
+			if name != "defs" {
+				return fmt.Errorf("parse: unexpected </%s> in defs", name)
+			}
+			return nil
+		case xml.StartElement:
+			name, err := elemName(t.Name)
+			if err != nil {
+				return err
+			}
+			if name != "linearGradient" {
+				return fmt.Errorf("parse: unknown tag %s", name)
+			}
+			if _, _, err := parseLinearGradient(dec, t); err != nil {
+				return err
+			}
+		case xml.CharData:
+			if !isSpace(t) {
+				return fmt.Errorf("parse: unexpected text in defs")
+			}
+		case xml.Comment, xml.ProcInst:
+		default:
+			return fmt.Errorf("parse: unexpected token in defs")
+		}
+	}
+}
+
+func parseLinearGradient(dec *xml.Decoder, start xml.StartElement) (string, LinearFill, error) {
+	var (
+		id        string
+		x1, y1    float64
+		x2, y2    = 1.0, 0.0
+		haveUnits bool
+		s0, s1    color.NRGBA
+		o0, o1    float64
+		nstop     int
+	)
+	for _, a := range start.Attr {
+		key, err := attrName(a.Name)
+		if err != nil {
+			return "", LinearFill{}, err
+		}
+		switch key {
+		case "id":
+			id = a.Value
+		case "gradientUnits":
+			if a.Value != "userSpaceOnUse" {
+				return "", LinearFill{}, fmt.Errorf("parse: gradientUnits %q", a.Value)
+			}
+			haveUnits = true
+		case "x1":
+			x1, err = parseLength(a.Value)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+		case "y1":
+			y1, err = parseLength(a.Value)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+		case "x2":
+			x2, err = parseLength(a.Value)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+		case "y2":
+			y2, err = parseLength(a.Value)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+		default:
+			return "", LinearFill{}, fmt.Errorf("parse: unknown attribute %s on linearGradient", key)
+		}
+	}
+	if id == "" {
+		return "", LinearFill{}, fmt.Errorf("parse: linearGradient requires id")
+	}
+	if !haveUnits {
+		return "", LinearFill{}, fmt.Errorf("parse: linearGradient requires gradientUnits=userSpaceOnUse")
+	}
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return "", LinearFill{}, fmt.Errorf("parse: unclosed linearGradient")
+		}
+		if err != nil {
+			return "", LinearFill{}, fmt.Errorf("parse: %w", err)
+		}
+		switch t := tok.(type) {
+		case xml.EndElement:
+			name, err := elemName(t.Name)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+			if name != "linearGradient" {
+				return "", LinearFill{}, fmt.Errorf("parse: unexpected </%s> in linearGradient", name)
+			}
+			if nstop != 2 {
+				return "", LinearFill{}, fmt.Errorf("parse: linearGradient needs 2 stops, got %d", nstop)
+			}
+			switch {
+			case o0 == 0 && o1 == 1:
+				return id, NewLinearFill(x1, y1, x2, y2, s0, s1), nil
+			case o0 == 1 && o1 == 0:
+				return id, NewLinearFill(x1, y1, x2, y2, s1, s0), nil
+			default:
+				return "", LinearFill{}, fmt.Errorf("parse: stop offsets must be 0 and 1")
+			}
+		case xml.StartElement:
+			name, err := elemName(t.Name)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+			if name != "stop" {
+				return "", LinearFill{}, fmt.Errorf("parse: unknown tag %s", name)
+			}
+			off, col, err := parseStop(dec, t)
+			if err != nil {
+				return "", LinearFill{}, err
+			}
+			switch nstop {
+			case 0:
+				o0, s0 = off, col
+			case 1:
+				o1, s1 = off, col
+			default:
+				return "", LinearFill{}, fmt.Errorf("parse: linearGradient needs 2 stops, got %d", nstop+1)
+			}
+			nstop++
+		case xml.CharData:
+			if !isSpace(t) {
+				return "", LinearFill{}, fmt.Errorf("parse: unexpected text in linearGradient")
+			}
+		case xml.Comment, xml.ProcInst:
+		default:
+			return "", LinearFill{}, fmt.Errorf("parse: unexpected token in linearGradient")
+		}
+	}
+}
+
+func parseStop(dec *xml.Decoder, start xml.StartElement) (float64, color.NRGBA, error) {
+	var (
+		off   *float64
+		col   color.NRGBA
+		haveC bool
+	)
+	for _, a := range start.Attr {
+		key, err := attrName(a.Name)
+		if err != nil {
+			return 0, color.NRGBA{}, err
+		}
+		switch key {
+		case "offset":
+			v, err := parseStopOffset(a.Value)
+			if err != nil {
+				return 0, color.NRGBA{}, err
+			}
+			off = &v
+		case "stop-color":
+			r, g, b, ca, none, err := parseColor(a.Value)
+			if err != nil {
+				return 0, color.NRGBA{}, err
+			}
+			if none {
+				return 0, color.NRGBA{}, fmt.Errorf("parse: stop-color none")
+			}
+			col = color.NRGBA{R: r, G: g, B: b, A: ca}
+			haveC = true
+		case "stop-opacity":
+			v, err := parseUnitInterval(a.Value)
+			if err != nil {
+				return 0, color.NRGBA{}, err
+			}
+			if op8FromUnit(v) != 255 {
+				return 0, color.NRGBA{}, fmt.Errorf("parse: stop-opacity %q", a.Value)
+			}
+		default:
+			return 0, color.NRGBA{}, fmt.Errorf("parse: unknown attribute %s on stop", key)
+		}
+	}
+	if off == nil {
+		return 0, color.NRGBA{}, fmt.Errorf("parse: stop requires offset")
+	}
+	if !haveC {
+		return 0, color.NRGBA{}, fmt.Errorf("parse: stop requires stop-color")
+	}
+	col.A = 255
+	if err := skipEmpty(dec, "stop"); err != nil {
+		return 0, color.NRGBA{}, err
+	}
+	return *off, col, nil
+}
+
+func parseStopOffset(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	pct := strings.HasSuffix(s, "%")
+	if pct {
+		s = strings.TrimSpace(s[:len(s)-1])
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil || !isFinite(v) {
+		return 0, fmt.Errorf("parse: stop offset %q", s)
+	}
+	if pct {
+		v /= 100
+	}
+	if v < 0 || v > 1 {
+		return 0, fmt.Errorf("parse: stop offset %v", v)
+	}
+	return v, nil
+}
+
+func parseURLPaint(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "url(") || !strings.HasSuffix(s, ")") {
+		return "", false
+	}
+	inner := strings.TrimSpace(s[4 : len(s)-1])
+	if len(inner) < 2 || inner[0] != '#' {
+		return "", false
+	}
+	id := inner[1:]
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
 type paintAttrs struct {
 	fill, fillOp, fillRule    *string
 	stroke, strokeOp, strokeW *string
@@ -530,7 +835,7 @@ func (p *paintAttrs) set(key, val string) bool {
 	return true
 }
 
-func composeFill(a paintAttrs) (none, apply bool, col color.NRGBA, rule FillRule, err error) {
+func composeFill(a paintAttrs) (none, apply bool, col color.NRGBA, rule FillRule, url string, err error) {
 	if a.fillRule != nil {
 		switch *a.fillRule {
 		case "nonzero":
@@ -544,6 +849,10 @@ func composeFill(a paintAttrs) (none, apply bool, col color.NRGBA, rule FillRule
 	}
 	colorA := uint8(255)
 	if a.fill != nil {
+		if id, ok := parseURLPaint(*a.fill); ok {
+			url = id
+			return
+		}
 		var r, g, b, ca uint8
 		var isNone bool
 		r, g, b, ca, isNone, err = parseColor(*a.fill)
@@ -651,8 +960,8 @@ func composeStroke(a paintAttrs) (on bool, s Stroke, err error) {
 	return
 }
 
-func applyCirclePaint(c Circle, a paintAttrs) (Circle, error) {
-	none, apply, col, rule, err := composeFill(a)
+func applyCirclePaint(c Circle, a paintAttrs, grads map[string]LinearFill) (Circle, error) {
+	none, apply, col, rule, url, err := composeFill(a)
 	if err != nil {
 		return c, err
 	}
@@ -660,7 +969,20 @@ func applyCirclePaint(c Circle, a paintAttrs) (Circle, error) {
 	if err != nil {
 		return c, err
 	}
-	if none {
+	if url != "" {
+		g, ok := grads[url]
+		if !ok {
+			return c, fmt.Errorf("parse: unknown fill url #%s", url)
+		}
+		c = c.WithLinearFill(g)
+		if a.fillOp != nil {
+			v, e := parseUnitInterval(*a.fillOp)
+			if e != nil {
+				return c, e
+			}
+			c = c.WithFillOpacity(v)
+		}
+	} else if none {
 		c = c.WithFillNone()
 	} else if apply {
 		c = c.WithFill(col)
@@ -674,8 +996,8 @@ func applyCirclePaint(c Circle, a paintAttrs) (Circle, error) {
 	return c, nil
 }
 
-func applyEllipsePaint(el Ellipse, a paintAttrs) (Ellipse, error) {
-	none, apply, col, rule, err := composeFill(a)
+func applyEllipsePaint(el Ellipse, a paintAttrs, grads map[string]LinearFill) (Ellipse, error) {
+	none, apply, col, rule, url, err := composeFill(a)
 	if err != nil {
 		return el, err
 	}
@@ -683,7 +1005,20 @@ func applyEllipsePaint(el Ellipse, a paintAttrs) (Ellipse, error) {
 	if err != nil {
 		return el, err
 	}
-	if none {
+	if url != "" {
+		g, ok := grads[url]
+		if !ok {
+			return el, fmt.Errorf("parse: unknown fill url #%s", url)
+		}
+		el = el.WithLinearFill(g)
+		if a.fillOp != nil {
+			v, e := parseUnitInterval(*a.fillOp)
+			if e != nil {
+				return el, e
+			}
+			el = el.WithFillOpacity(v)
+		}
+	} else if none {
 		el = el.WithFillNone()
 	} else if apply {
 		el = el.WithFill(col)
@@ -697,8 +1032,8 @@ func applyEllipsePaint(el Ellipse, a paintAttrs) (Ellipse, error) {
 	return el, nil
 }
 
-func applyRectPaint(r Rect, a paintAttrs) (Rect, error) {
-	none, apply, col, rule, err := composeFill(a)
+func applyRectPaint(r Rect, a paintAttrs, grads map[string]LinearFill) (Rect, error) {
+	none, apply, col, rule, url, err := composeFill(a)
 	if err != nil {
 		return r, err
 	}
@@ -706,7 +1041,20 @@ func applyRectPaint(r Rect, a paintAttrs) (Rect, error) {
 	if err != nil {
 		return r, err
 	}
-	if none {
+	if url != "" {
+		g, ok := grads[url]
+		if !ok {
+			return r, fmt.Errorf("parse: unknown fill url #%s", url)
+		}
+		r = r.WithLinearFill(g)
+		if a.fillOp != nil {
+			v, e := parseUnitInterval(*a.fillOp)
+			if e != nil {
+				return r, e
+			}
+			r = r.WithFillOpacity(v)
+		}
+	} else if none {
 		r = r.WithFillNone()
 	} else if apply {
 		r = r.WithFill(col)
@@ -720,8 +1068,8 @@ func applyRectPaint(r Rect, a paintAttrs) (Rect, error) {
 	return r, nil
 }
 
-func applyPolygonPaint(p Polygon, a paintAttrs) (Polygon, error) {
-	none, apply, col, rule, err := composeFill(a)
+func applyPolygonPaint(p Polygon, a paintAttrs, grads map[string]LinearFill) (Polygon, error) {
+	none, apply, col, rule, url, err := composeFill(a)
 	if err != nil {
 		return p, err
 	}
@@ -729,7 +1077,20 @@ func applyPolygonPaint(p Polygon, a paintAttrs) (Polygon, error) {
 	if err != nil {
 		return p, err
 	}
-	if none {
+	if url != "" {
+		g, ok := grads[url]
+		if !ok {
+			return p, fmt.Errorf("parse: unknown fill url #%s", url)
+		}
+		p = p.WithLinearFill(g)
+		if a.fillOp != nil {
+			v, e := parseUnitInterval(*a.fillOp)
+			if e != nil {
+				return p, e
+			}
+			p = p.WithFillOpacity(v)
+		}
+	} else if none {
 		p = p.WithFillNone()
 	} else if apply {
 		p = p.WithFill(col)
@@ -743,8 +1104,8 @@ func applyPolygonPaint(p Polygon, a paintAttrs) (Polygon, error) {
 	return p, nil
 }
 
-func applyPathPaint(p Path, a paintAttrs) (Path, error) {
-	none, apply, col, rule, err := composeFill(a)
+func applyPathPaint(p Path, a paintAttrs, grads map[string]LinearFill) (Path, error) {
+	none, apply, col, rule, url, err := composeFill(a)
 	if err != nil {
 		return p, err
 	}
@@ -752,7 +1113,20 @@ func applyPathPaint(p Path, a paintAttrs) (Path, error) {
 	if err != nil {
 		return p, err
 	}
-	if none {
+	if url != "" {
+		g, ok := grads[url]
+		if !ok {
+			return p, fmt.Errorf("parse: unknown fill url #%s", url)
+		}
+		p = p.WithLinearFill(g)
+		if a.fillOp != nil {
+			v, e := parseUnitInterval(*a.fillOp)
+			if e != nil {
+				return p, e
+			}
+			p = p.WithFillOpacity(v)
+		}
+	} else if none {
 		p = p.WithFillNone()
 	} else if apply {
 		p = p.WithFill(col)

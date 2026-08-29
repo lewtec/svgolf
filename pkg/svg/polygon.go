@@ -43,6 +43,11 @@ func (p Polygon) WithFill(col color.NRGBA) Polygon {
 	return p
 }
 
+func (p Polygon) WithLinearFill(g LinearFill) Polygon {
+	p.paint = p.paint.withLinear(g)
+	return p
+}
+
 func (p Polygon) WithFillOpacity(a float64) Polygon {
 	p.paint = p.paint.withFillOpacity(a)
 	return p
@@ -68,7 +73,8 @@ func (p Polygon) WithoutStroke() Polygon {
 	return p
 }
 
-func (p Polygon) Fill() (color.NRGBA, bool) { return p.paint.fill() }
-func (p Polygon) FillOpacity() float64      { return p.paint.fillOpacity() }
-func (p Polygon) FillRule() FillRule        { return p.paint.fillRule }
-func (p Polygon) Stroke() (Stroke, bool)    { return p.paint.stroke() }
+func (p Polygon) Fill() (color.NRGBA, bool)      { return p.paint.fill() }
+func (p Polygon) LinearFill() (LinearFill, bool) { return p.paint.linearFill() }
+func (p Polygon) FillOpacity() float64           { return p.paint.fillOpacity() }
+func (p Polygon) FillRule() FillRule             { return p.paint.fillRule }
+func (p Polygon) Stroke() (Stroke, bool)         { return p.paint.stroke() }

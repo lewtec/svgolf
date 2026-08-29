@@ -39,6 +39,33 @@ func TestRenderRejectsBadCanvas(t *testing.T) {
 	}
 }
 
+func TestRenderLinearLerp(t *testing.T) {
+	t.Parallel()
+	g := svg.NewLinearFill(0, 8, 64, 8,
+		color.NRGBA{R: 255, A: 255},
+		color.NRGBA{A: 255},
+	)
+	d := svg.NewDocument(64, 16).Append(
+		svg.NewRect().WithWidth(64).WithHeight(16).WithLinearFill(g).Node(),
+	)
+	img, err := Render(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := img.NRGBAAt(0, 8)
+	if left.R < 240 || left.G != 0 || left.B != 0 || left.A != 255 {
+		t.Fatalf("left=%+v want red", left)
+	}
+	right := img.NRGBAAt(63, 8)
+	if right.R > 16 || right.G != 0 || right.B != 0 || right.A != 255 {
+		t.Fatalf("right=%+v want black", right)
+	}
+	mid := img.NRGBAAt(32, 8)
+	if mid.R < 100 || mid.R > 160 || mid.G != 0 || mid.B != 0 {
+		t.Fatalf("mid=%+v want ~#7F0000", mid)
+	}
+}
+
 func TestRenderFilledRectDoesNotPanic(t *testing.T) {
 	t.Parallel()
 	d := svg.NewDocument(256, 256).Append(

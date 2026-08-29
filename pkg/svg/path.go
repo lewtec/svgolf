@@ -80,6 +80,11 @@ func (p Path) WithFill(col color.NRGBA) Path {
 	return p
 }
 
+func (p Path) WithLinearFill(g LinearFill) Path {
+	p.paint = p.paint.withLinear(g)
+	return p
+}
+
 func (p Path) WithFillOpacity(a float64) Path {
 	p.paint = p.paint.withFillOpacity(a)
 	return p
@@ -105,7 +110,8 @@ func (p Path) WithoutStroke() Path {
 	return p
 }
 
-func (p Path) Fill() (color.NRGBA, bool) { return p.paint.fill() }
-func (p Path) FillOpacity() float64      { return p.paint.fillOpacity() }
-func (p Path) FillRule() FillRule        { return p.paint.fillRule }
-func (p Path) Stroke() (Stroke, bool)    { return p.paint.stroke() }
+func (p Path) Fill() (color.NRGBA, bool)      { return p.paint.fill() }
+func (p Path) LinearFill() (LinearFill, bool) { return p.paint.linearFill() }
+func (p Path) FillOpacity() float64           { return p.paint.fillOpacity() }
+func (p Path) FillRule() FillRule             { return p.paint.fillRule }
+func (p Path) Stroke() (Stroke, bool)         { return p.paint.stroke() }

@@ -296,6 +296,11 @@ func (p *pixmap) blend(x, y int, sr, sg, sb, sa uint8) {
 	p.pix[i], p.pix[i+1], p.pix[i+2], p.pix[i+3] = r, g, b, a
 }
 
+type spanBlitter interface {
+	blitH(x, y, width uint32)
+	blitAntiH(x, y uint32, alpha []uint8, runs []uint16)
+}
+
 type solidBlitter struct {
 	pm             *pixmap
 	pr, pg, pb, pa uint8 // premul source
@@ -328,7 +333,7 @@ func (b *solidBlitter) blitAntiH(x, y uint32, alpha []uint8, runs []uint16) {
 }
 
 type superBlitter struct {
-	real      *solidBlitter
+	real      spanBlitter
 	currIY    int32
 	width     uint32
 	left      uint32
@@ -339,7 +344,7 @@ type superBlitter struct {
 	offsetX   int
 }
 
-func newSuperBlitter(boundsL, boundsT, boundsR, boundsB int32, clipW, clipH uint32, real *solidBlitter) *superBlitter {
+func newSuperBlitter(boundsL, boundsT, boundsR, boundsB int32, clipW, clipH uint32, real spanBlitter) *superBlitter {
 	// intersect bounds with clip [0,clipW)×[0,clipH)
 	l := boundsL
 	t := boundsT
@@ -439,7 +444,7 @@ func (s *superBlitter) blitH(x, y, width uint32) {
 	s.offsetX = s.runs.add(x>>supersampleShift, coverageToPartialAlpha(fb), int(n), coverageToPartialAlpha(fe), maxValue, s.offsetX)
 }
 
-func fillPathAA(p path, nonzero bool, clipW, clipH uint32, blit *solidBlitter) {
+func fillPathAA(p path, nonzero bool, clipW, clipH uint32, blit spanBlitter) {
 	if p.empty || len(p.segs) == 0 {
 		return
 	}

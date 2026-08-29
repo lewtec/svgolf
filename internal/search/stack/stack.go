@@ -22,8 +22,9 @@ const (
 )
 
 // Stack expands (cover leftover), then contracts (drop a path if Score
-// holds), then unblurs. Forms are solid — holes and marks are later
-// layers, not carved into the plate.
+// holds), then unblurs. Forms are filled paths; a ramp may take a
+// 2-stop linear fill instead of stacked flats. Holes and marks are
+// later layers, not carved into the plate.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -162,7 +163,7 @@ func pickForm(
 		} else {
 			parts = n + 1
 		}
-		for _, cand := range formPaths(work, fill, punch) {
+		for _, cand := range formPaths(work, fill, punch, want) {
 			var next svg.Document
 			if replace >= 0 {
 				next = replaceAt(doc, replace+1, cand.Node())
@@ -199,20 +200,35 @@ func pickForm(
 		}
 		return best, nil
 	}
-	if idx, ok := topPainter(island, got, fills); ok {
+	if idx, ok := topPainter(island, got, fills, doc.Children()); ok {
 		id := uint16(idx + 1)
-		if sameObject(fills[idx], col) {
+		if sameLayer(doc.Children()[idx+1], fills[idx], col, island, want) {
 			work := ownedUnion(owner, island, w, h, id)
 			if err := consider(work, meanFill(want, work), idx, true); err != nil {
 				return formPick{}, err
 			}
 			return best, nil
 		}
-	} else if idx, ok := majorityOwner(owner, island, w); ok && sameObject(fills[idx], col) {
+	} else if idx, ok := majorityOwner(owner, island, w); ok && sameLayer(doc.Children()[idx+1], fills[idx], col, island, want) {
 		work := ownedUnion(owner, island, w, h, uint16(idx+1))
 		if err := consider(work, meanFill(want, work), idx, true); err != nil {
 			return formPick{}, err
 		}
+		return best, nil
+	}
+	// Adjacent leftover of the same hue can be the rest of a ramp.
+	// Score rejects a wash over two flats. A cover plate is still
+	// only allowed when that polish does not take.
+	for i, fill := range fills {
+		if hueFamily(fill) != hueFamily(col) {
+			continue
+		}
+		work := ownedUnion(owner, island, w, h, uint16(i+1))
+		if err := consider(work, meanFill(want, work), i, true); err != nil {
+			return formPick{}, err
+		}
+	}
+	if best.ok {
 		return best, nil
 	}
 	if err := consider(island, col, -1, false); err != nil {
@@ -256,11 +272,11 @@ func punchThrough(
 	reclaims := make([][]pix, n)
 	any := false
 	for i := 0; i < n; i++ {
-		if !layerCovers(island, got, fills[i], owner, w, i) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
+		if !layerCovers(island, got, fills[i], owner, w, i, doc.Children()[i+1]) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
 			continue
 		}
 		work := ownedMinus(owner, island, w, uint16(i+1))
-		fs := formPaths(work, fills[i], true)
+		fs := formPaths(work, fills[i], true, want)
 		if len(fs) == 0 {
 			continue
 		}
@@ -397,17 +413,27 @@ func whitePane(w, h int) svg.Path {
 	}, paper)
 }
 
-func formPaths(island []pix, col color.NRGBA, punch bool) []svg.Path {
+func formPaths(island []pix, col color.NRGBA, punch bool, want *image.NRGBA) []svg.Path {
 	poly := fitPoly(contour(island), 2)
 	if len(poly) < 3 {
 		return nil
 	}
+	var out []svg.Path
 	if punch {
 		if hs := holeRings(island); len(hs) > 0 {
-			return []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
+			out = []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
 		}
 	}
-	return []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
+	if out == nil {
+		out = []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
+	}
+	if gradient, ok := fitLinearFill(island, want); ok {
+		n := len(out)
+		for i := 0; i < n; i++ {
+			out = append(out, out[i].WithLinearFill(gradient))
+		}
+	}
+	return out
 }
 
 func holeRings(island []pix) [][][2]float64 {

@@ -26,6 +26,11 @@ func (c Circle) WithFill(col color.NRGBA) Circle {
 	return c
 }
 
+func (c Circle) WithLinearFill(g LinearFill) Circle {
+	c.paint = c.paint.withLinear(g)
+	return c
+}
+
 func (c Circle) WithFillOpacity(a float64) Circle {
 	c.paint = c.paint.withFillOpacity(a)
 	return c
@@ -51,7 +56,8 @@ func (c Circle) WithoutStroke() Circle {
 	return c
 }
 
-func (c Circle) Fill() (color.NRGBA, bool) { return c.paint.fill() }
-func (c Circle) FillOpacity() float64      { return c.paint.fillOpacity() }
-func (c Circle) FillRule() FillRule        { return c.paint.fillRule }
-func (c Circle) Stroke() (Stroke, bool)    { return c.paint.stroke() }
+func (c Circle) Fill() (color.NRGBA, bool)      { return c.paint.fill() }
+func (c Circle) LinearFill() (LinearFill, bool) { return c.paint.linearFill() }
+func (c Circle) FillOpacity() float64           { return c.paint.fillOpacity() }
+func (c Circle) FillRule() FillRule             { return c.paint.fillRule }
+func (c Circle) Stroke() (Stroke, bool)         { return c.paint.stroke() }

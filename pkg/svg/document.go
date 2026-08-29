@@ -115,6 +115,23 @@ func (n Node) Path() (Path, bool) {
 	return n.path, true
 }
 
+func (n Node) LinearFill() (LinearFill, bool) {
+	switch n.kind {
+	case KindCircle:
+		return n.circle.LinearFill()
+	case KindEllipse:
+		return n.ellipse.LinearFill()
+	case KindRect:
+		return n.rect.LinearFill()
+	case KindPolygon:
+		return n.polygon.LinearFill()
+	case KindPath:
+		return n.path.LinearFill()
+	default:
+		return LinearFill{}, false
+	}
+}
+
 type Group struct {
 	children []Node
 }
