@@ -3,6 +3,7 @@ package stack
 import (
 	"image"
 	"image/color"
+	"math"
 	"testing"
 
 	"github.com/lewtec/svgolf/internal/search"
@@ -227,19 +228,6 @@ func TestStackNilPixmap(t *testing.T) {
 	}
 }
 
-func TestRefineOrderBiggerFirst(t *testing.T) {
-	got := refineOrder([]layer{{n: 9}, {n: 9}, {n: 64}, {n: 12}})
-	want := []int{2, 3, 0, 1}
-	if len(got) != len(want) {
-		t.Fatalf("len=%d want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("order=%v want %v", got, want)
-		}
-	}
-}
-
 func TestStackCoversBeforeRefine(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	for y := 0; y < 8; y++ {
@@ -331,6 +319,37 @@ func TestSmoothPullsStairInward(t *testing.T) {
 	}
 }
 
+func TestFanOrderUncrossesBowtie(t *testing.T) {
+	// two triangles sharing a vertex, edges would cross if walked 0-1-2-3
+	bow := [][2]float64{{0, 0}, {2, 2}, {0, 2}, {2, 0}}
+	got := fanOrder(bow)
+	if len(got) != 4 {
+		t.Fatalf("fanOrder=%v", got)
+	}
+	// no edge of the rewritten ring should properly intersect another
+	for i := 0; i < 4; i++ {
+		a, b := got[i], got[(i+1)%4]
+		for j := i + 1; j < 4; j++ {
+			c, d := got[j], got[(j+1)%4]
+			if i == j || (i+1)%4 == j || (j+1)%4 == i {
+				continue
+			}
+			if edgesCross(a, b, c, d) {
+				t.Fatalf("still crosses: %v", got)
+			}
+		}
+	}
+}
+
+func edgesCross(a, b, c, d [2]float64) bool {
+	cross := func(p, q, r [2]float64) float64 {
+		return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
+	}
+	d1, d2 := cross(a, b, c), cross(a, b, d)
+	d3, d4 := cross(c, d, a), cross(c, d, b)
+	return d1*d2 < 0 && d3*d4 < 0
+}
+
 func TestFitPolyShorterThanContour(t *testing.T) {
 	var ring [][2]float64
 	for i := 0; i < 40; i++ {
@@ -364,6 +383,45 @@ func TestThinIsland(t *testing.T) {
 	}
 	if thinIsland(box) {
 		t.Fatal("4x4 not scatter")
+	}
+}
+
+func TestFitSharpStaysLines(t *testing.T) {
+	var island []pix
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 10; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	sq := [][2]float64{{0, 0}, {10, 0}, {10, 10}, {0, 10}}
+	p := filledFit(island, sq, color.NRGBA{A: 255})
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			t.Fatalf("square used a cubic: %+v", p.Commands())
+		}
+	}
+}
+
+func TestFitBendHasCubic(t *testing.T) {
+	var island []pix
+	for y := 0; y <= 16; y++ {
+		for x := 0; x <= 16; x++ {
+			if x*x+y*y <= 16*16 && x >= 0 && y >= 0 {
+				island = append(island, pix{x, y})
+			}
+		}
+	}
+	s := math.Sqrt(2) / 2
+	bend := [][2]float64{{16, 0}, {16 * math.Cos(math.Pi / 6), 16 * math.Sin(math.Pi / 6)}, {16 * s, 16 * s}, {16 * math.Cos(math.Pi / 3), 16 * math.Sin(math.Pi / 3)}, {0, 16}, {0, 0}}
+	p := filledFit(island, bend, color.NRGBA{A: 255})
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("arc used only lines")
 	}
 }
 

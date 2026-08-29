@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"iter"
-	"sort"
 
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -20,8 +19,9 @@ const (
 	minErr     = 8
 )
 
-// Stack covers every leftover region with a simple path, then tightens those paths.
-// Accept if Score drops; on a tie, fewer path commands. Stop after stallLimit failed regions.
+// Stack covers leftover regions. Each island keeps the best of box / ellipse /
+// polygon (evenodd if it has holes). Accept if Score drops; on a tie, fewer
+// commands. Stop after stallLimit failed regions.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -51,8 +51,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		skip := make([]byte, w*h)
 		stall := 0
 		yielded := false
-		var layers []layer
-		for len(layers) < maxPaths && stall < stallLimit {
+		n := 0
+		for n < maxPaths && stall < stallLimit {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
 					yield(svg.Document{}, err)
@@ -69,19 +69,35 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				}
 				continue
 			}
-			if len(island) < minIsland+2*len(layers) {
+			if len(island) < minIsland+2*n {
 				break
 			}
-			cands := formPaths(island, col)
-			next := doc.Append(cands[0].Node())
-			ngot, err := render.Render(next)
-			if err != nil {
-				yield(svg.Document{}, err)
-				return
+			placed := false
+			var last svg.Node
+			for _, cand := range formPaths(island, col) {
+				var next svg.Document
+				if !placed {
+					next = doc.Append(cand.Node())
+				} else {
+					next = replaceAt(doc, n, cand.Node())
+				}
+				ngot, err := render.Render(next)
+				if err != nil {
+					yield(svg.Document{}, err)
+					return
+				}
+				nn := n
+				if !placed {
+					nn++
+				}
+				if !accept(got, ngot, target, n, nn, last, cand.Node()) {
+					continue
+				}
+				doc, got, last = next, ngot, cand.Node()
+				placed = true
 			}
-			if accept(got, ngot, target, len(layers), len(layers)+1, svg.Node{}, cands[0].Node()) {
-				doc, got = next, ngot
-				layers = append(layers, layer{forms: cands, n: len(island)})
+			if placed {
+				n++
 				stall = 0
 				yielded = true
 				if !yield(doc, nil) {
@@ -94,53 +110,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				skip[p.y*w+p.x] = 1
 			}
 		}
-		n := len(layers)
-		for _, i := range refineOrder(layers) {
-			if err := ctx.Err(); err != nil {
-				if !yielded {
-					yield(svg.Document{}, err)
-				}
-				return
-			}
-			old := doc.Children()[i]
-			for _, cand := range layers[i].forms[1:] {
-				next := replaceAt(doc, i, cand.Node())
-				ngot, err := render.Render(next)
-				if err != nil {
-					yield(svg.Document{}, err)
-					return
-				}
-				if !accept(got, ngot, target, n, n, old, cand.Node()) {
-					continue
-				}
-				doc, got = next, ngot
-				old = cand.Node()
-				yielded = true
-				if !yield(doc, nil) {
-					return
-				}
-			}
-		}
 		if !yielded {
 			yield(doc, nil)
 		}
 	}
-}
-
-type layer struct {
-	forms []svg.Path
-	n     int
-}
-
-func refineOrder(layers []layer) []int {
-	idx := make([]int, len(layers))
-	for i := range idx {
-		idx[i] = i
-	}
-	sort.SliceStable(idx, func(i, j int) bool {
-		return layers[idx[i]].n > layers[idx[j]].n
-	})
-	return idx
 }
 
 func accept(got, ngot, want *image.NRGBA, parts, nparts int, old, cand svg.Node) bool {
@@ -159,8 +132,9 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	c := contour(island)
 	poly := fitPoly(c, 6)
 	hs := holeRings(island)
+	tight := fitPoly(c, 3)
 	if len(hs) > 0 && len(poly) >= 3 {
-		out := []svg.Path{withHoles(filledPath(poly, col), hs)}
+		out := []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, tight, hs, col)}
 		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
 			out = append(out, withHoles(filledEllipse(cx, cy, rx, ry, col), hs))
 		}
@@ -168,14 +142,14 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	}
 	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	if boxA > 2*float64(len(island)) {
-		return []svg.Path{filledPath(poly, col)}
+		return []svg.Path{filledPath(poly, col), filledFit(island, tight, col)}
 	}
 	out := []svg.Path{filledPath(bb, col)}
 	if cx, cy, rx, ry, ok := fitEllipse(island); ok {
 		out = append(out, filledEllipse(cx, cy, rx, ry, col))
 	}
 	if len(poly) >= 3 {
-		out = append(out, filledPath(poly, col))
+		out = append(out, filledPath(poly, col), filledFit(island, tight, col))
 	}
 	return out
 }

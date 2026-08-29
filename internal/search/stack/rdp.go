@@ -1,6 +1,9 @@
 package stack
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // smooth averages each vertex with its neighbors. Pixel stairs collapse
 // toward the true edge so a later RDP can keep a short polygon.
@@ -27,7 +30,51 @@ func fitPoly(ring [][2]float64, eps float64) [][2]float64 {
 	}
 	out := rdpClosed(smooth(ring, 2), eps)
 	if len(out) < 3 {
+		return fanOrder(ring)
+	}
+	return fanOrder(out)
+}
+
+// fanOrder rewrites a ring by angle around its centroid so edges cannot cross.
+func fanOrder(ring [][2]float64) [][2]float64 {
+	if len(ring) < 3 {
 		return ring
+	}
+	var cx, cy float64
+	for _, p := range ring {
+		cx += p[0]
+		cy += p[1]
+	}
+	n := float64(len(ring))
+	cx /= n
+	cy /= n
+	type item struct {
+		p    [2]float64
+		ang  float64
+		dist float64
+	}
+	pts := make([]item, 0, len(ring))
+	seen := map[[2]float64]bool{}
+	for _, p := range ring {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		dx, dy := p[0]-cx, p[1]-cy
+		pts = append(pts, item{p, math.Atan2(dy, dx), dx*dx + dy*dy})
+	}
+	sort.Slice(pts, func(i, j int) bool {
+		if pts[i].ang != pts[j].ang {
+			return pts[i].ang < pts[j].ang
+		}
+		return pts[i].dist < pts[j].dist
+	})
+	if len(pts) < 3 {
+		return ring
+	}
+	out := make([][2]float64, len(pts))
+	for i := range pts {
+		out[i] = pts[i].p
 	}
 	return out
 }
