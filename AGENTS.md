@@ -1,0 +1,5 @@
+- Don't complicate the algorithm without a really good reason
+- Don't forget to think on how the algorithm would cheat convergence
+- Don't be lazy on research
+- Proactively find ways to simplify the project
+- Plan decently how objects relate and interact in the codebase so it doesn't become a mess
