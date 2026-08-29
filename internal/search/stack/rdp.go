@@ -28,7 +28,7 @@ func fitPoly(ring [][2]float64, eps float64) [][2]float64 {
 	if len(ring) < 3 {
 		return ring
 	}
-	out := rdpClosed(smooth(ring, 2), eps)
+	out := rdpClosed(smooth(ring, 6), eps)
 	if len(out) < 3 {
 		return ring
 	}

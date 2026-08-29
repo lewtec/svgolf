@@ -13,6 +13,10 @@ import (
 // makes a miss cost far more than AA leftover.
 const pathCost = 180 * 180 * minIsland
 
+// cmdCost is one extra path command. Pixel-stair polish was winning
+// on AA leftover; a command must buy a full miss.
+const cmdCost = 180 * 180
+
 // paper is the empty pane. Source holes (want.A==0) must look like paper.
 // got.A==0 is always a full miss — no transparent holes.
 var paper = color.NRGBA{R: 255, G: 255, B: 255, A: 255}

@@ -144,8 +144,8 @@ func pickForm(
 	w, h int,
 ) (formPick, error) {
 	best := formPick{replace: -1}
-	bestA := errSum + pathCost*float64(n)
-	curA := bestA
+	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+	bestA := curA
 	var bestLen int
 	consider := func(work []pix, fill color.NRGBA, replace int) error {
 		parts := n
@@ -168,8 +168,8 @@ func pickForm(
 			}
 			dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
 			nerr := errSum + ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
-			a := nerr + pathCost*float64(parts)
 			plen := pathLen(cand.Node())
+			a := nerr + pathCost*float64(parts) + cmdCost*float64(docCmdLen(next))
 			if a > bestA || a > curA {
 				continue
 			}
@@ -251,6 +251,14 @@ func pathLen(n svg.Node) int {
 		return 0
 	}
 	return len(p.Commands())
+}
+
+func docCmdLen(d svg.Document) int {
+	n := 0
+	for _, c := range d.Children() {
+		n += pathLen(c)
+	}
+	return n
 }
 
 func holeRings(island []pix) [][][2]float64 {

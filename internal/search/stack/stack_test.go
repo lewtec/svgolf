@@ -464,6 +464,20 @@ func edgesCross(a, b, c, d [2]float64) bool {
 	return d1*d2 < 0 && d3*d4 < 0
 }
 
+func TestFitPolyCollapsesStair(t *testing.T) {
+	var ring [][2]float64
+	for x := 0; x < 40; x++ {
+		ring = append(ring, [2]float64{float64(x), float64(x % 2)})
+	}
+	for y := 0; y < 40; y++ {
+		ring = append(ring, [2]float64{40 + float64(y%2), float64(y)})
+	}
+	got := fitPoly(ring, 2)
+	if len(got) > 8 {
+		t.Fatalf("stair fitPoly=%d want a short edge", len(got))
+	}
+}
+
 func TestFitPolyShorterThanContour(t *testing.T) {
 	var ring [][2]float64
 	for i := 0; i < 40; i++ {
