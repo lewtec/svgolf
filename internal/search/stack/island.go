@@ -149,6 +149,93 @@ func bbox(island []pix) [][2]float64 {
 	}
 }
 
+func transparentIsland(want *image.NRGBA, island []pix) bool {
+	if len(island) == 0 {
+		return false
+	}
+	var sa int
+	for _, p := range island {
+		sa += int(want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y).A)
+	}
+	return sa/len(island) < 128
+}
+
+// voids are enclosed non-island pockets (4-connected), not the exterior.
+func voids(island []pix) [][]pix {
+	if len(island) == 0 {
+		return nil
+	}
+	minX, minY := island[0].x, island[0].y
+	maxX, maxY := minX, minY
+	for _, p := range island {
+		if p.x < minX {
+			minX = p.x
+		}
+		if p.y < minY {
+			minY = p.y
+		}
+		if p.x > maxX {
+			maxX = p.x
+		}
+		if p.y > maxY {
+			maxY = p.y
+		}
+	}
+	minX--
+	minY--
+	maxX += 2
+	maxY += 2
+	w, h := maxX-minX, maxY-minY
+	mark := make([]byte, w*h)
+	for _, p := range island {
+		mark[(p.y-minY)*w+(p.x-minX)] = 1
+	}
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	stack := []pix{{0, 0}}
+	mark[0] = 2
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, d := range dirs {
+			nx, ny := p.x+d.x, p.y+d.y
+			if nx < 0 || ny < 0 || nx >= w || ny >= h || mark[ny*w+nx] != 0 {
+				continue
+			}
+			mark[ny*w+nx] = 2
+			stack = append(stack, pix{nx, ny})
+		}
+	}
+	var holes [][]pix
+	var cur []pix
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mark[y*w+x] != 0 {
+				continue
+			}
+			cur = cur[:0]
+			stack = []pix{{x, y}}
+			mark[y*w+x] = 3
+			for len(stack) > 0 {
+				p := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				cur = append(cur, pix{p.x + minX, p.y + minY})
+				for _, d := range dirs {
+					nx, ny := p.x+d.x, p.y+d.y
+					if nx < 0 || ny < 0 || nx >= w || ny >= h || mark[ny*w+nx] != 0 {
+						continue
+					}
+					mark[ny*w+nx] = 3
+					stack = append(stack, pix{nx, ny})
+				}
+			}
+			if len(cur) >= 4 {
+				holes = append(holes, append([]pix{}, cur...))
+			}
+		}
+	}
+	return holes
+}
+
 func corners(island []pix) [][2]float64 {
 	out := make([][2]float64, 0, len(island)*4)
 	for _, p := range island {

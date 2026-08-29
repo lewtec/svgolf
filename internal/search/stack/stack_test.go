@@ -101,6 +101,76 @@ func TestStackKeepsGoingAfterReject(t *testing.T) {
 	}
 }
 
+func TestVoidsFindsEnclosedHole(t *testing.T) {
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			if x >= 2 && x < 6 && y >= 2 && y < 6 {
+				continue
+			}
+			island = append(island, pix{x, y})
+		}
+	}
+	hs := voids(island)
+	if len(hs) != 1 {
+		t.Fatalf("voids=%d want 1", len(hs))
+	}
+	if len(hs[0]) != 16 {
+		t.Fatalf("hole px=%d want 16", len(hs[0]))
+	}
+}
+
+func TestStackRingKeepsInterior(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	ring := func(x, y int) bool {
+		dx, dy := float64(x)-15.5, float64(y)-15.5
+		d := dx*dx + dy*dy
+		return d >= 8*8 && d < 12*12
+	}
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			if ring(x, y) {
+				img.SetNRGBA(x, y, cyan)
+			}
+		}
+	}
+	for y := 14; y < 18; y++ {
+		for x := 14; x < 20; x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := got.NRGBAAt(15, 5)
+	if c.B < 80 {
+		t.Fatalf("ring missing %+v paths=%d", c, len(doc.Children()))
+	}
+	mid := got.NRGBAAt(15, 11)
+	if mid.G > 80 && mid.B > 180 {
+		t.Fatalf("interior filled with cyan %+v", mid)
+	}
+	if mid.A > 200 && mid.R < 20 && mid.G < 20 && mid.B < 20 {
+		t.Fatalf("interior painted black %+v", mid)
+	}
+	mark := got.NRGBAAt(16, 16)
+	if mark.B < 80 {
+		t.Fatalf("inner mark missing %+v paths=%d", mark, len(doc.Children()))
+	}
+}
+
 func TestStackDoesNotKeepFilledHoles(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))

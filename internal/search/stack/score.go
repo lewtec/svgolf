@@ -12,8 +12,9 @@ import (
 const pathCost = 180 * minIsland
 
 // Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels use
-// HueAt. A hole (want.A==0) is HueAt(got, black). Mean would hide letters on
-// a large canvas; sum does not.
+// HueAt. A hole (want.A==0) costs 180 if painted — black is not a hole.
+// Missing paint on an opaque pixel also costs 180. Mean would hide letters
+// on a large canvas; sum does not.
 func Score(got, want *image.NRGBA, parts int) float64 {
 	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return math.Inf(1)
@@ -35,7 +36,10 @@ func errAt(g, q color.NRGBA) float64 {
 		if g.A == 0 {
 			return 0
 		}
-		return loss.HueAt(g, color.NRGBA{A: 255})
+		return 180
+	}
+	if g.A == 0 {
+		return 180
 	}
 	return loss.HueAt(g, q)
 }

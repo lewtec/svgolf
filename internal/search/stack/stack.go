@@ -62,6 +62,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			if len(island) < minIsland {
 				break
 			}
+			if transparentIsland(target, island) {
+				for _, p := range island {
+					skip[p.y*w+p.x] = 1
+				}
+				continue
+			}
 			cands := formPaths(island, col)
 			next := doc.Append(cands[0].Node())
 			ngot, err := render.Render(next)
@@ -148,12 +154,17 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	bb := bbox(island)
 	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
 	c := contour(island)
+	out := holedForms(island, c, col)
 	if boxA > 2*float64(len(island)) {
-		return []svg.Path{filledPath(rdp(c, 4), col), filledPath(rdp(c, 1), col)}
+		return append(out, filledPath(rdp(c, 4), col), filledPath(rdp(c, 1), col))
 	}
-	out := []svg.Path{filledPath(bb, col)}
+	out = append(out, filledPath(bb, col))
 	if cx, cy, rx, ry, ok := fitEllipse(island); ok {
-		out = append(out, filledEllipse(cx, cy, rx, ry, col))
+		el := filledEllipse(cx, cy, rx, ry, col)
+		if hs := holeRings(island, 4); len(hs) > 0 {
+			out = append(out, withHoles(el, hs))
+		}
+		out = append(out, el)
 		if r := (rx + ry) / 2; r >= 1 {
 			out = append(out, filledEllipse(cx, cy, r, r, col))
 		}
@@ -166,12 +177,57 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	return out
 }
 
-func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
-	p := svg.NewPath().MoveTo(ring[0][0], ring[0][1])
+func holedForms(island []pix, outer [][2]float64, col color.NRGBA) []svg.Path {
+	hs := holeRings(island, 4)
+	if len(hs) == 0 || len(outer) < 3 {
+		return nil
+	}
+	out := []svg.Path{filledEvenOdd(rdp(outer, 4), hs, col)}
+	if tight := holeRings(island, 1); len(tight) > 0 {
+		out = append(out, filledEvenOdd(rdp(outer, 1), tight, col))
+	}
+	return out
+}
+
+func holeRings(island []pix, eps float64) [][][2]float64 {
+	var rings [][][2]float64
+	for _, h := range voids(island) {
+		c := contour(h)
+		if len(c) < 3 {
+			continue
+		}
+		r := rdp(c, eps)
+		if len(r) >= 3 {
+			rings = append(rings, r)
+		}
+	}
+	return rings
+}
+
+func filledEvenOdd(outer [][2]float64, holes [][][2]float64, col color.NRGBA) svg.Path {
+	return withHoles(filledPath(outer, col), holes)
+}
+
+func withHoles(p svg.Path, holes [][][2]float64) svg.Path {
+	for _, h := range holes {
+		p = appendRing(p, h)
+	}
+	return p.WithFillRule(svg.FillEvenOdd)
+}
+
+func appendRing(p svg.Path, ring [][2]float64) svg.Path {
+	if len(ring) < 3 {
+		return p
+	}
+	p = p.MoveTo(ring[0][0], ring[0][1])
 	for _, q := range ring[1:] {
 		p = p.LineTo(q[0], q[1])
 	}
-	p = p.Close().WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
+	return p.Close()
+}
+
+func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
+	p := appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
 	if col.A != 255 {
 		p = p.WithFillOpacity(float64(col.A) / 255)
 	}
