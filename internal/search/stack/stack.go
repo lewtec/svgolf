@@ -414,18 +414,26 @@ func whitePane(w, h int) svg.Path {
 }
 
 func formPaths(island []pix, col color.NRGBA, punch bool, want *image.NRGBA) []svg.Path {
-	poly := fitPoly(contour(island), 2)
-	if len(poly) < 3 {
+	// A new plate is the convex hull. Tight contour hugs every cloud
+	// bay; Score then picks that because painting over the bay costs
+	// more than the extra commands. Holes and marks are later layers.
+	var ring [][2]float64
+	if punch {
+		ring = fitPoly(contour(island), 2)
+	} else {
+		ring = convexHull(islandPoints(island))
+	}
+	if len(ring) < 3 {
 		return nil
 	}
 	var out []svg.Path
 	if punch {
 		if hs := holeRings(island); len(hs) > 0 {
-			out = []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
+			out = []svg.Path{withHoles(filledPath(ring, col), hs), withFitHoles(island, ring, hs, col)}
 		}
 	}
 	if out == nil {
-		out = []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
+		out = []svg.Path{filledPath(ring, col), filledFit(island, ring, col)}
 	}
 	if gradient, ok := fitLinearFill(island, want); ok {
 		n := len(out)

@@ -97,48 +97,47 @@ func endQuartileColors(island []pix, want *image.NRGBA, x1, y1, x2, y2 float64) 
 	dx := x2 - x1
 	dy := y2 - y1
 	length2 := dx*dx + dy*dy
-	samples := make([]gradientSample, 0, len(island))
+	parameterAt := func(p pix) float64 {
+		if length2 == 0 {
+			return 0
+		}
+		return ((float64(p.x)+0.5-x1)*dx + (float64(p.y)+0.5-y1)*dy) / length2
+	}
+	minP, maxP := parameterAt(island[0]), parameterAt(island[0])
+	for _, p := range island[1:] {
+		t := parameterAt(p)
+		if t < minP {
+			minP = t
+		}
+		if t > maxP {
+			maxP = t
+		}
+	}
+	lo := minP + 0.25*(maxP-minP)
+	hi := maxP - 0.25*(maxP-minP)
+	var startR, startG, startB, startN int
+	var endR, endG, endB, endN int
 	for _, p := range island {
-		parameter := 0.0
-		if length2 > 0 {
-			parameter = ((float64(p.x)+0.5-x1)*dx + (float64(p.y)+0.5-y1)*dy) / length2
+		c := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
+		t := parameterAt(p)
+		if t <= lo {
+			startR += int(c.R)
+			startG += int(c.G)
+			startB += int(c.B)
+			startN++
 		}
-		samples = append(samples, gradientSample{
-			parameter: parameter,
-			color:     want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y),
-		})
-	}
-	for i := 1; i < len(samples); i++ {
-		j := i
-		for j > 0 && samples[j].parameter < samples[j-1].parameter {
-			samples[j], samples[j-1] = samples[j-1], samples[j]
-			j--
+		if t >= hi {
+			endR += int(c.R)
+			endG += int(c.G)
+			endB += int(c.B)
+			endN++
 		}
 	}
-	quarter := len(samples) / 4
-	if quarter < 1 {
-		quarter = 1
+	if startN == 0 || endN == 0 {
+		return meanFill(want, island), meanFill(want, island)
 	}
-	return meanGradientSample(samples[:quarter]), meanGradientSample(samples[len(samples)-quarter:])
-}
-
-func meanGradientSample(samples []gradientSample) color.NRGBA {
-	if len(samples) == 0 {
-		return color.NRGBA{A: 255}
-	}
-	var sumR, sumG, sumB int
-	for _, s := range samples {
-		sumR += int(s.color.R)
-		sumG += int(s.color.G)
-		sumB += int(s.color.B)
-	}
-	n := len(samples)
-	return color.NRGBA{R: uint8(sumR / n), G: uint8(sumG / n), B: uint8(sumB / n), A: 255}
-}
-
-type gradientSample struct {
-	parameter float64
-	color     color.NRGBA
+	return color.NRGBA{R: uint8(startR / startN), G: uint8(startG / startN), B: uint8(startB / startN), A: 255},
+		color.NRGBA{R: uint8(endR / endN), G: uint8(endG / endN), B: uint8(endB / endN), A: 255}
 }
 
 func sameLayer(n svg.Node, fill, col color.NRGBA, island []pix, want *image.NRGBA) bool {

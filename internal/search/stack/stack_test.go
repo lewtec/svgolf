@@ -535,6 +535,37 @@ func TestFitPolyRect(t *testing.T) {
 	}
 }
 
+func TestStackFirstFormFillsBite(t *testing.T) {
+	blue := color.NRGBA{B: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 24))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			if y < 6 && x >= 8 && x < 24 {
+				continue
+			}
+			img.SetNRGBA(x, y, blue)
+		}
+	}
+	var first svg.Document
+	for doc, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(forms(doc)) > 0 {
+			first = doc
+			break
+		}
+	}
+	got, err := render.Render(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := got.NRGBAAt(16, 3)
+	if c.B < 200 {
+		t.Fatalf("first form hugged the bite %+v; want the hull to cover it", c)
+	}
+}
+
 func TestStackFirstFormIsPoly(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {
@@ -771,9 +802,25 @@ func TestStackDiskUsesCubics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := cubics(forms(doc)[0]); n < 4 {
-		t.Fatalf("cubics=%d want >=4", n)
+	p := forms(doc)[0]
+	ncmd := 0
+	for _, c := range mustPath(t, p).Commands() {
+		if c.Kind != svg.CmdClose {
+			ncmd++
+		}
 	}
+	if cubics(p) < 4 && ncmd < 8 {
+		t.Fatalf("disk collapsed to lines=%d cubics=%d", ncmd, cubics(p))
+	}
+}
+
+func mustPath(t *testing.T, n svg.Node) svg.Path {
+	t.Helper()
+	p, ok := n.Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	return p
 }
 
 func TestStackGradientDoesNotRestack(t *testing.T) {
@@ -834,6 +881,25 @@ func TestFitLinearHorizontal(t *testing.T) {
 	}
 	if g.C0().R >= g.C1().R {
 		t.Fatalf("ends %+v → %+v want dark→bright or the reverse axis", g.C0(), g.C1())
+	}
+}
+
+func TestFitLinearFillLargeIsFast(t *testing.T) {
+	const w, h = 400, 200
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	island := make([]pix, 0, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 255 / w), A: 255})
+			island = append(island, pix{x, y})
+		}
+	}
+	start := time.Now()
+	if _, ok := fitLinearFill(island, img); !ok {
+		t.Fatal("rejected a ramp")
+	}
+	if d := time.Since(start); d > 300*time.Millisecond {
+		t.Fatalf("fitLinearFill(%d px) took %s; insertion sort is back", w*h, d)
 	}
 }
 

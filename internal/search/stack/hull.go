@@ -2,6 +2,14 @@ package stack
 
 import "sort"
 
+func islandPoints(island []pix) [][2]float64 {
+	pts := make([][2]float64, len(island))
+	for i, p := range island {
+		pts[i] = [2]float64{float64(p.x) + 0.5, float64(p.y) + 0.5}
+	}
+	return pts
+}
+
 func convexHull(pts [][2]float64) [][2]float64 {
 	if len(pts) < 3 {
 		return pts
