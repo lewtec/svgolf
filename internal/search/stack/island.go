@@ -96,6 +96,25 @@ func ownedUnion(owner []uint16, island []pix, w, h int, id uint16) []pix {
 	return out
 }
 
+func ownedMinus(owner []uint16, drop []pix, w int, id uint16) []pix {
+	gone := make(map[pix]bool, len(drop))
+	for _, p := range drop {
+		gone[p] = true
+	}
+	var out []pix
+	for i, v := range owner {
+		if v != id {
+			continue
+		}
+		p := pix{i % w, i / w}
+		if gone[p] {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	if skip[y*w+x] != 0 {
 		return false

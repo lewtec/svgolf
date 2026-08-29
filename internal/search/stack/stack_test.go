@@ -336,6 +336,44 @@ func TestStackFirstFormIsSolid(t *testing.T) {
 	t.Fatal("no form")
 }
 
+func TestStackShrinksHoleNotCover(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 4; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 12; y < 20; y++ {
+		for x := 12; x < 20; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{})
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hole := got.NRGBAAt(16, 16)
+	if hole.B > 40 && hole.R < 200 {
+		t.Fatalf("hole still navy %+v", hole)
+	}
+	fk := forms(doc)
+	if len(fk) == 0 {
+		t.Fatal("no form")
+	}
+	p, ok := fk[0].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if len(fk) > 1 && p.FillRule() != svg.FillEvenOdd {
+		t.Fatalf("hole covered by %d layers; want the plate to shrink", len(fk))
+	}
+}
+
 func TestStackTinyMark(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 40, 40))

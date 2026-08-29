@@ -126,9 +126,9 @@ type formPick struct {
 	ok      bool
 }
 
-// pickForm scores a polish of the overlapping path (same parts) against
-// a new path. Leftover of the same body should refine; a mark on top
-// should pay pathCost and append.
+// pickForm refits the owned path when leftover sits on it (grow if the
+// fill matches, shrink if not). New paths only on unowned leftover —
+// never a cover stacked to fake a shrink.
 func pickForm(
 	doc svg.Document,
 	got, want *image.NRGBA,
@@ -144,7 +144,7 @@ func pickForm(
 	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
 	bestA := curA
 	var bestLen int
-	consider := func(work []pix, fill color.NRGBA, replace int) error {
+	consider := func(work []pix, fill color.NRGBA, replace int, punch bool) error {
 		parts := n
 		dirty0 := islandRect(work)
 		if replace >= 0 {
@@ -152,7 +152,7 @@ func pickForm(
 		} else {
 			parts = n + 1
 		}
-		for _, cand := range formPaths(work, fill) {
+		for _, cand := range formPaths(work, fill, punch) {
 			var next svg.Document
 			if replace >= 0 {
 				next = replaceAt(doc, replace+1, cand.Node())
@@ -179,14 +179,23 @@ func pickForm(
 		}
 		return nil
 	}
-	if idx, ok := majorityOwner(owner, island, w); ok && loss.ColorAt(fills[idx], col) < recolorAt {
-		union := ownedUnion(owner, island, w, h, uint16(idx+1))
-		if err := consider(union, meanFill(want, union), idx); err != nil {
-			return formPick{}, err
+	if idx, ok := majorityOwner(owner, island, w); ok {
+		id := uint16(idx + 1)
+		if loss.ColorAt(fills[idx], col) < recolorAt {
+			work := ownedUnion(owner, island, w, h, id)
+			if err := consider(work, meanFill(want, work), idx, true); err != nil {
+				return formPick{}, err
+			}
+			return best, nil
 		}
-		return best, nil
+		work := ownedMinus(owner, island, w, id)
+		if len(work) >= minIsland {
+			if err := consider(work, meanFill(want, work), idx, true); err != nil {
+				return formPick{}, err
+			}
+		}
 	}
-	if err := consider(island, col, -1); err != nil {
+	if err := consider(island, col, -1, false); err != nil {
 		return formPick{}, err
 	}
 	return best, nil
@@ -304,12 +313,35 @@ func whitePane(w, h int) svg.Path {
 	}, paper)
 }
 
-func formPaths(island []pix, col color.NRGBA) []svg.Path {
+func formPaths(island []pix, col color.NRGBA, punch bool) []svg.Path {
 	poly := fitPoly(contour(island), 2)
 	if len(poly) < 3 {
 		return nil
 	}
+	if punch {
+		if hs := holeRings(island); len(hs) > 0 {
+			return []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
+		}
+	}
 	return []svg.Path{filledPath(poly, col), filledFit(island, poly, col)}
+}
+
+func holeRings(island []pix) [][][2]float64 {
+	var rings [][][2]float64
+	for _, h := range voids(island) {
+		r := fitPoly(contour(h), 2)
+		if len(r) >= 3 {
+			rings = append(rings, r)
+		}
+	}
+	return rings
+}
+
+func withHoles(p svg.Path, holes [][][2]float64) svg.Path {
+	for _, h := range holes {
+		p = appendRing(p, h)
+	}
+	return p.WithFillRule(svg.FillEvenOdd)
 }
 
 func pathLen(n svg.Node) int {
