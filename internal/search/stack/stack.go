@@ -19,9 +19,9 @@ const (
 	minErr     = 8
 )
 
-// Stack covers leftover regions. Each island keeps the best of box / ellipse /
-// polygon (evenodd if it has holes). Accept if Score drops; on a tie, fewer
-// commands. Stop after stallLimit failed regions.
+// Stack covers leftover regions on a blurred copy of the pixmap, then halves
+// the blur when the search stalls, down to the original. Each island keeps the
+// best of polygon / ellipse (evenodd if it has holes). Accept if Score drops.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -52,19 +52,24 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		stall := 0
 		yielded := false
 		n := 0
-		errSum := Score(got, target, 0)
-		for n < maxPaths && stall < stallLimit {
+		sigma := startSigma(w, h)
+		want := wantAt(target, sigma)
+		errSum := Score(got, want, 0)
+		for n < maxPaths {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
 					yield(svg.Document{}, err)
 				}
 				return
 			}
-			col, island := largestIsland(got, target, skip)
+			col, island := largestIsland(got, want, skip)
 			if len(island) < minIsland {
-				break
+				if !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
+					break
+				}
+				continue
 			}
-			if transparentIsland(target, island) || thinIsland(island) {
+			if transparentIsland(want, island) || thinIsland(island) {
 				for _, p := range island {
 					skip[p.y*w+p.x] = 1
 				}
@@ -91,7 +96,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					nn++
 				}
 				dirty := dirty0.Union(nodeRect(cand.Node(), last)).Inset(-2)
-				delta := ScoreRect(ngot, target, dirty) - ScoreRect(got, target, dirty)
+				delta := ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
 				nerr := errSum + delta
 				if !acceptSum(errSum, nerr, n, nn, last, cand.Node()) {
 					continue
@@ -106,11 +111,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			if placed {
 				n++
 				stall = 0
-				// leftover of this island is residual again from got; do not skip
 			} else {
 				stall++
 				for _, p := range island {
 					skip[p.y*w+p.x] = 1
+				}
+				if stall >= stallLimit && !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
+					break
 				}
 			}
 		}
@@ -118,6 +125,20 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			yield(doc, nil)
 		}
 	}
+}
+
+func unblur(orig *image.NRGBA, sigma *int, want **image.NRGBA, skip []byte, stall *int, errSum *float64, got *image.NRGBA) bool {
+	if *sigma <= 0 {
+		return false
+	}
+	*sigma /= 2
+	*want = wantAt(orig, *sigma)
+	for i := range skip {
+		skip[i] = 0
+	}
+	*stall = 0
+	*errSum = Score(got, *want, 0)
+	return true
 }
 
 func acceptSum(err0, err1 float64, parts, nparts int, old, cand svg.Node) bool {

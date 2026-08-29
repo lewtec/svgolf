@@ -11,6 +11,28 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
+func TestBoxBlurSpreads(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 5, 5))
+	img.SetNRGBA(2, 2, color.NRGBA{R: 255, A: 255})
+	out := boxBlur(img, 1)
+	n := out.NRGBAAt(1, 2)
+	if n.A == 0 || n.R == 0 {
+		t.Fatalf("blur did not spread: %+v", n)
+	}
+}
+
+func TestStartSigma(t *testing.T) {
+	if startSigma(8, 8) != 2 {
+		t.Fatalf("small=%d", startSigma(8, 8))
+	}
+	if startSigma(1000, 800) != 32 {
+		t.Fatalf("large=%d", startSigma(1000, 800))
+	}
+	if startSigma(1, 1) != 0 {
+		t.Fatalf("tiny=%d", startSigma(1, 1))
+	}
+}
+
 func TestStackSolid(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 10, 8))
 	for y := 0; y < 8; y++ {
