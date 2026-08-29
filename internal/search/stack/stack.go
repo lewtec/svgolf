@@ -70,9 +70,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				continue
 			}
 			if transparentIsland(want, island) || thinIsland(island) {
-				for _, p := range island {
-					skip[p.y*w+p.x] = 1
-				}
+				markSkip(skip, island, w)
 				continue
 			}
 
@@ -108,14 +106,15 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 					return
 				}
 			}
+			// one cover per CC at this blur. leftover of a flat fill
+			// on a gradient is the same island; without skip we restack
+			// it up to maxPaths. unblur clears skip.
+			markSkip(skip, island, w)
 			if placed {
 				n++
 				stall = 0
 			} else {
 				stall++
-				for _, p := range island {
-					skip[p.y*w+p.x] = 1
-				}
 				if stall >= stallLimit && !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
 					break
 				}
@@ -124,6 +123,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		if !yielded {
 			yield(doc, nil)
 		}
+	}
+}
+
+func markSkip(skip []byte, island []pix, w int) {
+	for _, p := range island {
+		skip[p.y*w+p.x] = 1
 	}
 }
 

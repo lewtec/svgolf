@@ -1,10 +1,12 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -532,6 +534,26 @@ func TestStackDiskUsesCubics(t *testing.T) {
 	}
 	if n := cubics(doc.Children()[0]); n < 4 {
 		t.Fatalf("cubics=%d want >=4", n)
+	}
+}
+
+func TestStackGradientDoesNotRestack(t *testing.T) {
+	// flat fill never matches a ramp. without skip-after-accept the same
+	// CC is covered again until maxPaths.
+	img := image.NewNRGBA(image.Rect(0, 0, 80, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 80; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 3), A: 255})
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	doc, err := search.Last((Stack{}).Search(ctx, img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(doc.Children()); n > 16 {
+		t.Fatalf("paths=%d, restacking the ramp", n)
 	}
 }
 

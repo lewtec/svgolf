@@ -194,10 +194,16 @@ func catchOverflow(alpha uint16) uint8 {
 }
 
 func breakRun(runs []uint16, alpha []uint8, x, count int) {
+	if x < 0 || count <= 0 {
+		return
+	}
 	origX := x
 	ri, ai := 0, 0
 	for x > 0 {
 		n := int(runs[ri])
+		if n <= 0 {
+			return
+		}
 		if x < n {
 			alpha[ai+x] = alpha[ai]
 			runs[ri] = uint16(x)
@@ -212,6 +218,9 @@ func breakRun(runs []uint16, alpha []uint8, x, count int) {
 	x = count
 	for {
 		n := int(runs[ri])
+		if n <= 0 {
+			return
+		}
 		if x < n {
 			alpha[ai+x] = alpha[ai]
 			runs[ri] = uint16(x)
@@ -245,15 +254,18 @@ func (a *alphaRuns) add(x uint32, startAlpha uint8, middleCount int, stopAlpha, 
 		alphaOff += xi
 		runsOff += xi
 		xi = 0
-		for {
-			a.alpha[alphaOff] = catchOverflow(uint16(a.alpha[alphaOff]) + uint16(maxValue))
+		for middleCount > 0 {
 			n := int(a.runs[runsOff])
+			if n <= 0 {
+				break
+			}
+			a.alpha[alphaOff] = catchOverflow(uint16(a.alpha[alphaOff]) + uint16(maxValue))
+			if n > middleCount {
+				n = middleCount
+			}
 			alphaOff += n
 			runsOff += n
 			middleCount -= n
-			if middleCount == 0 {
-				break
-			}
 		}
 		lastAlpha = alphaOff
 	}
@@ -379,11 +391,27 @@ func (s *superBlitter) flush() {
 
 func (s *superBlitter) blitH(x, y, width uint32) {
 	iy := int32(y >> supersampleShift)
+	// spans are canvas-supersample; runs only cover the path bbox.
+	// open winding blits to the clip edge — must not walk past s.width
+	// or alphaRuns.add spins on the 0 sentinel.
 	if x < s.superLeft {
-		width = x + width
-		x = 0
-	} else {
-		x -= s.superLeft
+		skip := s.superLeft - x
+		if skip >= width {
+			return
+		}
+		width -= skip
+		x = s.superLeft
+	}
+	x -= s.superLeft
+	maxX := s.width << supersampleShift
+	if x >= maxX {
+		return
+	}
+	if x+width > maxX {
+		width = maxX - x
+	}
+	if width == 0 {
+		return
 	}
 	if s.currY != int32(y) {
 		s.offsetX = 0

@@ -84,14 +84,22 @@ func rdpClosed(pts [][2]float64, eps float64) [][2]float64 {
 	if n < 3 {
 		return pts
 	}
-	ai, bi := 0, 1
-	maxD := -1.0
+	// farthest from pts[0], then farthest from that. O(n), not all-pairs.
+	ai, maxD := 0, -1.0
+	for i := 1; i < n; i++ {
+		d := math.Hypot(pts[i][0]-pts[0][0], pts[i][1]-pts[0][1])
+		if d > maxD {
+			ai, maxD = i, d
+		}
+	}
+	bi, maxD := 0, -1.0
 	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			d := math.Hypot(pts[j][0]-pts[i][0], pts[j][1]-pts[i][1])
-			if d > maxD {
-				ai, bi, maxD = i, j, d
-			}
+		if i == ai {
+			continue
+		}
+		d := math.Hypot(pts[i][0]-pts[ai][0], pts[i][1]-pts[ai][1])
+		if d > maxD {
+			bi, maxD = i, d
 		}
 	}
 	chain := func(from, to int) [][2]float64 {

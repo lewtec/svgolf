@@ -3,6 +3,7 @@ package render
 import (
 	"image/color"
 	"testing"
+	"time"
 
 	"github.com/lewtec/svgolf/pkg/svg"
 )
@@ -107,6 +108,41 @@ func TestNestedCircleFillsOrigin(t *testing.T) {
 	c0 := img.NRGBAAt(0, 0)
 	if c0.A == 0 {
 		t.Fatalf("expected fill at (0,0), got %+v", c0)
+	}
+}
+
+func TestAlphaRunsAddPastWidthDoesNotHang(t *testing.T) {
+	a := newAlphaRuns(10)
+	done := make(chan struct{})
+	go func() {
+		a.add(0, 0, 1000, 0, 64, 0)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("alphaRuns.add hung on middleCount > width")
+	}
+}
+
+func TestBlitHPastBBoxDoesNotHang(t *testing.T) {
+	// walkEdges blits open winding to the canvas clip; runs are bbox-sized.
+	pm := newPixmap(64, 64)
+	real := &solidBlitter{pm: pm, pr: 255, pa: 255}
+	sb := newSuperBlitter(20, 20, 40, 40, 64, 64, real)
+	if sb == nil {
+		t.Fatal("superBlitter")
+	}
+	done := make(chan struct{})
+	go func() {
+		sb.blitH(0, uint32(20<<supersampleShift), 64<<supersampleShift)
+		sb.flush()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blitH hung on span wider than bbox")
 	}
 }
 
