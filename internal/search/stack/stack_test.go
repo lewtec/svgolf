@@ -22,6 +22,46 @@ func forms(d svg.Document) []svg.Node {
 	return kids[1:]
 }
 
+func TestTryDropRedundant(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node())
+	full := filledPath([][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}, red)
+	crumb := filledPath([][2]float64{{2, 2}, {6, 2}, {6, 6}, {2, 6}}, red)
+	doc = doc.Append(full.Node()).Append(crumb.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 16*16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			owner[y*16+x] = 1
+		}
+	}
+	for y := 2; y < 6; y++ {
+		for x := 2; x < 6; x++ {
+			owner[y*16+x] = 2
+		}
+	}
+	fills := []color.NRGBA{red, red}
+	n := 2
+	errSum := Score(got, img, 0)
+	ok, err := tryDrop(&doc, &got, img, owner, &fills, &n, &errSum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || n != 1 {
+		t.Fatalf("drop=%v n=%d want drop the covered crumb", ok, n)
+	}
+}
+
 func TestBoxBlurSpreads(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 5, 5))
 	img.SetNRGBA(2, 2, color.NRGBA{R: 255, A: 255})

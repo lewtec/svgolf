@@ -106,7 +106,18 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 			// on a gradient is the same island; without skip we restack
 			// it up to maxPaths. unblur clears skip.
 			markSkip(skip, island, w)
-			if !pick.ok {
+			dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
+			if err != nil {
+				yield(svg.Document{}, err)
+				return
+			}
+			if dropped {
+				yielded = true
+				if !yield(doc, nil) {
+					return
+				}
+				stall = 0
+			} else if !pick.ok {
 				stall++
 				if stall >= stallLimit && !unblur(target, &sigma, &want, skip, &stall, &errSum, got) {
 					break
@@ -193,6 +204,81 @@ func pickForm(
 		return formPick{}, err
 	}
 	return best, nil
+}
+
+// tryDrop removes the smallest claimed path if Score does not rise.
+// owner[] is place-time area, not paint after overlays; the accept
+// test is a full re-Score without that child.
+func tryDrop(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64) (bool, error) {
+	if *n < 2 {
+		return false, nil
+	}
+	idx, ok := smallestOwner(owner, *n)
+	if !ok {
+		return false, nil
+	}
+	next := dropAt(*doc, idx+1)
+	ngot, err := render.Render(next)
+	if err != nil {
+		return false, err
+	}
+	nerr := Score(ngot, want, 0)
+	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
+	a := nerr + pathCost*float64(*n-1) + cmdCost*float64(docCmdLen(next))
+	if a >= curA {
+		return false, nil
+	}
+	*doc, *got, *errSum = next, ngot, nerr
+	dropOwner(owner, uint16(idx+1), *n)
+	f := *fills
+	*fills = append(f[:idx], f[idx+1:]...)
+	*n--
+	return true, nil
+}
+
+func smallestOwner(owner []uint16, n int) (int, bool) {
+	if n <= 0 {
+		return 0, false
+	}
+	cnt := make([]int, n+1)
+	for _, id := range owner {
+		if id > 0 && int(id) <= n {
+			cnt[id]++
+		}
+	}
+	best, bestN := 0, -1
+	for i := 1; i <= n; i++ {
+		if bestN < 0 || cnt[i] < bestN {
+			best, bestN = i-1, cnt[i]
+		}
+	}
+	return best, bestN >= 0
+}
+
+func dropOwner(owner []uint16, id uint16, n int) {
+	for i, v := range owner {
+		switch {
+		case v == id:
+			owner[i] = 0
+		case v > id:
+			owner[i]--
+		}
+	}
+}
+
+func dropAt(d svg.Document, i int) svg.Document {
+	kids := d.Children()
+	out := svg.NewDocument(d.Width(), d.Height())
+	if vb := d.ViewBox(); vb.Set() {
+		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
+	}
+	for j, k := range kids {
+		if j == i {
+			continue
+		}
+		out = out.Append(k)
+	}
+	return out
 }
 
 func markSkip(skip []byte, island []pix, w int) {
