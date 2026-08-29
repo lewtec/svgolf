@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 	"testing"
+
+	"github.com/lewtec/svgolf/pkg/svg"
 )
 
 func TestScoreTransparentIsMiss(t *testing.T) {
@@ -79,6 +81,14 @@ func TestScoreRectMatchesScore(t *testing.T) {
 	want.SetNRGBA(1, 1, color.NRGBA{R: 255, A: 255})
 	if ScoreRect(got, want, want.Rect) != Score(got, want, 0) {
 		t.Fatalf("rect=%v full=%v", ScoreRect(got, want, want.Rect), Score(got, want, 0))
+	}
+}
+
+func TestLineEdgeCostsMoreThanCubic(t *testing.T) {
+	lines := svg.NewPath().MoveTo(0, 0).LineTo(10, 0).LineTo(10, 10).Close()
+	curve := svg.NewPath().MoveTo(0, 0).CubicTo(3, 0, 7, 0, 10, 0).CubicTo(10, 3, 10, 7, 10, 10).Close()
+	if pathCommandWeight(lines.Node()) <= pathCommandWeight(curve.Node()) {
+		t.Fatalf("lines=%d cubics=%d; straight edges should cost more", pathCommandWeight(lines.Node()), pathCommandWeight(curve.Node()))
 	}
 }
 

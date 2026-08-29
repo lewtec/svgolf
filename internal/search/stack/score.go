@@ -8,13 +8,13 @@ import (
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
-// pathCost is the error-sum one extra path must buy (minIsland pixels
-// at full 180²). Linear ColorAt let a mild rim buy a path; square
-// makes a miss cost far more than AA leftover.
-const pathCost = 180 * 180 * minIsland
+// pathCost is the error-sum one extra path must buy. Two minIsland
+// full misses: stacking a plate was cheaper than refitting the one
+// already there (gradient / cubics).
+const pathCost = 180 * 180 * minIsland * 2
 
-// cmdCost is one extra path command. Pixel-stair polish was winning
-// on AA leftover; a command must buy a full miss.
+// cmdCost is one extra path command. A straight edge costs two
+// (see pathCommandWeight) so a spline that replaces many lines wins.
 const cmdCost = 180 * 180
 
 // paper is the empty pane. Source holes (want.A==0) must look like paper.

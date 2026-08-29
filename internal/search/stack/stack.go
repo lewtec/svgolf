@@ -209,6 +209,17 @@ func pickForm(
 			}
 			return best, nil
 		}
+		// Different color on this plate: refit it if the union is a
+		// ramp. A solid wash of two flats is a cheat.
+		work := ownedUnion(owner, island, w, h, id)
+		if _, ramp := fitLinearFill(work, want); ramp {
+			if err := consider(work, meanFill(want, work), idx, true); err != nil {
+				return formPick{}, err
+			}
+			if best.ok {
+				return best, nil
+			}
+		}
 	} else if idx, ok := majorityOwner(owner, island, w); ok && sameLayer(doc.Children()[idx+1], fills[idx], col, island, want) {
 		work := ownedUnion(owner, island, w, h, uint16(idx+1))
 		if err := consider(work, meanFill(want, work), idx, true); err != nil {
@@ -472,10 +483,26 @@ func pathLen(n svg.Node) int {
 	return len(p.Commands())
 }
 
+func pathCommandWeight(n svg.Node) int {
+	p, ok := n.Path()
+	if !ok {
+		return 0
+	}
+	w := 0
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdLine {
+			w += 2
+			continue
+		}
+		w++
+	}
+	return w
+}
+
 func docCmdLen(d svg.Document) int {
 	n := 0
 	for _, c := range d.Children() {
-		n += pathLen(c)
+		n += pathCommandWeight(c)
 	}
 	return n
 }

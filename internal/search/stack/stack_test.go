@@ -166,11 +166,11 @@ func TestStackUnblurDoesNotRestack(t *testing.T) {
 }
 
 func TestStackTwoColorGetsBoth(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
 			c := color.NRGBA{R: 255, A: 255}
-			if x >= 4 && x < 12 && y >= 4 && y < 12 {
+			if x >= 8 && x < 24 && y >= 8 && y < 24 {
 				c = color.NRGBA{B: 255, A: 255}
 			}
 			img.SetNRGBA(x, y, c)
@@ -431,19 +431,19 @@ func TestStackShrinksHoleNotCover(t *testing.T) {
 func TestStackShrinksInnerNotOuter(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
-	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
-	for y := 4; y < 28; y++ {
-		for x := 4; x < 28; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 6; y < 42; y++ {
+		for x := 6; x < 42; x++ {
 			img.SetNRGBA(x, y, navy)
 		}
 	}
-	for y := 10; y < 22; y++ {
-		for x := 10; x < 22; x++ {
+	for y := 16; y < 32; y++ {
+		for x := 16; x < 32; x++ {
 			img.SetNRGBA(x, y, cyan)
 		}
 	}
-	for y := 13; y < 19; y++ {
-		for x := 13; x < 19; x++ {
+	for y := 20; y < 28; y++ {
+		for x := 20; x < 28; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{})
 		}
 	}
@@ -462,7 +462,7 @@ func TestStackShrinksInnerNotOuter(t *testing.T) {
 			rules = append(rules, p.FillRule())
 		}
 	}
-	hole := got.NRGBAAt(16, 16)
+	hole := got.NRGBAAt(24, 24)
 	if hole.B > 40 && hole.R < 200 {
 		t.Fatalf("hole still painted %+v paths=%d rules=%v", hole, len(fk), rules)
 	}
@@ -501,11 +501,11 @@ func TestStackNilPixmap(t *testing.T) {
 }
 
 func TestStackCoversBeforeRefine(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
 			c := color.NRGBA{R: 255, A: 255}
-			if x >= 4 && x < 12 && y >= 4 && y < 12 {
+			if x >= 8 && x < 24 && y >= 8 && y < 24 {
 				c = color.NRGBA{B: 255, A: 255}
 			}
 			img.SetNRGBA(x, y, c)
