@@ -30,9 +30,9 @@ func fitPoly(ring [][2]float64, eps float64) [][2]float64 {
 	}
 	out := rdpClosed(smooth(ring, 2), eps)
 	if len(out) < 3 {
-		return fanOrder(ring)
+		return ring
 	}
-	return fanOrder(out)
+	return out
 }
 
 // fanOrder rewrites a ring by angle around its centroid so edges cannot cross.
@@ -80,15 +80,41 @@ func fanOrder(ring [][2]float64) [][2]float64 {
 }
 
 func rdpClosed(pts [][2]float64, eps float64) [][2]float64 {
-	if len(pts) < 3 {
+	n := len(pts)
+	if n < 3 {
 		return pts
 	}
-	ring := make([][2]float64, len(pts)+1)
-	copy(ring, pts)
-	ring[len(pts)] = pts[0]
-	out := rdp(ring, eps)
-	if len(out) > 1 {
-		out = out[:len(out)-1]
+	ai, bi := 0, 1
+	maxD := -1.0
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			d := math.Hypot(pts[j][0]-pts[i][0], pts[j][1]-pts[i][1])
+			if d > maxD {
+				ai, bi, maxD = i, j, d
+			}
+		}
+	}
+	chain := func(from, to int) [][2]float64 {
+		var s [][2]float64
+		for i := from; ; i = (i + 1) % n {
+			s = append(s, pts[i])
+			if i == to {
+				break
+			}
+		}
+		return rdp(s, eps)
+	}
+	left := chain(ai, bi)
+	right := chain(bi, ai)
+	if len(right) > 1 {
+		right = right[1:]
+	}
+	if len(right) > 0 {
+		right = right[:len(right)-1]
+	}
+	out := append(left, right...)
+	if len(out) < 3 {
+		return pts
 	}
 	return out
 }

@@ -31,6 +31,24 @@ func Score(got, want *image.NRGBA, parts int) float64 {
 	return sum + pathCost*float64(parts)
 }
 
+// ScoreRect is the errAt sum on r (no path tax). r is clipped to want.
+func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
+	if got == nil || want == nil || !got.Rect.Eq(want.Rect) {
+		return math.Inf(1)
+	}
+	r = r.Intersect(want.Rect)
+	if r.Empty() {
+		return 0
+	}
+	var sum float64
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			sum += errAt(got.NRGBAAt(x, y), want.NRGBAAt(x, y))
+		}
+	}
+	return sum
+}
+
 func errAt(g, q color.NRGBA) float64 {
 	if q.A == 0 {
 		if g.A == 0 {

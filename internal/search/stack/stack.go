@@ -52,6 +52,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 		stall := 0
 		yielded := false
 		n := 0
+		errSum := Score(got, target, 0)
 		for n < maxPaths && stall < stallLimit {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
@@ -69,11 +70,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				}
 				continue
 			}
-			if len(island) < minIsland+2*n {
-				break
-			}
+
 			placed := false
 			var last svg.Node
+			dirty0 := islandRect(island)
 			for _, cand := range formPaths(island, col) {
 				var next svg.Document
 				if !placed {
@@ -90,24 +90,28 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 				if !placed {
 					nn++
 				}
-				if !accept(got, ngot, target, n, nn, last, cand.Node()) {
+				dirty := dirty0.Union(nodeRect(cand.Node(), last)).Inset(-2)
+				delta := ScoreRect(ngot, target, dirty) - ScoreRect(got, target, dirty)
+				nerr := errSum + delta
+				if !acceptSum(errSum, nerr, n, nn, last, cand.Node()) {
 					continue
 				}
-				doc, got, last = next, ngot, cand.Node()
+				doc, got, last, errSum = next, ngot, cand.Node(), nerr
 				placed = true
-			}
-			if placed {
-				n++
-				stall = 0
 				yielded = true
 				if !yield(doc, nil) {
 					return
 				}
+			}
+			if placed {
+				n++
+				stall = 0
+				// leftover of this island is residual again from got; do not skip
 			} else {
 				stall++
-			}
-			for _, p := range island {
-				skip[p.y*w+p.x] = 1
+				for _, p := range island {
+					skip[p.y*w+p.x] = 1
+				}
 			}
 		}
 		if !yielded {
@@ -116,8 +120,9 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[svg.Docu
 	}
 }
 
-func accept(got, ngot, want *image.NRGBA, parts, nparts int, old, cand svg.Node) bool {
-	a, b := Score(got, want, parts), Score(ngot, want, nparts)
+func acceptSum(err0, err1 float64, parts, nparts int, old, cand svg.Node) bool {
+	a := err0 + pathCost*float64(parts)
+	b := err1 + pathCost*float64(nparts)
 	if b < a {
 		return true
 	}
@@ -129,27 +134,27 @@ func accept(got, ngot, want *image.NRGBA, parts, nparts int, old, cand svg.Node)
 
 func formPaths(island []pix, col color.NRGBA) []svg.Path {
 	bb := bbox(island)
-	c := contour(island)
-	poly := fitPoly(c, 6)
+	poly := fitPoly(contour(island), 2)
 	hs := holeRings(island)
-	tight := fitPoly(c, 3)
 	if len(hs) > 0 && len(poly) >= 3 {
-		out := []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, tight, hs, col)}
+		out := []svg.Path{withHoles(filledPath(poly, col), hs), withFitHoles(island, poly, hs, col)}
 		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
 			out = append(out, withHoles(filledEllipse(cx, cy, rx, ry, col), hs))
 		}
 		return out
 	}
-	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
-	if boxA > 2*float64(len(island)) {
-		return []svg.Path{filledPath(poly, col), filledFit(island, tight, col)}
-	}
-	out := []svg.Path{filledPath(bb, col)}
-	if cx, cy, rx, ry, ok := fitEllipse(island); ok {
-		out = append(out, filledEllipse(cx, cy, rx, ry, col))
-	}
+	var out []svg.Path
 	if len(poly) >= 3 {
-		out = append(out, filledPath(poly, col), filledFit(island, tight, col))
+		out = append(out, filledPath(poly, col), filledFit(island, poly, col))
+	}
+	boxA := (bb[1][0] - bb[0][0]) * (bb[2][1] - bb[1][1])
+	if boxA <= 2*float64(len(island)) {
+		if cx, cy, rx, ry, ok := fitEllipse(island); ok {
+			out = append(out, filledEllipse(cx, cy, rx, ry, col))
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, filledPath(bb, col))
 	}
 	return out
 }
@@ -157,7 +162,7 @@ func formPaths(island []pix, col color.NRGBA) []svg.Path {
 func holeRings(island []pix) [][][2]float64 {
 	var rings [][][2]float64
 	for _, h := range voids(island) {
-		r := fitPoly(contour(h), 6)
+		r := fitPoly(contour(h), 2)
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}
@@ -202,6 +207,40 @@ func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
 		p = p.WithFillOpacity(float64(col.A) / 255)
 	}
 	return p
+}
+
+func islandRect(island []pix) image.Rectangle {
+	if len(island) == 0 {
+		return image.Rectangle{}
+	}
+	r := image.Rect(island[0].x, island[0].y, island[0].x+1, island[0].y+1)
+	for _, p := range island[1:] {
+		r = r.Union(image.Rect(p.x, p.y, p.x+1, p.y+1))
+	}
+	return r
+}
+
+func nodeRect(ns ...svg.Node) image.Rectangle {
+	var r image.Rectangle
+	for _, n := range ns {
+		p, ok := n.Path()
+		if !ok {
+			continue
+		}
+		for _, c := range p.Commands() {
+			q := image.Rect(int(c.X)-1, int(c.Y)-1, int(c.X)+2, int(c.Y)+2)
+			if c.Kind == svg.CmdCubic {
+				q = q.Union(image.Rect(int(c.X1)-1, int(c.Y1)-1, int(c.X1)+2, int(c.Y1)+2))
+				q = q.Union(image.Rect(int(c.X2)-1, int(c.Y2)-1, int(c.X2)+2, int(c.Y2)+2))
+			}
+			if r.Empty() {
+				r = q
+			} else {
+				r = r.Union(q)
+			}
+		}
+	}
+	return r
 }
 
 func replaceAt(d svg.Document, i int, n svg.Node) svg.Document {

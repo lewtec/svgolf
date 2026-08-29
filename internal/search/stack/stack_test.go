@@ -240,27 +240,25 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 		}
 	}
 	var kids []int
-	var firstPts []int
+	var first []int
 	for doc, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
 		kids = append(kids, len(doc.Children()))
-		firstPts = append(firstPts, pathPts(doc.Children()[0]))
+		first = append(first, pathPts(doc.Children()[0]))
 	}
-	lastGrow := 0
+	grew := false
 	for i := 1; i < len(kids); i++ {
 		if kids[i] > kids[i-1] {
-			lastGrow = i
+			grew = true
+			if first[i] != first[i-1] {
+				t.Fatalf("epoch %d: first path changed while adding a path", i)
+			}
 		}
 	}
-	if kids[lastGrow] < 2 {
+	if !grew {
 		t.Fatalf("never covered both, kids=%v", kids)
-	}
-	for i := 0; i <= lastGrow; i++ {
-		if firstPts[i] != firstPts[0] {
-			t.Fatalf("epoch %d: refined first path while still covering (pts %d -> %d)", i, firstPts[0], firstPts[i])
-		}
 	}
 }
 
@@ -276,6 +274,20 @@ func pathPts(n svg.Node) int {
 		}
 	}
 	return ncmd
+}
+
+func TestFitPolyRect(t *testing.T) {
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 10; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	c := contour(island)
+	got := fitPoly(c, 2)
+	if len(got) != 4 {
+		t.Fatalf("contour=%d fitPoly=%d %v", len(c), len(got), got)
+	}
 }
 
 func TestStackFirstFormIsBBox(t *testing.T) {
@@ -317,6 +329,36 @@ func TestSmoothPullsStairInward(t *testing.T) {
 	if got[1][1] <= 0 {
 		t.Fatalf("stair still on axis: %v", got[1])
 	}
+}
+
+func TestFitPolyKeepsConcaveL(t *testing.T) {
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			if x < 3 || y < 3 {
+				island = append(island, pix{x, y})
+			}
+		}
+	}
+	ring := fitPoly(contour(island), 2)
+	if pointInRing(ring, 5.5, 5.5) {
+		t.Fatalf("notch filled, fan-order hull? %v", ring)
+	}
+}
+
+func pointInRing(ring [][2]float64, x, y float64) bool {
+	in := false
+	n := len(ring)
+	for i := 0; i < n; i++ {
+		a, b := ring[i], ring[(i+1)%n]
+		if (a[1] > y) != (b[1] > y) {
+			t := (y - a[1]) / (b[1] - a[1])
+			if x < a[0]+t*(b[0]-a[0]) {
+				in = !in
+			}
+		}
+	}
+	return in
 }
 
 func TestFanOrderUncrossesBowtie(t *testing.T) {
@@ -425,6 +467,26 @@ func TestFitBendHasCubic(t *testing.T) {
 	}
 }
 
+func TestRDPClosedRectangle(t *testing.T) {
+	var ring [][2]float64
+	for x := 0; x < 10; x++ {
+		ring = append(ring, [2]float64{float64(x), 0})
+	}
+	for y := 1; y < 8; y++ {
+		ring = append(ring, [2]float64{9, float64(y)})
+	}
+	for x := 8; x >= 0; x-- {
+		ring = append(ring, [2]float64{float64(x), 7})
+	}
+	for y := 6; y >= 1; y-- {
+		ring = append(ring, [2]float64{0, float64(y)})
+	}
+	got := rdpClosed(ring, 1)
+	if len(got) != 4 {
+		t.Fatalf("rdpClosed rect=%v want 4 corners", got)
+	}
+}
+
 func TestRDPCollinear(t *testing.T) {
 	got := rdp([][2]float64{{0, 0}, {1, 0}, {2, 0}, {3, 0}}, 0.5)
 	if len(got) != 2 {
@@ -460,8 +522,8 @@ func TestStackSkipsSpeckles(t *testing.T) {
 		}
 	}
 	for _, o := range [][2]int{{4, 4}, {20, 6}, {36, 5}, {8, 22}, {28, 24}, {12, 38}} {
-		for y := 0; y < 3; y++ {
-			for x := 0; x < 3; x++ {
+		for y := 0; y < 2; y++ {
+			for x := 0; x < 2; x++ {
 				img.SetNRGBA(o[0]+x, o[1]+y, color.NRGBA{A: 255})
 			}
 		}

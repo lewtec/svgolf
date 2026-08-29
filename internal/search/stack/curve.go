@@ -9,7 +9,7 @@ import (
 
 func filledFit(island []pix, ring [][2]float64, col color.NRGBA) svg.Path {
 	set := pixSet(island)
-	ring = fanOrder(flowRing(set, ring))
+	ring = flowRing(set, ring)
 	p := appendFit(svg.NewPath(), set, ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
 	if col.A != 255 {
 		p = p.WithFillOpacity(float64(col.A) / 255)
@@ -19,7 +19,7 @@ func filledFit(island []pix, ring [][2]float64, col color.NRGBA) svg.Path {
 
 func withFitHoles(island []pix, outer [][2]float64, holes [][][2]float64, col color.NRGBA) svg.Path {
 	set := pixSet(island)
-	outer = fanOrder(flowRing(set, outer))
+	outer = flowRing(set, outer)
 	p := appendFit(svg.NewPath(), set, outer)
 	for _, h := range holes {
 		p = appendRing(p, h)

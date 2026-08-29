@@ -50,6 +50,15 @@ func TestScoreBlackOnHoleCosts(t *testing.T) {
 	}
 }
 
+func TestScoreRectMatchesScore(t *testing.T) {
+	want := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	got := image.NewNRGBA(want.Rect)
+	want.SetNRGBA(1, 1, color.NRGBA{R: 255, A: 255})
+	if ScoreRect(got, want, want.Rect) != Score(got, want, 0) {
+		t.Fatalf("rect=%v full=%v", ScoreRect(got, want, want.Rect), Score(got, want, 0))
+	}
+}
+
 func TestScoreChargesPaths(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	if Score(img, img, 2)-Score(img, img, 1) != pathCost {
