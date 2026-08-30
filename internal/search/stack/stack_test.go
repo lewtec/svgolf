@@ -634,8 +634,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != "rectangle" && ops[0] != "silhouette") {
-		t.Fatalf("operators=%v want rectangle or silhouette first", ops)
+	if len(ops) == 0 || ops[0] != "rectangle" {
+		t.Fatalf("operators=%v want rectangle first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
@@ -668,19 +668,19 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != "rectangle" && ep.Operator != "silhouette" && ep.Operator != "grow" {
+		if ep.Operator != "rectangle" && ep.Operator != "grow" {
 			continue
 		}
 		for _, n := range forms(ep.Document) {
 			if _, ok := n.LinearFill(); ok {
-				t.Fatal("silhouette/grow fitted a linear; leftover stairs are wash")
+				t.Fatal("rectangle/grow fitted a linear; leftover stairs are wash")
 			}
 		}
 	}
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), "silhouette").Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), "rectangle").Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
@@ -1022,7 +1022,7 @@ func TestStackDiskUsesCubics(t *testing.T) {
 		last = ep.Document
 	}
 	if cubics(forms(first)[0]) != 0 {
-		t.Fatal("cover carved cubics; want a silhouette first")
+		t.Fatal("cover carved cubics; want a rectangle first")
 	}
 	p := forms(last)[0]
 	ncmd := 0
@@ -1186,4 +1186,80 @@ func TestHullSquare(t *testing.T) {
 	if len(h) != 4 {
 		t.Fatalf("hull=%v", h)
 	}
+}
+
+func TestQuadRingDiagonalIsTilted(t *testing.T) {
+	var work []pix
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if x-y < 3 && y-x < 3 {
+				work = append(work, pix{x, y})
+			}
+		}
+	}
+	q := quadRing(work)
+	if len(q) != 4 {
+		t.Fatalf("quad=%d want 4: %v", len(q), q)
+	}
+	axis := 0
+	for i := 0; i < 4; i++ {
+		a, b := q[i], q[(i+1)%4]
+		if a[0] == b[0] || a[1] == b[1] {
+			axis++
+		}
+	}
+	if axis == 4 {
+		t.Fatalf("quad is axis-aligned %v", q)
+	}
+}
+
+func TestStackDiagonalGapIsQuad(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 24; x++ {
+			if x-y < 4 && y-x < 4 {
+				img.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
+			}
+		}
+	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		fk := forms(ep.Document)
+		if len(fk) == 0 {
+			continue
+		}
+		if ep.Operator != "rectangle" {
+			t.Fatalf("operator=%s want rectangle", ep.Operator)
+		}
+		p, ok := fk[0].Path()
+		if !ok {
+			t.Fatal("not a path")
+		}
+		n := 0
+		axis := 0
+		var last [2]float64
+		started := false
+		for _, c := range p.Commands() {
+			if c.Kind == svg.CmdClose {
+				continue
+			}
+			pt := [2]float64{c.X, c.Y}
+			if started && (pt[0] == last[0] || pt[1] == last[1]) {
+				axis++
+			}
+			started = true
+			last = pt
+			n++
+		}
+		if n != 4 {
+			t.Fatalf("points=%d want 4", n)
+		}
+		if axis == 4 {
+			t.Fatal("rectangle stayed axis-aligned on a diagonal leftover")
+		}
+		return
+	}
+	t.Fatal("no form")
 }
