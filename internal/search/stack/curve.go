@@ -13,16 +13,6 @@ func filledFit(island []pix, ring [][2]float64, col color.NRGBA) svg.Path {
 	return appendFit(svg.NewPath(), set, ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
 }
 
-func withFitHoles(island []pix, outer [][2]float64, holes [][][2]float64, col color.NRGBA) svg.Path {
-	set := pixSet(island)
-	outer = flowRing(set, outer)
-	p := appendFit(svg.NewPath(), set, outer)
-	for _, h := range holes {
-		p = appendRing(p, h)
-	}
-	return p.WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255}).WithFillRule(svg.FillEvenOdd)
-}
-
 // flowRing moves each vertex toward the neighbor midpoint when that fits the island better.
 func pixSet(island []pix) map[pix]bool {
 	m := make(map[pix]bool, len(island))

@@ -61,34 +61,6 @@ func TestTryDropRedundant(t *testing.T) {
 	}
 }
 
-func TestResizeSpreads(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
-	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
-	out := wantAt(img, 4)
-	n := out.NRGBAAt(1, 1)
-	if n.A == 0 || n.R == 0 {
-		t.Fatalf("resize did not fill the block: %+v", n)
-	}
-}
-
-func TestStartSigma(t *testing.T) {
-	if startSigma(8, 8) != 0 {
-		t.Fatalf("small=%d", startSigma(8, 8))
-	}
-	if startSigma(32, 32) != 0 {
-		t.Fatalf("mid=%d", startSigma(32, 32))
-	}
-	if startSigma(128, 128) != 16 {
-		t.Fatalf("resize=%d", startSigma(128, 128))
-	}
-	if startSigma(1000, 800) != 32 {
-		t.Fatalf("large=%d", startSigma(1000, 800))
-	}
-	if startSigma(1, 1) != 0 {
-		t.Fatalf("tiny=%d", startSigma(1, 1))
-	}
-}
-
 func TestHottestIslandPrefersFullMiss(t *testing.T) {
 	// 20×20 almost-white leftover is more pixels; 8×8 black is more Score.
 	got := image.NewNRGBA(image.Rect(0, 0, 48, 48))
@@ -121,8 +93,8 @@ func TestHottestIslandPrefersFullMiss(t *testing.T) {
 }
 
 func TestStackRampOnePathNative(t *testing.T) {
-	// startSigma(48)=0. coarse() splits this ramp. Score must still
-	// keep one linear instead of a second flat for the light band.
+	// coarse() splits this ramp. Score must still keep one linear
+	// instead of a second flat for the light band.
 	a := color.NRGBA{R: 40, G: 80, B: 200, A: 255}
 	b := color.NRGBA{R: 180, G: 220, B: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
@@ -171,8 +143,7 @@ func TestStackSolid(t *testing.T) {
 }
 
 func TestStackUnblurDoesNotRestack(t *testing.T) {
-	// startSigma(48)=6, so Search upscales want. leftover of the same
-	// plate must polish path 0, not stack more navy.
+	// leftover of the same plate must polish path 0, not stack more navy.
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
 	for y := 0; y < 48; y++ {
@@ -271,14 +242,14 @@ func TestVoidsInnerCyanRing(t *testing.T) {
 			island = append(island, pix{x, y})
 		}
 	}
-	hs := voids(island)
+	if n := len(voids(island)); n != 1 {
+		t.Fatalf("voids=%d want 1 (inner hole)", n)
+	}
+	hs := holeRings(island)
 	if len(hs) != 1 {
-		t.Fatalf("voids=%d want 1 (inner hole)", len(hs))
+		t.Fatalf("holeRings=%d want 1", len(hs))
 	}
-	if n := len(formPaths(island, color.NRGBA{B: 255, A: 255}, true, nil)); n < 1 {
-		t.Fatal("no punched form")
-	}
-	p := formPaths(island, color.NRGBA{B: 255, A: 255}, true, nil)[0]
+	p := withHoles(filledPath(convexHull(islandPoints(island)), color.NRGBA{B: 255, A: 255}), hs)
 	if p.FillRule() != svg.FillEvenOdd {
 		t.Fatal("punched form not evenodd")
 	}
@@ -523,12 +494,8 @@ func TestStackNilPixmap(t *testing.T) {
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	doc := svg.NewDocument(1, 1)
-	if got := epochOf(doc, 0).Scale; got != 1 {
-		t.Fatalf("scale 0 -> %d want 1", got)
-	}
-	if got := epochOf(doc, 8).Scale; got != 8 {
-		t.Fatalf("scale 8 -> %d want 8", got)
+	if got := epochOf(svg.NewDocument(1, 1)).Scale; got != 1 {
+		t.Fatalf("scale=%d want 1", got)
 	}
 }
 
