@@ -18,10 +18,9 @@ const (
 	minErr    = 8
 )
 
-// Stack expands (cover leftover), then contracts (drop a path if Score
-// holds). Forms are filled paths; a ramp may take a 2-stop linear
-// fill instead of stacked flats. Holes and marks are later layers,
-// not carved into the plate. Want stays native.
+// Stack covers leftover with hulls (and a linear if Score takes it),
+// then refines existing paths (cubics, a better linear, drop).
+// New objects only while cover still has a Score win. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -66,10 +65,17 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			if n < maxPaths {
 				col, island := hottestIsland(got, want, skip)
 				if len(island) >= minIsland {
-					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h)
+					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h, false)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
+					}
+					if !pick.ok && n > 0 {
+						pick, err = pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h, true)
+						if err != nil {
+							yield(search.Epoch{}, err)
+							return
+						}
 					}
 					markSkip(skip, island, w)
 					if pick.ok {
@@ -135,8 +141,8 @@ type formPick struct {
 	ok       bool
 }
 
-// pickForm puts every connecting path on the table as a refit, and the
-// leftover hull as a new path. Score picks. Color bins do not.
+// pickForm: cover (refine=false) grows a hull or adds a hull.
+// refine rewrites a connecting path (filledFit / linear). Score picks.
 func pickForm(
 	doc svg.Document,
 	got, want *image.NRGBA,
@@ -147,6 +153,7 @@ func pickForm(
 	n int,
 	errSum float64,
 	w, h int,
+	refine bool,
 ) (formPick, error) {
 	best := formPick{replace: -1}
 	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
@@ -202,12 +209,14 @@ func pickForm(
 		if len(work) <= len(island) && !paintsIsland(doc.Children()[i+1], island, w, h) {
 			continue
 		}
-		if err := consider(work, meanFill(want, work), i, true); err != nil {
+		if err := consider(work, meanFill(want, work), i, refine); err != nil {
 			return formPick{}, err
 		}
 	}
-	if err := consider(island, col, -1, false); err != nil {
-		return formPick{}, err
+	if !refine {
+		if err := consider(island, col, -1, false); err != nil {
+			return formPick{}, err
+		}
 	}
 	return best, nil
 }

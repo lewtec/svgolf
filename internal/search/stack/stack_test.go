@@ -829,11 +829,20 @@ func TestStackDiskUsesCubics(t *testing.T) {
 			}
 		}
 	}
-	doc, err := search.Last((Stack{}).Search(t.Context(), img))
-	if err != nil {
-		t.Fatal(err)
+	var first, last svg.Document
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(forms(ep.Document)) > 0 && len(forms(first)) == 0 {
+			first = ep.Document
+		}
+		last = ep.Document
 	}
-	p := forms(doc)[0]
+	if cubics(forms(first)[0]) != 0 {
+		t.Fatal("cover carved cubics; want a hull first")
+	}
+	p := forms(last)[0]
 	ncmd := 0
 	for _, c := range mustPath(t, p).Commands() {
 		if c.Kind != svg.CmdClose {
