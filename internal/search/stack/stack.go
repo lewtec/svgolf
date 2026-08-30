@@ -7,20 +7,23 @@ import (
 	"image/color"
 	"iter"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
 const (
-	maxPaths  = 512
-	minIsland = 8
-	minErr    = 8
+	maxPaths   = 512
+	minIsland  = 8
+	minErr     = 8
+	phaseLimit = 5
 )
 
-// Stack covers leftover with hulls (and a linear if Score takes it),
-// then refines existing paths (cubics, a better linear, drop).
-// New objects only while cover still has a Score win. Want stays native.
+// Stack runs 5 expand accepts, then 5 contract accepts, then repeats
+// until a round takes nothing. Expand covers the hottest leftover
+// (hull or leftover ring). Contract punches paper, fits cubics or a
+// linear, and drops. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -63,76 +66,154 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				return
 			}
-			if n < maxPaths {
-				col, island := hottestIsland(got, want, skip, &sc)
-				if len(island) >= minIsland {
-					var pick formPick
-					var err error
-					if paperLeftover(col) && n > 0 {
-						curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-						err = punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w)
-					} else {
-						grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-						pick, err = pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows)
-						if err == nil && !pick.ok && n > 0 {
-							pick, err = pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows)
-						}
+			expanded := false
+			clear(skip)
+			nExpand := 0
+			for n < maxPaths && nExpand < phaseLimit {
+				if err := ctx.Err(); err != nil {
+					if !yielded {
+						yield(search.Epoch{}, err)
 					}
+					return
+				}
+				col, island := hottestIsland(got, want, skip, &sc)
+				if len(island) < minIsland {
+					break
+				}
+				if paperLeftover(col) {
+					markSkip(skip, island, w)
+					continue
+				}
+				grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
+				pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows)
+				if err != nil {
+					yield(search.Epoch{}, err)
+					return
+				}
+				if !pick.ok {
+					markSkip(skip, island, w)
+					continue
+				}
+				doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+				yielded, expanded = true, true
+				nExpand++
+				if !yield(epochOf(doc, "expand"), nil) {
+					return
+				}
+			}
+			contracted := false
+			clear(skip)
+			nContract := 0
+			for nContract < phaseLimit {
+				if err := ctx.Err(); err != nil {
+					if !yielded {
+						yield(search.Epoch{}, err)
+					}
+					return
+				}
+				col, island := hottestIsland(got, want, skip, &sc)
+				if paperLeftover(col) && n > 0 && len(island) >= minIsland {
+					var pick formPick
+					curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+					if err := punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w); err != nil {
+						yield(search.Epoch{}, err)
+						return
+					}
+					if !pick.ok {
+						markSkip(skip, island, w)
+						continue
+					}
+					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+					yielded, contracted = true, true
+					nContract++
+					if !yield(epochOf(doc, "contract"), nil) {
+						return
+					}
+					continue
+				}
+				merged, err := tryMergeLinear(&doc, &got, want, owner, &fills, &n, &errSum, w, h)
+				if err != nil {
+					yield(search.Epoch{}, err)
+					return
+				}
+				if merged {
+					yielded, contracted = true, true
+					nContract++
+					if !yield(epochOf(doc, "contract"), nil) {
+						return
+					}
+					continue
+				}
+				if len(island) >= minIsland && n > 0 {
+					grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
+					pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
 					}
-					markSkip(skip, island, w)
-					if pick.ok {
-						doc, got, errSum, yielded = pick.doc, pick.got, pick.errSum, true
-						if !yield(epochOf(doc), nil) {
-							return
-						}
-						if len(pick.reclaims) > 0 {
-							for i, work := range pick.reclaims {
-								if work == nil {
-									continue
-								}
-								id := uint16(i + 1)
-								clearOwner(owner, id)
-								claim(owner, work, w, id)
-							}
-						} else if pick.replace >= 0 {
-							id := uint16(pick.replace + 1)
-							clearOwner(owner, id)
-							claim(owner, pick.work, w, id)
-							fills[pick.replace] = pick.fill
-						} else {
-							claim(owner, pick.work, w, uint16(n+1))
-							fills = append(fills, pick.fill)
-							n++
-						}
+					if !pick.ok {
+						markSkip(skip, island, w)
+						continue
+					}
+					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+					yielded, contracted = true, true
+					nContract++
+					if !yield(epochOf(doc, "contract"), nil) {
+						return
 					}
 					continue
 				}
-			}
-			dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
-			if err != nil {
-				yield(search.Epoch{}, err)
-				return
-			}
-			if dropped {
-				yielded = true
-				if !yield(epochOf(doc), nil) {
+				dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
+				if err != nil {
+					yield(search.Epoch{}, err)
 					return
 				}
-				continue
+				if !dropped {
+					break
+				}
+				yielded, contracted = true, true
+				nContract++
+				if !yield(epochOf(doc, "contract"), nil) {
+					return
+				}
 			}
-			break
+			if !expanded && !contracted {
+				break
+			}
 		}
 		if !yielded {
-			yield(epochOf(doc), nil)
+			yield(epochOf(doc, ""), nil)
 		}
 	}
 }
 
-func epochOf(doc svg.Document) search.Epoch {
-	return search.Epoch{Document: doc, Scale: 1}
+func epochOf(doc svg.Document, phase string) search.Epoch {
+	return search.Epoch{Document: doc, Scale: 1, Phase: phase}
+}
+
+func applyPick(pick formPick, doc svg.Document, got *image.NRGBA, errSum float64, owner []uint16, fills []color.NRGBA, n, w int) (svg.Document, *image.NRGBA, float64, int, []color.NRGBA) {
+	doc, got, errSum = pick.doc, pick.got, pick.errSum
+	if len(pick.reclaims) > 0 {
+		for i, work := range pick.reclaims {
+			if work == nil {
+				continue
+			}
+			id := uint16(i + 1)
+			clearOwner(owner, id)
+			claim(owner, work, w, id)
+		}
+		return doc, got, errSum, n, fills
+	}
+	if pick.replace >= 0 {
+		id := uint16(pick.replace + 1)
+		clearOwner(owner, id)
+		claim(owner, pick.work, w, id)
+		fills[pick.replace] = pick.fill
+		return doc, got, errSum, n, fills
+	}
+	claim(owner, pick.work, w, uint16(n+1))
+	fills = append(fills, pick.fill)
+	return doc, got, errSum, n + 1, fills
 }
 
 type formPick struct {
@@ -188,7 +269,7 @@ func pickForm(
 		} else {
 			parts = n + 1
 		}
-		for _, cand := range formPaths(work, fill, refine, want) {
+		for _, cand := range formPaths(work, fill, refine, !refine && replace < 0, got, want) {
 			var next svg.Document
 			if replace >= 0 {
 				next = replaceAt(doc, replace+1, cand.Node())
@@ -305,6 +386,65 @@ func punchThrough(
 	return nil
 }
 
+func ownedBy(owner []uint16, w, h int, id uint16) []pix {
+	var out []pix
+	for i, v := range owner {
+		if v == id {
+			out = append(out, pix{i % w, i / w})
+		}
+	}
+	return out
+}
+
+// tryMergeLinear replaces two paths with one 2-stop if Score falls.
+func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64, w, h int) (bool, error) {
+	if *n < 2 {
+		return false, nil
+	}
+	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
+	for i := 0; i < *n; i++ {
+		ai := ownedBy(owner, w, h, uint16(i+1))
+		for j := i + 1; j < *n; j++ {
+			work := append(append([]pix{}, ai...), ownedBy(owner, w, h, uint16(j+1))...)
+			if len(work) < minIsland {
+				continue
+			}
+			gradient, ok := fitLinearFill(work, want)
+			if !ok {
+				continue
+			}
+			ring := convexHull(islandPoints(work))
+			if len(ring) < 3 {
+				continue
+			}
+			next := replaceAt(*doc, i+1, filledPath(ring, (*fills)[i]).WithLinearFill(gradient).Node())
+			next = dropAt(next, j+1)
+			ngot, err := render.Render(next)
+			if err != nil {
+				return false, err
+			}
+			nerr := Score(ngot, want, 0)
+			a := nerr + pathCost*float64(*n-1) + cmdCost*float64(docCmdLen(next))
+			if a >= curA {
+				continue
+			}
+			*doc, *got, *errSum = next, ngot, nerr
+			for k, v := range owner {
+				if v == uint16(j+1) {
+					owner[k] = uint16(i + 1)
+				}
+			}
+			dropOwner(owner, uint16(j+1), *n)
+			f := *fills
+			f[i] = meanFill(want, work)
+			*fills = append(f[:j], f[j+1:]...)
+			*n--
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // tryDrop removes the smallest claimed path if Score does not rise.
 // owner[] is place-time area, not paint after overlays; the accept
 // test is a full re-Score without that child.
@@ -406,9 +546,7 @@ func whitePane(w, h int) svg.Path {
 	}, paper)
 }
 
-func formPaths(island []pix, col color.NRGBA, refine bool, want *image.NRGBA) []svg.Path {
-	// A new plate is the convex hull. Holes and marks are later
-	// layers, not carved into the plate.
+func formPaths(island []pix, col color.NRGBA, refine, holes bool, got, want *image.NRGBA) []svg.Path {
 	ring := convexHull(islandPoints(island))
 	if len(ring) < 3 {
 		return nil
@@ -417,13 +555,74 @@ func formPaths(island []pix, col color.NRGBA, refine bool, want *image.NRGBA) []
 	if refine {
 		out = append(out, filledFit(island, ring, col))
 	}
-	if gradient, ok := fitLinearFill(island, want); ok {
-		n := len(out)
-		for i := 0; i < n; i++ {
-			out = append(out, out[i].WithLinearFill(gradient))
+	if holes {
+		if hs := leftoverRings(island, got, want, col); len(hs) > 0 {
+			// A solid hull over a ring is a cover plate. Only the
+			// evenodd ring is on the menu.
+			out = []svg.Path{withHoles(filledPath(ring, col), hs)}
+		} else if sameColorHollow(island, want, col) {
+			return nil
+		}
+	}
+	// Linear is a contract of stairs, not an expand cover.
+	if refine {
+		if gradient, ok := fitLinearFill(island, want); ok {
+			n := len(out)
+			for i := 0; i < n; i++ {
+				out = append(out, out[i].WithLinearFill(gradient))
+			}
 		}
 	}
 	return out
+}
+
+// leftoverRings are enclosed voids of this leftover that are not paper
+// and are already painted. A paper hole waits for contract punch. A
+// painted interior is a ring (visor on a plate). An unpainted void is
+// another leftover, not a hole in this plate.
+func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2]float64 {
+	var rings [][][2]float64
+	for _, h := range voids(island) {
+		if paperLeftover(meanFill(want, h)) {
+			continue
+		}
+		if loss.ColorAt(meanFill(want, h), col) <= minErr {
+			continue
+		}
+		if !holePainted(got, want, h) {
+			continue
+		}
+		r := convexHull(islandPoints(h))
+		if len(r) >= 3 {
+			rings = append(rings, r)
+		}
+	}
+	return rings
+}
+
+func sameColorHollow(island []pix, want *image.NRGBA, col color.NRGBA) bool {
+	for _, h := range voids(island) {
+		if paperLeftover(meanFill(want, h)) {
+			continue
+		}
+		if loss.ColorAt(meanFill(want, h), col) <= minErr {
+			return true
+		}
+	}
+	return false
+}
+
+func holePainted(got, want *image.NRGBA, hole []pix) bool {
+	if got == nil || want == nil || len(hole) == 0 {
+		return false
+	}
+	w := want.Bounds().Dx()
+	for _, p := range hole {
+		if residual(got, want, nil, p.x, p.y, w) {
+			return false
+		}
+	}
+	return true
 }
 
 func holeRings(island []pix) [][][2]float64 {

@@ -49,8 +49,12 @@ func (t *Trace) Record(ep search.Epoch) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(t.log, "epoch %d scale=%d paths=%d score=%.3f -> %s\n",
-			t.n, scale, len(doc.Children()), stack.Score(got, t.want, len(doc.Children())), svgPath)
+		phase := ep.Phase
+		if phase == "" {
+			phase = "-"
+		}
+		fmt.Fprintf(t.log, "epoch %d phase=%s scale=%d paths=%d score=%.3f -> %s\n",
+			t.n, phase, scale, len(doc.Children()), stack.Score(got, t.want, len(doc.Children())), svgPath)
 	}
 	t.n++
 	return nil

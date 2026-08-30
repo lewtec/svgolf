@@ -9,11 +9,13 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
-// Epoch is one Search yield: the Document plus the adapter's working scale.
-// Scale is 1 at native size. Adapters that never scale yield 1.
+// Epoch is one Search yield: the Document, the adapter's working scale,
+// and the phase that produced it. Scale is 1 at native size.
+// Phase is "expand", "contract", or empty if the adapter does not phase.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
+	Phase    string
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.

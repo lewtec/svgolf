@@ -22,14 +22,17 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d0, Scale: 8}); err != nil {
+	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Phase: "expand"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d1, Scale: 4}); err != nil {
+	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Phase: "contract"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(log.String(), "scale=8") {
 		t.Fatalf("missing scale in log: %s", log.String())
+	}
+	if !strings.Contains(log.String(), "phase=expand") || !strings.Contains(log.String(), "phase=contract") {
+		t.Fatalf("missing phase in log: %s", log.String())
 	}
 	sameFile(t, filepath.Join(dir, "001.svg"), filepath.Join(dir, "last.svg"))
 	sameFile(t, filepath.Join(dir, "001.png"), filepath.Join(dir, "last.png"))

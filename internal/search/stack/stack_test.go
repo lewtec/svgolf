@@ -352,6 +352,69 @@ func TestStackDoesNotKeepFilledHoles(t *testing.T) {
 	}
 }
 
+func TestStackVisorIsRing(t *testing.T) {
+	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
+	cyan := color.NRGBA{R: 5, G: 176, B: 247, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 4; y < 44; y++ {
+		for x := 4; x < 44; x++ {
+			img.SetNRGBA(x, y, navy)
+		}
+	}
+	for y := 12; y < 36; y++ {
+		for x := 12; x < 36; x++ {
+			onRing := x < 16 || x >= 32 || y < 16 || y >= 32
+			if onRing {
+				img.SetNRGBA(x, y, cyan)
+			}
+		}
+	}
+	var first, doc svg.Document
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(forms(ep.Document)) > 0 && len(forms(first)) == 0 {
+			first = ep.Document
+		}
+		doc = ep.Document
+	}
+	if len(forms(doc)) == 0 {
+		t.Fatal("no form")
+	}
+	if p, ok := forms(first)[0].Path(); !ok || p.FillRule() == svg.FillEvenOdd {
+		t.Fatal("first form must be a solid plate")
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring := got.NRGBAAt(14, 24)
+	if lossColorFar(ring, cyan) {
+		t.Fatalf("visor ring %+v want cyan", ring)
+	}
+	inner := got.NRGBAAt(24, 24)
+	if lossColorFar(inner, navy) {
+		t.Fatalf("visor interior %+v want navy, not a filled hull", inner)
+	}
+}
+
+func lossColorFar(got, want color.NRGBA) bool {
+	dr := int(got.R) - int(want.R)
+	dg := int(got.G) - int(want.G)
+	db := int(got.B) - int(want.B)
+	if dr < 0 {
+		dr = -dr
+	}
+	if dg < 0 {
+		dg = -dg
+	}
+	if db < 0 {
+		db = -db
+	}
+	return dr > 40 || dg > 40 || db > 40
+}
+
 func TestStackFirstFormIsSolid(t *testing.T) {
 	navy := color.NRGBA{R: 12, G: 52, B: 88, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
@@ -493,8 +556,75 @@ func TestStackNilPixmap(t *testing.T) {
 	}
 }
 
+func TestStackEpochPhase(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			c := color.NRGBA{R: 255, A: 255}
+			if x >= 8 && x < 24 && y >= 8 && y < 24 {
+				c = color.NRGBA{B: 255, A: 255}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	var phases []string
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(forms(ep.Document)) == 0 {
+			continue
+		}
+		phases = append(phases, ep.Phase)
+	}
+	if len(phases) == 0 || phases[0] != "expand" {
+		t.Fatalf("phases=%v want expand first", phases)
+	}
+	nExpand := 0
+	for _, p := range phases {
+		if p != "expand" {
+			break
+		}
+		nExpand++
+	}
+	if nExpand > phaseLimit {
+		t.Fatalf("expand run=%d want <= %d", nExpand, phaseLimit)
+	}
+}
+
+func TestStackExpandHasNoLinear(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	a := color.NRGBA{R: 40, G: 80, B: 200, A: 255}
+	b := color.NRGBA{R: 180, G: 220, B: 255, A: 255}
+	for y := 0; y < 48; y++ {
+		t := float64(y) / 47
+		c := color.NRGBA{
+			R: uint8(float64(a.R)*(1-t) + float64(b.R)*t),
+			G: uint8(float64(a.G)*(1-t) + float64(b.G)*t),
+			B: uint8(float64(a.B)*(1-t) + float64(b.B)*t),
+			A: 255,
+		}
+		for x := 0; x < 48; x++ {
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ep.Phase != "expand" {
+			continue
+		}
+		for _, n := range forms(ep.Document) {
+			if _, ok := n.LinearFill(); ok {
+				t.Fatal("expand fitted a linear; leftover stairs are contract")
+			}
+		}
+	}
+}
+
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1)).Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), "expand").Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
