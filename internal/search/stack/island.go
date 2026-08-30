@@ -54,9 +54,29 @@ func clearOwner(owner []uint16, id uint16) {
 	}
 }
 
-func ownedUnion(owner []uint16, island []pix, w, h int, id uint16) []pix {
+type scratch struct {
+	mark, seen []byte
+	family     []int
+}
+
+func (s *scratch) ensure(n int) {
+	if cap(s.mark) < n {
+		s.mark = make([]byte, n)
+		s.seen = make([]byte, n)
+		s.family = make([]int, n)
+		return
+	}
+	s.mark = s.mark[:n]
+	s.seen = s.seen[:n]
+	s.family = s.family[:n]
+	clear(s.mark)
+}
+
+func ownedUnion(owner []uint16, island []pix, w, h int, id uint16, seen []byte) []pix {
+	if len(seen) < w*h {
+		seen = make([]byte, w*h)
+	}
 	seed := make(map[pix]bool, len(island))
-	seen := make([]byte, w*h)
 	var st, out []pix
 	for _, p := range island {
 		seed[p] = true
@@ -87,6 +107,9 @@ func ownedUnion(owner []uint16, island []pix, w, h int, id uint16) []pix {
 			seen[i] = 1
 			st = append(st, q)
 		}
+	}
+	for _, p := range out {
+		seen[p.y*w+p.x] = 0
 	}
 	return out
 }
@@ -123,11 +146,14 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 // same-coarse 4-connected leftover, ranked by ΣerrAt. Pixel count
 // preferred a huge mild rim over a small full miss. A later spike
 // or gap detector would feed the same ranking, not a second loop.
-func hottestIsland(got, want *image.NRGBA, skip []byte) (color.NRGBA, []pix) {
+func hottestIsland(got, want *image.NRGBA, skip []byte, sc *scratch) (color.NRGBA, []pix) {
 	b := want.Bounds()
 	w, h := b.Dx(), b.Dy()
-	mark := make([]byte, w*h)
-	family := make([]int, w*h)
+	if sc == nil {
+		sc = &scratch{}
+	}
+	sc.ensure(w * h)
+	mark, family := sc.mark, sc.family
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			if !residual(got, want, skip, x, y, w) {

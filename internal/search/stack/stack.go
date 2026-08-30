@@ -51,6 +51,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		skip := make([]byte, w*h)
 		owner := make([]uint16, w*h)
 		var fills []color.NRGBA
+		var sc scratch
 		yielded := false
 		n := 0
 		want := target
@@ -63,19 +64,23 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				return
 			}
 			if n < maxPaths {
-				col, island := hottestIsland(got, want, skip)
+				col, island := hottestIsland(got, want, skip, &sc)
 				if len(island) >= minIsland {
-					pick, err := pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h, false)
+					var pick formPick
+					var err error
+					if paperLeftover(col) && n > 0 {
+						curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+						err = punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w)
+					} else {
+						grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
+						pick, err = pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows)
+						if err == nil && !pick.ok && n > 0 {
+							pick, err = pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows)
+						}
+					}
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
-					}
-					if !pick.ok && n > 0 {
-						pick, err = pickForm(doc, got, want, island, col, owner, fills, n, errSum, w, h, true)
-						if err != nil {
-							yield(search.Epoch{}, err)
-							return
-						}
 					}
 					markSkip(skip, island, w)
 					if pick.ok {
@@ -141,6 +146,23 @@ type formPick struct {
 	ok       bool
 }
 
+type grow struct {
+	i    int
+	work []pix
+}
+
+func connectingWorks(doc svg.Document, island []pix, owner []uint16, fills []color.NRGBA, w, h int, seen []byte) []grow {
+	var out []grow
+	for i := range fills {
+		work := ownedUnion(owner, island, w, h, uint16(i+1), seen)
+		if len(work) <= len(island) && !paintsIsland(doc.Children()[i+1], island, w, h) {
+			continue
+		}
+		out = append(out, grow{i: i, work: work})
+	}
+	return out
+}
+
 // pickForm: cover (refine=false) grows a hull or adds a hull.
 // refine rewrites a connecting path (filledFit / linear). Score picks.
 func pickForm(
@@ -148,12 +170,11 @@ func pickForm(
 	got, want *image.NRGBA,
 	island []pix,
 	col color.NRGBA,
-	owner []uint16,
-	fills []color.NRGBA,
 	n int,
 	errSum float64,
 	w, h int,
 	refine bool,
+	grows []grow,
 ) (formPick, error) {
 	best := formPick{replace: -1}
 	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
@@ -198,18 +219,8 @@ func pickForm(
 		}
 		return nil
 	}
-	if paperLeftover(col) && n > 0 {
-		if err := punchThrough(&best, &bestA, curA, doc, want, island, owner, fills, n, errSum, w); err != nil {
-			return formPick{}, err
-		}
-		return best, nil
-	}
-	for i := range fills {
-		work := ownedUnion(owner, island, w, h, uint16(i+1))
-		if len(work) <= len(island) && !paintsIsland(doc.Children()[i+1], island, w, h) {
-			continue
-		}
-		if err := consider(work, meanFill(want, work), i, refine); err != nil {
+	for _, g := range grows {
+		if err := consider(g.work, meanFill(want, g.work), g.i, refine); err != nil {
 			return formPick{}, err
 		}
 	}
@@ -225,6 +236,9 @@ func pickForm(
 // hole opens to the pane. Punching only the top layer reveals the
 // plate underneath and Score gets worse.
 func paintsIsland(node svg.Node, island []pix, w, h int) bool {
+	if !nodeRect(node).Overlaps(islandRect(island)) {
+		return false
+	}
 	d := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
 	d = d.Append(whitePane(w, h).Node()).Append(node)
 	img, err := render.Render(d)
