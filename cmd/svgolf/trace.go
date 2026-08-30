@@ -53,8 +53,8 @@ func (t *Trace) Record(ep search.Epoch) error {
 		if phase == "" {
 			phase = "-"
 		}
-		fmt.Fprintf(t.log, "epoch %d phase=%s scale=%d paths=%d score=%.3f -> %s\n",
-			t.n, phase, scale, len(doc.Children()), stack.Score(got, t.want, len(doc.Children())), svgPath)
+		fmt.Fprintf(t.log, "epoch %d phase=%s scale=%d elapsed=%.3fs paths=%d score=%.3f -> %s\n",
+			t.n, phase, scale, ep.Elapsed.Seconds(), len(doc.Children()), stack.Score(got, t.want, len(doc.Children())), svgPath)
 	}
 	t.n++
 	return nil

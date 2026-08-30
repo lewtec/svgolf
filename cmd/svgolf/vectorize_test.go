@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -22,7 +23,7 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Phase: "expand"}); err != nil {
+	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Phase: "expand", Elapsed: time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Phase: "contract"}); err != nil {
@@ -33,6 +34,9 @@ func TestTraceOverwritesLast(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "phase=expand") || !strings.Contains(log.String(), "phase=contract") {
 		t.Fatalf("missing phase in log: %s", log.String())
+	}
+	if !strings.Contains(log.String(), "elapsed=1.000s") {
+		t.Fatalf("missing elapsed in log: %s", log.String())
 	}
 	sameFile(t, filepath.Join(dir, "001.svg"), filepath.Join(dir, "last.svg"))
 	sameFile(t, filepath.Join(dir, "001.png"), filepath.Join(dir, "last.png"))

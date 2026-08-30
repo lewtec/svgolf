@@ -590,6 +590,15 @@ func TestStackEpochPhase(t *testing.T) {
 	if nExpand > phaseLimit {
 		t.Fatalf("expand run=%d want <= %d", nExpand, phaseLimit)
 	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ep.Elapsed <= 0 {
+			t.Fatal("epoch elapsed not set")
+		}
+		break
+	}
 }
 
 func TestStackExpandHasNoLinear(t *testing.T) {

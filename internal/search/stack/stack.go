@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"iter"
+	"time"
 
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
@@ -59,6 +60,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		n := 0
 		want := target
 		errSum := Score(got, want, 0)
+		started := time.Now()
+		emit := func(doc svg.Document, phase string) bool {
+			ep := epochOf(doc, phase)
+			ep.Elapsed = time.Since(started)
+			started = time.Now()
+			return yield(ep, nil)
+		}
 		for {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
@@ -97,7 +105,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
 				yielded, expanded = true, true
 				nExpand++
-				if !yield(epochOf(doc, "expand"), nil) {
+				if !emit(doc, "expand") {
 					return
 				}
 			}
@@ -126,7 +134,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
 					yielded, contracted = true, true
 					nContract++
-					if !yield(epochOf(doc, "contract"), nil) {
+					if !emit(doc, "contract") {
 						return
 					}
 					continue
@@ -139,7 +147,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if merged {
 					yielded, contracted = true, true
 					nContract++
-					if !yield(epochOf(doc, "contract"), nil) {
+					if !emit(doc, "contract") {
 						return
 					}
 					continue
@@ -158,7 +166,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
 					yielded, contracted = true, true
 					nContract++
-					if !yield(epochOf(doc, "contract"), nil) {
+					if !emit(doc, "contract") {
 						return
 					}
 					continue
@@ -173,7 +181,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				yielded, contracted = true, true
 				nContract++
-				if !yield(epochOf(doc, "contract"), nil) {
+				if !emit(doc, "contract") {
 					return
 				}
 			}
@@ -182,7 +190,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 		}
 		if !yielded {
-			yield(epochOf(doc, ""), nil)
+			emit(doc, "")
 		}
 	}
 }

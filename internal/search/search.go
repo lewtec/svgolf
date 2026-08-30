@@ -5,17 +5,19 @@ import (
 	"fmt"
 	"image"
 	"iter"
+	"time"
 
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
 // Epoch is one Search yield: the Document, the adapter's working scale,
-// and the phase that produced it. Scale is 1 at native size.
-// Phase is "expand", "contract", or empty if the adapter does not phase.
+// the phase that produced it, and how long that step took.
+// Scale is 1 at native size. Phase is "expand", "contract", or empty.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
 	Phase    string
+	Elapsed  time.Duration
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.
