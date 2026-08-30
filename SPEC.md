@@ -752,7 +752,7 @@ Same Go type, different origin: `want` is the scene (decoded PNG). `got` is `Ren
 PNG ──Decode──► want *image.NRGBA
                     │
                     ▼
-              Search(ctx, want) ──► Epoch{Document, Scale, Phase, Elapsed} ── Last ──► Encode──► XML
+              Search(ctx, want) ──► Epoch{Document, Scale, Operator, Elapsed} ── Last ──► Encode──► XML
                     │
                     └── (inside Search, per epoch)
                           got = Render(doc)
@@ -784,7 +784,7 @@ package search
 type Epoch struct {
     Document svg.Document
     Scale    int           // 1 = native
-    Phase    string        // expand, contract, or empty
+    Operator string        // hull, ring, refit, punch, merge, drop, or empty
     Elapsed  time.Duration // wall time of this step
 }
 

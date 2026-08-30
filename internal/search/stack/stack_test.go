@@ -571,7 +571,7 @@ func TestStackNilPixmap(t *testing.T) {
 	}
 }
 
-func TestStackEpochPhase(t *testing.T) {
+func TestStackEpochOperator(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {
@@ -582,7 +582,7 @@ func TestStackEpochPhase(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	var phases []string
+	var ops []string
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
@@ -590,10 +590,10 @@ func TestStackEpochPhase(t *testing.T) {
 		if len(forms(ep.Document)) == 0 {
 			continue
 		}
-		phases = append(phases, ep.Phase)
+		ops = append(ops, ep.Operator)
 	}
-	if len(phases) == 0 || phases[0] != "expand" {
-		t.Fatalf("phases=%v want expand first", phases)
+	if len(ops) == 0 || ops[0] != "hull" {
+		t.Fatalf("operators=%v want hull first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
@@ -626,19 +626,19 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Phase != "expand" {
+		if ep.Operator != "hull" && ep.Operator != "ring" {
 			continue
 		}
 		for _, n := range forms(ep.Document) {
 			if _, ok := n.LinearFill(); ok {
-				t.Fatal("expand fitted a linear; leftover stairs are contract")
+				t.Fatal("hull/ring fitted a linear; leftover stairs are refit")
 			}
 		}
 	}
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), "expand").Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), "hull").Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }

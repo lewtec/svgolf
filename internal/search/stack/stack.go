@@ -21,9 +21,8 @@ const (
 )
 
 // Stack scores every applicable operator on the hottest leftover
-// (and merge/drop) and keeps the best Score. Expand: grow hull, new
-// hull, leftover ring. Contract: merge to a 2-stop, punch paper,
-// cubics/linear refit, drop. Want stays native.
+// (and merge/drop) and keeps the best Score. Operators: hull, ring,
+// refit, punch, merge, drop. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -79,11 +78,22 @@ type formPick struct {
 	reclaims [][]pix
 	dropIdx  int
 	mergeJ   int
+	op       string
 	ok       bool
 }
 
 func nonePick() formPick {
 	return formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+}
+
+func formOp(refine bool, cand svg.Path) string {
+	if refine {
+		return "refit"
+	}
+	if cand.FillRule() == svg.FillEvenOdd {
+		return "ring"
+	}
+	return "hull"
 }
 
 func newWorld(target *image.NRGBA) (*world, error) {
@@ -128,8 +138,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			return
 		}
 		started := time.Now()
-		emit := func(phase string) bool {
-			ep := epochOf(s.doc, phase)
+		emit := func(op string) bool {
+			ep := epochOf(s.doc, op)
 			ep.Elapsed = time.Since(started)
 			started = time.Now()
 			return yield(ep, nil)
@@ -143,7 +153,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				return
 			}
 			left := s.leftover()
-			pick, phase, err := s.choose(left)
+			pick, err := s.choose(left)
 			if err != nil {
 				yield(search.Epoch{}, err)
 				return
@@ -157,7 +167,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			s.apply(pick)
 			yielded = true
-			if !emit(phase) {
+			if !emit(pick.op) {
 				return
 			}
 		}
@@ -167,8 +177,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 	}
 }
 
-func epochOf(doc svg.Document, phase string) search.Epoch {
-	return search.Epoch{Document: doc, Scale: 1, Phase: phase}
+func epochOf(doc svg.Document, op string) search.Epoch {
+	return search.Epoch{Document: doc, Scale: 1, Operator: op}
 }
 
 func (left leftover) big() bool {
@@ -254,52 +264,50 @@ func (s *world) apply(pick formPick) {
 }
 
 // choose scores every applicable operator and keeps the lowest Score.
-func (s *world) choose(left leftover) (formPick, string, error) {
+func (s *world) choose(left leftover) (formPick, error) {
 	best := nonePick()
-	phase := ""
-	take := func(p formPick, ph string) {
+	take := func(p formPick) {
 		if !p.ok {
 			return
 		}
 		if !best.ok || p.a < best.a {
 			best = p
-			phase = ph
 		}
 	}
 	if left.big() && !left.paper && s.paths < maxPaths {
 		pick, err := s.pickForm(left, false)
 		if err != nil {
-			return nonePick(), "", err
+			return nonePick(), err
 		}
-		take(pick, "expand")
+		take(pick)
 	}
 	if left.big() && s.paths > 0 && !left.paper {
 		pick, err := s.pickForm(left, true)
 		if err != nil {
-			return nonePick(), "", err
+			return nonePick(), err
 		}
-		take(pick, "contract")
+		take(pick)
 	}
 	if left.paper && s.paths > 0 {
 		pick, err := s.punch(left)
 		if err != nil {
-			return nonePick(), "", err
+			return nonePick(), err
 		}
-		take(pick, "contract")
+		take(pick)
 	}
 	if s.paths >= 2 {
 		pick, err := s.mergeLinear()
 		if err != nil {
-			return nonePick(), "", err
+			return nonePick(), err
 		}
-		take(pick, "contract")
+		take(pick)
 		pick, err = s.drop()
 		if err != nil {
-			return nonePick(), "", err
+			return nonePick(), err
 		}
-		take(pick, "contract")
+		take(pick)
 	}
-	return best, phase, nil
+	return best, nil
 }
 
 func (s *world) connecting(island []pix) []grow {
@@ -392,7 +400,7 @@ func (s *world) scoreForm(g grow, refine, holes bool, curA float64) (formPick, i
 		}
 		bestA = a
 		bestLen = plen
-		best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, ok: true}
+		best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: formOp(refine, cand), ok: true}
 	}
 	return best, bestLen, nil
 }
@@ -454,7 +462,7 @@ func (s *world) punch(left leftover) (formPick, error) {
 	if a >= curA || nerr >= s.errSum {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, work: left.island, reclaims: reclaims, dropIdx: -1, mergeJ: -1, ok: true}, nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, work: left.island, reclaims: reclaims, dropIdx: -1, mergeJ: -1, op: "punch", ok: true}, nil
 }
 
 func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
@@ -515,7 +523,7 @@ func (s *world) mergeLinear() (formPick, error) {
 				continue
 			}
 			work := append([]pix{}, s.scratch.work...)
-			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: i, work: work, fill: meanFill(s.want, work), dropIdx: -1, mergeJ: j, ok: true}
+			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: i, work: work, fill: meanFill(s.want, work), dropIdx: -1, mergeJ: j, op: "merge", ok: true}
 		}
 	}
 	return best, nil
@@ -544,7 +552,7 @@ func (s *world) drop() (formPick, error) {
 	if a >= curA || nerr > s.errSum {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, ok: true}, nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, op: "drop", ok: true}, nil
 }
 
 func smallestOwner(owner []uint16, n int) (int, bool) {

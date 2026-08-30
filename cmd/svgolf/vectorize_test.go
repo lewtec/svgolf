@@ -23,17 +23,17 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Phase: "expand", Elapsed: time.Second}); err != nil {
+	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Operator: "hull", Elapsed: time.Second}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Phase: "contract"}); err != nil {
+	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Operator: "refit"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(log.String(), "scale=8") {
 		t.Fatalf("missing scale in log: %s", log.String())
 	}
-	if !strings.Contains(log.String(), "phase=expand") || !strings.Contains(log.String(), "phase=contract") {
-		t.Fatalf("missing phase in log: %s", log.String())
+	if !strings.Contains(log.String(), "operator=hull") || !strings.Contains(log.String(), "operator=refit") {
+		t.Fatalf("missing operator in log: %s", log.String())
 	}
 	if !strings.Contains(log.String(), "elapsed=1.000s") {
 		t.Fatalf("missing elapsed in log: %s", log.String())

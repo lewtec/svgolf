@@ -11,12 +11,13 @@ import (
 )
 
 // Epoch is one Search yield: the Document, the adapter's working scale,
-// the phase that produced it, and how long that step took.
-// Scale is 1 at native size. Phase is "expand", "contract", or empty.
+// the operator that produced it, and how long that step took.
+// Scale is 1 at native size. Operator is hull, ring, refit, punch,
+// merge, drop, or empty.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
-	Phase    string
+	Operator string
 	Elapsed  time.Duration
 }
 
