@@ -66,7 +66,7 @@ func TestTryDropRedundant(t *testing.T) {
 		h:      16,
 		errSum: Score(got, img, 0),
 	}
-	pick, err := s.drop()
+	pick, err := (Drop{world: s}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
