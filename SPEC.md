@@ -784,7 +784,7 @@ package search
 type Epoch struct {
     Document svg.Document
     Scale    int           // 1 = native
-    Operator string        // hull, ring, refit, punch, merge, drop, or empty
+    Operator string        // rectangle, silhouette, grow, carve, simplify, wash, join, drop, or empty
     Elapsed  time.Duration // wall time of this step
 }
 

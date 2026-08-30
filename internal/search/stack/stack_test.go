@@ -2,6 +2,7 @@ package stack
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"math"
@@ -125,17 +126,58 @@ func TestStackRampOnePathNative(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	doc, err := search.Last((Stack{}).Search(t.Context(), img))
-	if err != nil {
-		t.Fatal(err)
+	var ops []string
+	var doc svg.Document
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		ops = append(ops, fmt.Sprintf("%s/%d", ep.Operator, len(forms(ep.Document))))
+		doc = ep.Document
 	}
 	fs := forms(doc)
 	if len(fs) != 1 {
-		t.Fatalf("paths=%d want 1 gradient", len(fs))
+		t.Fatalf("paths=%d want 1 gradient ops=%v", len(fs), ops)
 	}
 	if _, ok := fs[0].LinearFill(); !ok {
 		t.Fatal("ramp stayed stacked flats")
 	}
+}
+
+func TestStackGapGetsRectangle(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 8; y < 24; y++ {
+		for x := 0; x < 32; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 40, G: 80, B: 200, A: 255})
+		}
+	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		fk := forms(ep.Document)
+		if len(fk) == 0 {
+			continue
+		}
+		if ep.Operator != "rectangle" {
+			t.Fatalf("operator=%s want rectangle", ep.Operator)
+		}
+		p, ok := fk[0].Path()
+		if !ok {
+			t.Fatal("not a path")
+		}
+		n := 0
+		for _, c := range p.Commands() {
+			if c.Kind != svg.CmdClose {
+				n++
+			}
+		}
+		if n != 4 {
+			t.Fatalf("points=%d want 4 (rectangle as path)", n)
+		}
+		return
+	}
+	t.Fatal("no form")
 }
 
 func TestStackSolid(t *testing.T) {
@@ -592,8 +634,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || ops[0] != "hull" {
-		t.Fatalf("operators=%v want hull first", ops)
+	if len(ops) == 0 || (ops[0] != "rectangle" && ops[0] != "silhouette") {
+		t.Fatalf("operators=%v want rectangle or silhouette first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
@@ -626,19 +668,19 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != "hull" && ep.Operator != "ring" {
+		if ep.Operator != "rectangle" && ep.Operator != "silhouette" && ep.Operator != "grow" {
 			continue
 		}
 		for _, n := range forms(ep.Document) {
 			if _, ok := n.LinearFill(); ok {
-				t.Fatal("hull/ring fitted a linear; leftover stairs are refit")
+				t.Fatal("silhouette/grow fitted a linear; leftover stairs are wash")
 			}
 		}
 	}
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), "hull").Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), "silhouette").Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
@@ -710,34 +752,30 @@ func TestFitPolyRect(t *testing.T) {
 	}
 }
 
-func TestStackFirstFormFillsBite(t *testing.T) {
+func TestStackBiteStaysOtherColor(t *testing.T) {
 	blue := color.NRGBA{B: 255, A: 255}
+	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 24))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 32; x++ {
 			if y < 6 && x >= 8 && x < 24 {
+				img.SetNRGBA(x, y, red)
 				continue
 			}
 			img.SetNRGBA(x, y, blue)
 		}
 	}
-	var first svg.Document
-	for ep, err := range (Stack{}).Search(t.Context(), img) {
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(forms(ep.Document)) > 0 {
-			first = ep.Document
-			break
-		}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got, err := render.Render(first)
+	got, err := render.Render(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := got.NRGBAAt(16, 3)
-	if c.B < 200 {
-		t.Fatalf("first form hugged the bite %+v; want the hull to cover it", c)
+	if c.R < 200 {
+		t.Fatalf("bite %+v want red, not covered by the blue plate", c)
 	}
 }
 
@@ -984,7 +1022,7 @@ func TestStackDiskUsesCubics(t *testing.T) {
 		last = ep.Document
 	}
 	if cubics(forms(first)[0]) != 0 {
-		t.Fatal("cover carved cubics; want a hull first")
+		t.Fatal("cover carved cubics; want a silhouette first")
 	}
 	p := forms(last)[0]
 	ncmd := 0

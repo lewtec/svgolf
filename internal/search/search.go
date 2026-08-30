@@ -12,8 +12,8 @@ import (
 
 // Epoch is one Search yield: the Document, the adapter's working scale,
 // the operator that produced it, and how long that step took.
-// Scale is 1 at native size. Operator is hull, ring, refit, punch,
-// merge, drop, or empty.
+// Scale is 1 at native size. Operator is rectangle, silhouette,
+// grow, carve, simplify, wash, join, drop, or empty.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
