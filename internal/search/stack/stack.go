@@ -15,16 +15,15 @@ import (
 )
 
 const (
-	maxPaths   = 512
-	minIsland  = 8
-	minErr     = 8
-	phaseLimit = 5
+	maxPaths  = 512
+	minIsland = 8
+	minErr    = 8
 )
 
-// Stack runs 5 expand accepts, then 5 contract accepts, then repeats
-// until a round takes nothing. Expand covers the hottest leftover
-// (hull or leftover ring). Contract punches paper, fits cubics or a
-// linear, and drops. Want stays native.
+// Stack scores every applicable operator on the hottest leftover
+// (and merge/drop) and keeps the best Score. Expand: grow hull, new
+// hull, leftover ring. Contract: merge to a 2-stop, punch paper,
+// cubics/linear refit, drop. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -78,131 +77,25 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				return
 			}
-			expanded := false
-			clear(skip)
-			nExpand := 0
-			for n < maxPaths && nExpand < phaseLimit {
-				if err := ctx.Err(); err != nil {
-					if !yielded {
-						yield(search.Epoch{}, err)
-					}
-					return
-				}
-				col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
+			col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
+			pick, phase, err := chooseStep(doc, got, want, island, col, owner, fills, n, errSum, w, h, &sc, gotP, wantP)
+			if err != nil {
+				yield(search.Epoch{}, err)
+				return
+			}
+			if !pick.ok {
 				if len(island) < minIsland {
 					break
 				}
-				if paperLeftover(col) {
-					markSkip(skip, island, w)
-					continue
-				}
-				grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-				pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows, gotP, wantP)
-				if err != nil {
-					yield(search.Epoch{}, err)
-					return
-				}
-				if !pick.ok {
-					markSkip(skip, island, w)
-					continue
-				}
-				doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
-				gotP.Reset(got)
-				gotP.Ensure()
-				yielded, expanded = true, true
-				nExpand++
-				if !emit(doc, "expand") {
-					return
-				}
+				markSkip(skip, island, w)
+				continue
 			}
-			contracted := false
-			clear(skip)
-			nContract := 0
-			for nContract < phaseLimit {
-				merged, err := tryMergeLinear(&doc, &got, want, owner, &fills, &n, &errSum, w, &sc)
-				if err != nil {
-					yield(search.Epoch{}, err)
-					return
-				}
-				if !merged {
-					break
-				}
-				gotP.Reset(got)
-				gotP.Ensure()
-				yielded, contracted = true, true
-				nContract++
-				if !emit(doc, "contract") {
-					return
-				}
-			}
-			for nContract < phaseLimit {
-				if err := ctx.Err(); err != nil {
-					if !yielded {
-						yield(search.Epoch{}, err)
-					}
-					return
-				}
-				col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
-				if paperLeftover(col) && n > 0 && len(island) >= minIsland {
-					var pick formPick
-					curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-					if err := punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w, sc.seen); err != nil {
-						yield(search.Epoch{}, err)
-						return
-					}
-					if !pick.ok {
-						markSkip(skip, island, w)
-						continue
-					}
-					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
-					gotP.Reset(got)
-					gotP.Ensure()
-					yielded, contracted = true, true
-					nContract++
-					if !emit(doc, "contract") {
-						return
-					}
-					continue
-				}
-				if len(island) >= minIsland && n > 0 {
-					grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-					pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows, gotP, wantP)
-					if err != nil {
-						yield(search.Epoch{}, err)
-						return
-					}
-					if !pick.ok {
-						markSkip(skip, island, w)
-						continue
-					}
-					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
-					gotP.Reset(got)
-					gotP.Ensure()
-					yielded, contracted = true, true
-					nContract++
-					if !emit(doc, "contract") {
-						return
-					}
-					continue
-				}
-				dropped, err := tryDrop(&doc, &got, want, owner, &fills, &n, &errSum)
-				if err != nil {
-					yield(search.Epoch{}, err)
-					return
-				}
-				if !dropped {
-					break
-				}
-				gotP.Reset(got)
-				gotP.Ensure()
-				yielded, contracted = true, true
-				nContract++
-				if !emit(doc, "contract") {
-					return
-				}
-			}
-			if !expanded && !contracted {
-				break
+			doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+			gotP.Reset(got)
+			gotP.Ensure()
+			yielded = true
+			if !emit(doc, phase) {
+				return
 			}
 		}
 		if !yielded {
@@ -217,6 +110,26 @@ func epochOf(doc svg.Document, phase string) search.Epoch {
 
 func applyPick(pick formPick, doc svg.Document, got *image.NRGBA, errSum float64, owner []uint16, fills []color.NRGBA, n, w int) (svg.Document, *image.NRGBA, float64, int, []color.NRGBA) {
 	doc, got, errSum = pick.doc, pick.got, pick.errSum
+	if pick.dropIdx >= 0 {
+		dropOwner(owner, uint16(pick.dropIdx+1), n)
+		fills = append(fills[:pick.dropIdx], fills[pick.dropIdx+1:]...)
+		return doc, got, errSum, n - 1, fills
+	}
+	if pick.mergeJ >= 0 {
+		j := pick.mergeJ
+		i := pick.replace
+		for k, v := range owner {
+			if v == uint16(j+1) {
+				owner[k] = uint16(i + 1)
+			}
+		}
+		dropOwner(owner, uint16(j+1), n)
+		fills[i] = pick.fill
+		fills = append(fills[:j], fills[j+1:]...)
+		clearOwner(owner, uint16(i+1))
+		claim(owner, pick.work, w, uint16(i+1))
+		return doc, got, errSum, n - 1, fills
+	}
 	if len(pick.reclaims) > 0 {
 		for i, work := range pick.reclaims {
 			if work == nil {
@@ -244,16 +157,88 @@ type formPick struct {
 	doc      svg.Document
 	got      *image.NRGBA
 	errSum   float64
+	a        float64
 	replace  int
 	work     []pix
 	fill     color.NRGBA
 	reclaims [][]pix
+	dropIdx  int
+	mergeJ   int
 	ok       bool
 }
 
 type grow struct {
 	i    int
 	work []pix
+}
+
+// chooseStep scores every applicable operator and keeps the lowest Score.
+func chooseStep(
+	doc svg.Document,
+	got, want *image.NRGBA,
+	island []pix,
+	col color.NRGBA,
+	owner []uint16,
+	fills []color.NRGBA,
+	n int,
+	errSum float64,
+	w, h int,
+	sc *scratch,
+	gotP, wantP *loss.Plane,
+) (formPick, string, error) {
+	best := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+	phase := ""
+	take := func(p formPick, ph string) {
+		if !p.ok {
+			return
+		}
+		if !best.ok || p.a < best.a {
+			best = p
+			phase = ph
+		}
+	}
+	hasIsland := len(island) >= minIsland
+	paper := hasIsland && paperLeftover(col)
+	var grows []grow
+	if hasIsland {
+		grows = connectingWorks(doc, island, owner, fills, w, h, sc.seen)
+	}
+	if hasIsland && !paper && n < maxPaths {
+		pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows, gotP, wantP)
+		if err != nil {
+			return formPick{}, "", err
+		}
+		take(pick, "expand")
+	}
+	if hasIsland && n > 0 && !paper {
+		pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows, gotP, wantP)
+		if err != nil {
+			return formPick{}, "", err
+		}
+		take(pick, "contract")
+	}
+	if paper && n > 0 {
+		var pick formPick
+		pick.replace, pick.dropIdx, pick.mergeJ = -1, -1, -1
+		curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+		if err := punchThrough(&pick, &curA, curA, doc, want, island, owner, fills, n, errSum, w, sc.seen); err != nil {
+			return formPick{}, "", err
+		}
+		take(pick, "contract")
+	}
+	if n >= 2 {
+		pick, err := mergeLinearCand(doc, want, owner, fills, n, errSum, w, sc, wantP)
+		if err != nil {
+			return formPick{}, "", err
+		}
+		take(pick, "contract")
+		pick, err = dropCand(doc, want, owner, n, errSum, wantP)
+		if err != nil {
+			return formPick{}, "", err
+		}
+		take(pick, "contract")
+	}
+	return best, phase, nil
 }
 
 func connectingWorks(doc svg.Document, island []pix, owner []uint16, fills []color.NRGBA, w, h int, seen []byte) []grow {
@@ -282,7 +267,7 @@ func pickForm(
 	grows []grow,
 	gotP, wantP *loss.Plane,
 ) (formPick, error) {
-	best := formPick{replace: -1}
+	best := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
 	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
 	bestA := curA
 	var bestLen int
@@ -322,7 +307,7 @@ func pickForm(
 			}
 			bestA = a
 			bestLen = plen
-			best = formPick{doc: next, got: ngot, errSum: nerr, replace: replace, work: work, fill: fill, ok: true}
+			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: work, fill: fill, dropIdx: -1, mergeJ: -1, ok: true}
 		}
 		return nil
 	}
@@ -409,7 +394,7 @@ func punchThrough(
 		return nil
 	}
 	*bestA = a
-	*best = formPick{doc: next, got: ngot, errSum: nerr, replace: -1, work: island, reclaims: reclaims, ok: true}
+	*best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, work: island, reclaims: reclaims, dropIdx: -1, mergeJ: -1, ok: true}
 	return nil
 }
 
@@ -432,18 +417,19 @@ func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
 	return buckets
 }
 
-// tryMergeLinear replaces two paths with one 2-stop if Score falls.
-func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64, w int, sc *scratch) (bool, error) {
-	if *n < 2 {
-		return false, nil
+func mergeLinearCand(doc svg.Document, want *image.NRGBA, owner []uint16, fills []color.NRGBA, n int, errSum float64, w int, sc *scratch, wantP *loss.Plane) (formPick, error) {
+	none := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+	if n < 2 {
+		return none, nil
 	}
 	if sc == nil {
 		sc = &scratch{}
 	}
-	sc.buckets = fillBuckets(owner, w, *n, sc.buckets)
-	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
-	for i := 0; i < *n; i++ {
-		for j := i + 1; j < *n; j++ {
+	sc.buckets = fillBuckets(owner, w, n, sc.buckets)
+	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+	best := none
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
 			need := len(sc.buckets[i]) + len(sc.buckets[j])
 			if need < minIsland {
 				continue
@@ -459,32 +445,48 @@ func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, own
 			if len(ring) < 3 {
 				continue
 			}
-			next := replaceAt(*doc, i+1, filledPath(ring, (*fills)[i]).WithLinearFill(gradient).Node())
+			next := replaceAt(doc, i+1, filledPath(ring, fills[i]).WithLinearFill(gradient).Node())
 			next = dropAt(next, j+1)
 			ngot, err := render.Render(next)
 			if err != nil {
-				return false, err
+				return none, err
 			}
-			nerr := Score(ngot, want, 0)
-			a := nerr + pathCost*float64(*n-1) + cmdCost*float64(docCmdLen(next))
+			nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
+			a := nerr + pathCost*float64(n-1) + cmdCost*float64(docCmdLen(next))
 			if a >= curA {
 				continue
 			}
-			*doc, *got, *errSum = next, ngot, nerr
-			for k, v := range owner {
-				if v == uint16(j+1) {
-					owner[k] = uint16(i + 1)
-				}
+			if best.ok && a >= best.a {
+				continue
 			}
-			dropOwner(owner, uint16(j+1), *n)
-			f := *fills
-			f[i] = meanFill(want, sc.work)
-			*fills = append(f[:j], f[j+1:]...)
-			*n--
-			return true, nil
+			work := append([]pix{}, sc.work...)
+			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: i, work: work, fill: meanFill(want, work), dropIdx: -1, mergeJ: j, ok: true}
 		}
 	}
-	return false, nil
+	return best, nil
+}
+
+func dropCand(doc svg.Document, want *image.NRGBA, owner []uint16, n int, errSum float64, wantP *loss.Plane) (formPick, error) {
+	none := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+	if n < 2 {
+		return none, nil
+	}
+	idx, ok := smallestOwner(owner, n)
+	if !ok {
+		return none, nil
+	}
+	next := dropAt(doc, idx+1)
+	ngot, err := render.Render(next)
+	if err != nil {
+		return none, err
+	}
+	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
+	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+	a := nerr + pathCost*float64(n-1) + cmdCost*float64(docCmdLen(next))
+	if a >= curA || nerr > errSum {
+		return none, nil
+	}
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, ok: true}, nil
 }
 
 // tryDrop removes the smallest claimed path if Score does not rise.

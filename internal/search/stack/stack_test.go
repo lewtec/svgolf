@@ -580,16 +580,6 @@ func TestStackEpochPhase(t *testing.T) {
 	if len(phases) == 0 || phases[0] != "expand" {
 		t.Fatalf("phases=%v want expand first", phases)
 	}
-	nExpand := 0
-	for _, p := range phases {
-		if p != "expand" {
-			break
-		}
-		nExpand++
-	}
-	if nExpand > phaseLimit {
-		t.Fatalf("expand run=%d want <= %d", nExpand, phaseLimit)
-	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
 			t.Fatal(err)
