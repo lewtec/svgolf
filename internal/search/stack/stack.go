@@ -59,7 +59,11 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		yielded := false
 		n := 0
 		want := target
-		errSum := Score(got, want, 0)
+		wantP := loss.NewPlane(want)
+		gotP := loss.NewPlane(got)
+		wantP.Ensure()
+		gotP.Ensure()
+		errSum := ScoreOn(gotP, wantP, 0)
 		started := time.Now()
 		emit := func(doc svg.Document, phase string) bool {
 			ep := epochOf(doc, phase)
@@ -84,7 +88,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					}
 					return
 				}
-				col, island := hottestIsland(got, want, skip, &sc)
+				col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
 				if len(island) < minIsland {
 					break
 				}
@@ -93,7 +97,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					continue
 				}
 				grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-				pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows)
+				pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows, gotP, wantP)
 				if err != nil {
 					yield(search.Epoch{}, err)
 					return
@@ -103,6 +107,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					continue
 				}
 				doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+				gotP.Reset(got)
+				gotP.Ensure()
 				yielded, expanded = true, true
 				nExpand++
 				if !emit(doc, "expand") {
@@ -121,6 +127,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if !merged {
 					break
 				}
+				gotP.Reset(got)
+				gotP.Ensure()
 				yielded, contracted = true, true
 				nContract++
 				if !emit(doc, "contract") {
@@ -134,7 +142,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					}
 					return
 				}
-				col, island := hottestIsland(got, want, skip, &sc)
+				col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
 				if paperLeftover(col) && n > 0 && len(island) >= minIsland {
 					var pick formPick
 					curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
@@ -147,6 +155,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 						continue
 					}
 					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+					gotP.Reset(got)
+					gotP.Ensure()
 					yielded, contracted = true, true
 					nContract++
 					if !emit(doc, "contract") {
@@ -156,7 +166,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				if len(island) >= minIsland && n > 0 {
 					grows := connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-					pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows)
+					pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows, gotP, wantP)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
@@ -166,6 +176,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 						continue
 					}
 					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
+					gotP.Reset(got)
+					gotP.Ensure()
 					yielded, contracted = true, true
 					nContract++
 					if !emit(doc, "contract") {
@@ -181,6 +193,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if !dropped {
 					break
 				}
+				gotP.Reset(got)
+				gotP.Ensure()
 				yielded, contracted = true, true
 				nContract++
 				if !emit(doc, "contract") {
@@ -266,6 +280,7 @@ func pickForm(
 	w, h int,
 	refine bool,
 	grows []grow,
+	gotP, wantP *loss.Plane,
 ) (formPick, error) {
 	best := formPick{replace: -1}
 	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
@@ -291,7 +306,8 @@ func pickForm(
 				return err
 			}
 			dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
-			nerr := errSum + ScoreRect(ngot, want, dirty) - ScoreRect(got, want, dirty)
+			ngotP := loss.NewPlane(ngot)
+			nerr := errSum + ScoreRectOn(ngotP, wantP, dirty) - ScoreRectOn(gotP, wantP, dirty)
 			plen := pathLen(cand.Node())
 			cmds := docCmdLen(next)
 			if replace >= 0 && cand.FillRule() == svg.FillEvenOdd {

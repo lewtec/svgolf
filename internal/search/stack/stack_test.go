@@ -83,7 +83,7 @@ func TestHottestIslandPrefersFullMiss(t *testing.T) {
 			want.SetNRGBA(x, y, black)
 		}
 	}
-	col, island := hottestIsland(got, want, nil, nil)
+	col, island := hottestIsland(got, want, nil, nil, nil, nil)
 	if len(island) != 64 {
 		t.Fatalf("island=%d want 64 (black miss), fill=%+v", len(island), col)
 	}
