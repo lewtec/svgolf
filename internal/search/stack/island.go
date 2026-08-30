@@ -57,6 +57,8 @@ func clearOwner(owner []uint16, id uint16) {
 type scratch struct {
 	mark, seen []byte
 	family     []int
+	buckets    [][]pix
+	work       []pix
 }
 
 func (s *scratch) ensure(n int) {
@@ -76,10 +78,8 @@ func ownedUnion(owner []uint16, island []pix, w, h int, id uint16, seen []byte) 
 	if len(seen) < w*h {
 		seen = make([]byte, w*h)
 	}
-	seed := make(map[pix]bool, len(island))
 	var st, out []pix
 	for _, p := range island {
-		seed[p] = true
 		i := p.y*w + p.x
 		if seen[i] != 0 {
 			continue
@@ -101,7 +101,7 @@ func ownedUnion(owner []uint16, island []pix, w, h int, id uint16, seen []byte) 
 			if seen[i] != 0 {
 				continue
 			}
-			if owner[i] != id && !seed[q] {
+			if owner[i] != id {
 				continue
 			}
 			seen[i] = 1
@@ -114,21 +114,22 @@ func ownedUnion(owner []uint16, island []pix, w, h int, id uint16, seen []byte) 
 	return out
 }
 
-func ownedMinus(owner []uint16, drop []pix, w int, id uint16) []pix {
-	gone := make(map[pix]bool, len(drop))
+func ownedMinus(owner []uint16, drop []pix, w int, id uint16, seen []byte) []pix {
+	if len(seen) < len(owner) {
+		seen = make([]byte, len(owner))
+	}
 	for _, p := range drop {
-		gone[p] = true
+		seen[p.y*w+p.x] = 2
 	}
 	var out []pix
 	for i, v := range owner {
-		if v != id {
+		if v != id || seen[i] == 2 {
 			continue
 		}
-		p := pix{i % w, i / w}
-		if gone[p] {
-			continue
-		}
-		out = append(out, p)
+		out = append(out, pix{i % w, i / w})
+	}
+	for _, p := range drop {
+		seen[p.y*w+p.x] = 0
 	}
 	return out
 }

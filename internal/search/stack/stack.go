@@ -113,6 +113,21 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			clear(skip)
 			nContract := 0
 			for nContract < phaseLimit {
+				merged, err := tryMergeLinear(&doc, &got, want, owner, &fills, &n, &errSum, w, &sc)
+				if err != nil {
+					yield(search.Epoch{}, err)
+					return
+				}
+				if !merged {
+					break
+				}
+				yielded, contracted = true, true
+				nContract++
+				if !emit(doc, "contract") {
+					return
+				}
+			}
+			for nContract < phaseLimit {
 				if err := ctx.Err(); err != nil {
 					if !yielded {
 						yield(search.Epoch{}, err)
@@ -123,7 +138,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if paperLeftover(col) && n > 0 && len(island) >= minIsland {
 					var pick formPick
 					curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-					if err := punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w); err != nil {
+					if err := punchThrough(&pick, new(float64), curA, doc, want, island, owner, fills, n, errSum, w, sc.seen); err != nil {
 						yield(search.Epoch{}, err)
 						return
 					}
@@ -132,19 +147,6 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 						continue
 					}
 					doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
-					yielded, contracted = true, true
-					nContract++
-					if !emit(doc, "contract") {
-						return
-					}
-					continue
-				}
-				merged, err := tryMergeLinear(&doc, &got, want, owner, &fills, &n, &errSum, w, h)
-				if err != nil {
-					yield(search.Epoch{}, err)
-					return
-				}
-				if merged {
 					yielded, contracted = true, true
 					nContract++
 					if !emit(doc, "contract") {
@@ -354,6 +356,7 @@ func punchThrough(
 	n int,
 	errSum float64,
 	w int,
+	seen []byte,
 ) error {
 	next := doc
 	reclaims := make([][]pix, n)
@@ -362,7 +365,7 @@ func punchThrough(
 		if !ownsAny(owner, island, w, uint16(i+1)) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
 			continue
 		}
-		work := ownedMinus(owner, island, w, uint16(i+1))
+		work := ownedMinus(owner, island, w, uint16(i+1), seen)
 		ring := convexHull(islandPoints(work))
 		if len(ring) < 3 {
 			continue
@@ -394,34 +397,49 @@ func punchThrough(
 	return nil
 }
 
-func ownedBy(owner []uint16, w, h int, id uint16) []pix {
-	var out []pix
-	for i, v := range owner {
-		if v == id {
-			out = append(out, pix{i % w, i / w})
+func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
+	if cap(buckets) < n {
+		buckets = make([][]pix, n)
+	} else {
+		buckets = buckets[:n]
+		for i := range buckets {
+			buckets[i] = buckets[i][:0]
 		}
 	}
-	return out
+	for i, v := range owner {
+		if v == 0 || int(v) > n {
+			continue
+		}
+		id := int(v) - 1
+		buckets[id] = append(buckets[id], pix{i % w, i / w})
+	}
+	return buckets
 }
 
 // tryMergeLinear replaces two paths with one 2-stop if Score falls.
-func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64, w, h int) (bool, error) {
+func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64, w int, sc *scratch) (bool, error) {
 	if *n < 2 {
 		return false, nil
 	}
+	if sc == nil {
+		sc = &scratch{}
+	}
+	sc.buckets = fillBuckets(owner, w, *n, sc.buckets)
 	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
 	for i := 0; i < *n; i++ {
-		ai := ownedBy(owner, w, h, uint16(i+1))
 		for j := i + 1; j < *n; j++ {
-			work := append(append([]pix{}, ai...), ownedBy(owner, w, h, uint16(j+1))...)
-			if len(work) < minIsland {
+			need := len(sc.buckets[i]) + len(sc.buckets[j])
+			if need < minIsland {
 				continue
 			}
-			gradient, ok := fitLinearFill(work, want)
+			sc.work = sc.work[:0]
+			sc.work = append(sc.work, sc.buckets[i]...)
+			sc.work = append(sc.work, sc.buckets[j]...)
+			gradient, ok := fitLinearFill(sc.work, want)
 			if !ok {
 				continue
 			}
-			ring := convexHull(islandPoints(work))
+			ring := convexHull(islandPoints(sc.work))
 			if len(ring) < 3 {
 				continue
 			}
@@ -444,7 +462,7 @@ func tryMergeLinear(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, own
 			}
 			dropOwner(owner, uint16(j+1), *n)
 			f := *fills
-			f[i] = meanFill(want, work)
+			f[i] = meanFill(want, sc.work)
 			*fills = append(f[:j], f[j+1:]...)
 			*n--
 			return true, nil
