@@ -63,12 +63,39 @@ func (p *Plane) Reset(img *image.NRGBA) {
 
 // At is the HSV pixel at (x,y) in image coordinates.
 func (p *Plane) At(x, y int) Pix {
-	p.Ensure()
-	if p == nil || p.img == nil || p.pix == nil {
+	if p == nil || p.img == nil {
+		return Pix{}
+	}
+	if p.pix == nil {
+		p.Ensure()
+	}
+	if p.pix == nil {
 		return Pix{}
 	}
 	b := p.img.Rect
 	return p.pix[(y-b.Min.Y)*b.Dx()+(x-b.Min.X)]
+}
+
+// EnsureRect converts r. The rest of the table stays unset until Ensure.
+func (p *Plane) EnsureRect(r image.Rectangle) {
+	if p == nil || p.img == nil {
+		return
+	}
+	b := p.img.Rect
+	r = r.Intersect(b)
+	if r.Empty() {
+		return
+	}
+	if p.pix == nil {
+		p.pix = make([]Pix, b.Dx()*b.Dy())
+	}
+	w := b.Dx()
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		row := (y - b.Min.Y) * w
+		for x := r.Min.X; x < r.Max.X; x++ {
+			p.pix[row+(x-b.Min.X)] = HSVOf(p.img.NRGBAAt(x, y))
+		}
+	}
 }
 
 func (p *Plane) convert() {

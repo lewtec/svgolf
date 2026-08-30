@@ -2,11 +2,14 @@ package stack
 
 import (
 	"context"
+	"image"
+	"image/color"
 	"sync"
 	"time"
 
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/pkg/render"
+	"github.com/lewtec/svgolf/pkg/svg"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -315,21 +318,32 @@ func (j *Join) Run() (formPick, error) {
 	s := j.world
 	curA := s.currentScore()
 	best := nonePick()
+	rects := make([]image.Rectangle, s.paths)
+	for i := 0; i < s.paths; i++ {
+		rects[i] = islandRect(j.buckets[i])
+	}
+	kids := s.doc.Children()
 	for i := 0; i < s.paths; i++ {
 		for jn := i + 1; jn < s.paths; jn++ {
+			if !rects[i].Inset(-1).Overlaps(rects[jn]) {
+				continue
+			}
+			if !sameRampFamily(s.fills[i], s.fills[jn]) {
+				continue
+			}
 			need := len(j.buckets[i]) + len(j.buckets[jn])
 			if need < minIsland {
+				continue
+			}
+			ring := joinRing(kids[i+1], kids[jn+1])
+			if len(ring) < 3 {
 				continue
 			}
 			j.scratch.work = j.scratch.work[:0]
 			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
 			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
-			work := append([]pix{}, j.scratch.work...)
-			g := s.seedGrow(grow{i: i, work: work, fill: meanFill(s.want, work), ring: quadRing(work)})
-			if len(g.ring) < 3 {
-				continue
-			}
-			cand := filledPath(g.ring, g.fill)
+			g := s.seedGrow(grow{i: i, work: j.scratch.work, fill: meanTwo(s.fills[i], s.fills[jn]), ring: ring})
+			cand := filledPath(ring, g.fill)
 			next := replaceAt(s.doc, i+1, cand.Node())
 			next = dropAt(next, jn+1)
 			pick, err := s.scoreCand(next, cand.Node(), g, s.paths-1, j.Name(), curA)
@@ -338,6 +352,7 @@ func (j *Join) Run() (formPick, error) {
 			}
 			if pick.ok {
 				pick.mergeJ = jn
+				pick.work = append([]pix{}, j.scratch.work...)
 			}
 			if pick.ok && (!best.ok || pick.a < best.a) {
 				best = pick
@@ -345,6 +360,33 @@ func (j *Join) Run() (formPick, error) {
 		}
 	}
 	return best, nil
+}
+
+func joinRing(a, b svg.Node) [][2]float64 {
+	var pts [][2]float64
+	if p, ok := a.Path(); ok {
+		for _, r := range pathRings(p) {
+			pts = append(pts, r...)
+		}
+	}
+	if p, ok := b.Path(); ok {
+		for _, r := range pathRings(p) {
+			pts = append(pts, r...)
+		}
+	}
+	if len(pts) < 3 {
+		return nil
+	}
+	return collapseToSides(convexHull(pts), 4)
+}
+
+func meanTwo(a, b color.NRGBA) color.NRGBA {
+	return color.NRGBA{
+		R: uint8((int(a.R) + int(b.R)) / 2),
+		G: uint8((int(a.G) + int(b.G)) / 2),
+		B: uint8((int(a.B) + int(b.B)) / 2),
+		A: 255,
+	}
 }
 
 // Drop removes the smallest owned path if the pixmap does not get worse.

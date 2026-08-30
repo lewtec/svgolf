@@ -21,6 +21,20 @@ func TestColorAtHSVMatchesColorAt(t *testing.T) {
 	}
 }
 
+func TestPlaneEnsureRectLeavesRestUnset(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 2))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	img.SetNRGBA(3, 1, color.NRGBA{B: 255, A: 255})
+	p := NewPlane(img)
+	p.EnsureRect(image.Rect(0, 0, 1, 1))
+	if p.At(0, 0).H > 10 {
+		t.Fatalf("red hsv=%+v", p.At(0, 0))
+	}
+	if p.pix[3+1*4].A != 0 {
+		t.Fatal("EnsureRect converted the whole plane")
+	}
+}
+
 func TestPlaneConvertsOnce(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})

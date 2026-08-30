@@ -60,12 +60,12 @@ func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
-	got.Ensure()
 	want.Ensure()
 	r = r.Intersect(want.Image().Rect)
 	if r.Empty() {
 		return 0
 	}
+	got.EnsureRect(r)
 	var sum float64
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		for x := r.Min.X; x < r.Max.X; x++ {
