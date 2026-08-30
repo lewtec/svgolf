@@ -50,17 +50,22 @@ type world struct {
 
 // leftover is the hottest residual blob and the paths that already
 // touch it. paper leftovers punch; others expand or refine.
+// fresh is the new-plate grow (work=island, i=-1).
 type leftover struct {
 	island []pix
 	col    color.NRGBA
 	paper  bool
 	grows  []grow
+	fresh  grow
 }
 
 type grow struct {
-	i    int
-	work []pix
-	fill color.NRGBA
+	i      int
+	work   []pix
+	fill   color.NRGBA
+	ring   [][2]float64
+	dirty0 image.Rectangle
+	oldErr float64
 }
 
 type formPick struct {
@@ -173,10 +178,24 @@ func (left leftover) big() bool {
 func (s *world) leftover() leftover {
 	col, island := s.hottest()
 	left := leftover{island: island, col: col, paper: len(island) >= minIsland && paperLeftover(col)}
-	if left.big() {
+	if !left.big() {
+		return left
+	}
+	left.fresh = s.prepareGrow(grow{i: -1, work: island, fill: col})
+	if !left.paper {
 		left.grows = s.connecting(island)
 	}
 	return left
+}
+
+func (s *world) prepareGrow(g grow) grow {
+	g.ring = convexHull(islandPoints(g.work))
+	g.dirty0 = islandRect(g.work)
+	if g.i >= 0 {
+		g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[g.i+1]))
+	}
+	g.oldErr = ScoreRectOn(s.gotP, s.wantP, g.dirty0.Inset(-2))
+	return g
 }
 
 func (s *world) currentScore() float64 {
@@ -290,7 +309,7 @@ func (s *world) connecting(island []pix) []grow {
 		if len(work) <= len(island) && !s.paintsIsland(s.doc.Children()[i+1], island) {
 			continue
 		}
-		out = append(out, grow{i: i, work: work, fill: meanFill(s.want, work)})
+		out = append(out, s.prepareGrow(grow{i: i, work: work, fill: meanFill(s.want, work)}))
 	}
 	return out
 }
@@ -302,8 +321,8 @@ func (s *world) pickForm(left leftover, refine bool) (formPick, error) {
 	curA := s.currentScore()
 	bestA := curA
 	var bestLen int
-	consider := func(work []pix, fill color.NRGBA, replace int) error {
-		pick, plen, err := s.scoreForm(work, fill, replace, refine, curA)
+	consider := func(g grow, holes bool) error {
+		pick, plen, err := s.scoreForm(g, refine, holes, curA)
 		if err != nil || !pick.ok {
 			return err
 		}
@@ -319,30 +338,29 @@ func (s *world) pickForm(left leftover, refine bool) (formPick, error) {
 		return nil
 	}
 	for _, g := range left.grows {
-		if err := consider(g.work, g.fill, g.i); err != nil {
+		if err := consider(g, false); err != nil {
 			return nonePick(), err
 		}
 	}
 	if !refine {
-		if err := consider(left.island, left.col, -1); err != nil {
+		if err := consider(left.fresh, true); err != nil {
 			return nonePick(), err
 		}
 	}
 	return best, nil
 }
 
-func (s *world) scoreForm(work []pix, fill color.NRGBA, replace int, refine bool, curA float64) (formPick, int, error) {
+func (s *world) scoreForm(g grow, refine, holes bool, curA float64) (formPick, int, error) {
 	parts := s.paths
-	dirty0 := islandRect(work)
-	if replace >= 0 {
-		dirty0 = dirty0.Union(nodeRect(s.doc.Children()[replace+1]))
-	} else {
+	replace := g.i
+	if replace < 0 {
 		parts = s.paths + 1
 	}
 	best := nonePick()
 	var bestLen int
 	bestA := curA
-	for _, cand := range s.formPaths(work, fill, refine, !refine && replace < 0) {
+	pad := g.dirty0.Inset(-2)
+	for _, cand := range s.formPaths(g, refine, holes) {
 		var next svg.Document
 		if replace >= 0 {
 			next = replaceAt(s.doc, replace+1, cand.Node())
@@ -353,9 +371,13 @@ func (s *world) scoreForm(work []pix, fill color.NRGBA, replace int, refine bool
 		if err != nil {
 			return nonePick(), 0, err
 		}
-		dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
+		dirty := g.dirty0.Union(nodeRect(cand.Node())).Inset(-2)
+		old := g.oldErr
+		if dirty != pad {
+			old = ScoreRectOn(s.gotP, s.wantP, dirty)
+		}
 		ngotP := loss.NewPlane(ngot)
-		nerr := s.errSum + ScoreRectOn(ngotP, s.wantP, dirty) - ScoreRectOn(s.gotP, s.wantP, dirty)
+		nerr := s.errSum + ScoreRectOn(ngotP, s.wantP, dirty) - old
 		plen := pathLen(cand.Node())
 		cmds := docCmdLen(next)
 		if replace >= 0 && cand.FillRule() == svg.FillEvenOdd {
@@ -370,7 +392,7 @@ func (s *world) scoreForm(work []pix, fill color.NRGBA, replace int, refine bool
 		}
 		bestA = a
 		bestLen = plen
-		best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: work, fill: fill, dropIdx: -1, mergeJ: -1, ok: true}
+		best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, ok: true}
 	}
 	return best, bestLen, nil
 }
@@ -413,7 +435,7 @@ func (s *world) punch(left leftover) (formPick, error) {
 		// Punch only this leftover. holeRings(work) would also
 		// carve every other void in the plate (trees, scale blocks).
 		cand := filledPath(ring, s.fills[i])
-		if hole := convexHull(islandPoints(left.island)); len(hole) >= 3 {
+		if hole := left.fresh.ring; len(hole) >= 3 {
 			cand = withHoles(cand, [][][2]float64{hole})
 		}
 		next = replaceAt(next, i+1, cand.Node())
@@ -594,27 +616,26 @@ func whitePane(w, h int) svg.Path {
 	}, paper)
 }
 
-func (s *world) formPaths(island []pix, col color.NRGBA, refine, holes bool) []svg.Path {
-	ring := convexHull(islandPoints(island))
-	if len(ring) < 3 {
+func (s *world) formPaths(g grow, refine, holes bool) []svg.Path {
+	if len(g.ring) < 3 {
 		return nil
 	}
-	out := []svg.Path{filledPath(ring, col)}
+	out := []svg.Path{filledPath(g.ring, g.fill)}
 	if refine {
-		out = append(out, filledFit(island, ring, col))
+		out = append(out, filledFit(g.work, g.ring, g.fill))
 	}
 	if holes {
-		if hs := leftoverRings(island, s.got, s.want, col); len(hs) > 0 {
+		if hs := leftoverRings(g.work, s.got, s.want, g.fill); len(hs) > 0 {
 			// A solid hull over a ring is a cover plate. Only the
 			// evenodd ring is on the menu.
-			out = []svg.Path{withHoles(filledPath(ring, col), hs)}
-		} else if sameColorHollow(island, s.want, col) {
+			out = []svg.Path{withHoles(filledPath(g.ring, g.fill), hs)}
+		} else if sameColorHollow(g.work, s.want, g.fill) {
 			return nil
 		}
 	}
 	// Linear is a contract of stairs, not an expand cover.
 	if refine {
-		if gradient, ok := fitLinearFill(island, s.want); ok {
+		if gradient, ok := fitLinearFill(g.work, s.want); ok {
 			n := len(out)
 			for i := 0; i < n; i++ {
 				out = append(out, out[i].WithLinearFill(gradient))
