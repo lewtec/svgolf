@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"io"
 	"iter"
+	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
@@ -36,16 +40,25 @@ func init() {
 // leftover is this epoch's hottest miss. grow is one existing
 // path union that leftover. formPick is one scored operator.
 type world struct {
-	want, got   *image.NRGBA
-	wantP, gotP *loss.Plane
-	doc         svg.Document
-	skip        []byte
-	owner       []uint16
-	fills       []color.NRGBA
-	scratch     scratch
-	errSum      float64
-	paths       int
-	w, h        int
+	want, got    *image.NRGBA
+	wantP, gotP  *loss.Plane
+	doc          svg.Document
+	skip         []byte
+	owner        []uint16
+	fills        []color.NRGBA
+	scratch      scratch // leftover hottest() only
+	errSum       float64
+	paths        int
+	w, h         int
+	candidateLog io.Writer
+	logMu        sync.Mutex
+}
+
+var candidateLog io.Writer
+
+// LogCandidates writes one tab-indented line per scored candidate.
+func LogCandidates(w io.Writer) {
+	candidateLog = w
 }
 
 // leftover is the hottest residual blob and the paths that already
@@ -128,6 +141,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return
 		}
+		s.candidateLog = candidateLog
 		started := time.Now()
 		emit := func(op string) bool {
 			ep := epochOf(s.doc, op)
@@ -144,7 +158,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				return
 			}
 			left := s.leftover()
-			pick, err := s.choose(left)
+			pick, err := s.choose(ctx, left)
 			if err != nil {
 				yield(search.Epoch{}, err)
 				return
@@ -251,7 +265,12 @@ func (s *world) apply(pick formPick) {
 }
 
 // choose scores every applicable operator and keeps the lowest Score.
-func (s *world) choose(left leftover) (formPick, error) {
+func (s *world) choose(ctx context.Context, left leftover) (formPick, error) {
+	var buckets [][]pix
+	if s.paths > 0 {
+		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
+	}
+	var mu sync.Mutex
 	best := nonePick()
 	take := func(p formPick, err error) error {
 		if err != nil {
@@ -260,67 +279,72 @@ func (s *world) choose(left leftover) (formPick, error) {
 		if !p.ok {
 			return nil
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		if !best.ok || p.a < best.a {
 			best = p
 		}
 		return nil
 	}
-	if s.paths > 0 {
-		s.scratch.buckets = fillBuckets(s.owner, s.w, s.paths, s.scratch.buckets)
-	}
+	g, _ := errgroup.WithContext(ctx)
 	if left.big() && !left.paper && s.paths < maxPaths {
-		if err := take(s.rectangle(left.fresh)); err != nil {
-			return nonePick(), err
-		}
-	}
-	if best.ok {
-		return best, nil
+		g.Go(func() error { return take(s.rectangle(left.fresh)) })
 	}
 	if left.big() && !left.paper {
-		if err := take(s.grow(left)); err != nil {
-			return nonePick(), err
-		}
+		g.Go(func() error {
+			var sc scratch
+			return take(s.grow(left, &sc))
+		})
 	}
 	if left.big() && s.paths > 0 {
-		if err := take(s.carve(left)); err != nil {
-			return nonePick(), err
-		}
-	}
-	if best.ok {
-		return best, nil
+		g.Go(func() error {
+			var sc scratch
+			return take(s.carve(left, &sc))
+		})
 	}
 	if s.paths > 0 {
-		if err := take(s.simplify()); err != nil {
-			return nonePick(), err
-		}
-		if err := take(s.wash()); err != nil {
-			return nonePick(), err
-		}
+		g.Go(func() error { return take(s.simplify(buckets)) })
+		g.Go(func() error {
+			var sc scratch
+			return take(s.wash(buckets, &sc))
+		})
 	}
 	if s.paths >= 2 {
-		if err := take(s.join()); err != nil {
-			return nonePick(), err
-		}
-		if err := take(s.drop()); err != nil {
-			return nonePick(), err
-		}
+		g.Go(func() error {
+			var sc scratch
+			return take(s.join(buckets, &sc))
+		})
+		g.Go(func() error { return take(s.drop()) })
+	}
+	if err := g.Wait(); err != nil {
+		return nonePick(), err
 	}
 	return best, nil
 }
 
-func (s *world) connecting(island []pix) []grow {
+func (s *world) connecting(island []pix, seen []byte) []grow {
 	var out []grow
 	for i := range s.fills {
-		work := ownedUnion(s.owner, island, s.w, s.h, uint16(i+1), s.scratch.seen)
+		work := ownedUnion(s.owner, island, s.w, s.h, uint16(i+1), seen)
 		if len(work) <= len(island) && !s.paintsIsland(s.doc.Children()[i+1], island) {
 			continue
 		}
-		out = append(out, s.seedGrow(grow{i: i, work: work, fill: meanFill(s.want, work)}))
+		out = append(out, s.seedGrow(grow{i: i, work: work, fill: s.fills[i]}))
 	}
 	return out
 }
 
+func (s *world) logCandidate(op string, elapsed time.Duration, score float64) {
+	if s == nil || s.candidateLog == nil {
+		return
+	}
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", op, elapsed.Seconds(), score)
+}
+
 func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, op string, curA float64) (formPick, error) {
+	started := time.Now()
 	ngot, err := render.Render(next)
 	if err != nil {
 		return nonePick(), err
@@ -338,6 +362,7 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 		}
 	}
 	a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
+	s.logCandidate(op, time.Since(started), a)
 	if a >= curA {
 		return nonePick(), nil
 	}
@@ -353,10 +378,13 @@ func (s *world) rectangle(g grow) (formPick, error) {
 	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, "rectangle", s.currentScore())
 }
 
-func (s *world) grow(left leftover) (formPick, error) {
+func (s *world) grow(left leftover, sc *scratch) (formPick, error) {
 	grows := left.grows
 	if grows == nil && left.big() && !left.paper {
-		grows = s.connecting(left.island)
+		if sc == nil {
+			sc = &scratch{}
+		}
+		grows = s.connecting(left.island, sc.seen)
 	}
 	curA := s.currentScore()
 	best := nonePick()
@@ -377,7 +405,11 @@ func (s *world) grow(left leftover) (formPick, error) {
 	return best, nil
 }
 
-func (s *world) carve(left leftover) (formPick, error) {
+func (s *world) carve(left leftover, sc *scratch) (formPick, error) {
+	if sc == nil {
+		sc = &scratch{}
+	}
+	sc.ensure(s.w * s.h)
 	hole := left.fresh.ring
 	if len(hole) < 3 {
 		hole = quadRing(left.island)
@@ -386,7 +418,7 @@ func (s *world) carve(left leftover) (formPick, error) {
 		return nonePick(), nil
 	}
 	if left.paper {
-		return s.carvePaper(left, hole)
+		return s.carvePaper(left, hole, sc)
 	}
 	curA := s.currentScore()
 	best := nonePick()
@@ -400,7 +432,7 @@ func (s *world) carve(left leftover) (formPick, error) {
 			continue
 		}
 		cand := withHoles(p, [][][2]float64{hole})
-		work := ownedMinus(s.owner, left.island, s.w, uint16(i+1), s.scratch.seen)
+		work := ownedMinus(s.owner, left.island, s.w, uint16(i+1), sc.seen)
 		dirty0 := islandRect(left.island).Union(nodeRect(node))
 		g := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, s.paths, "carve", curA)
@@ -417,7 +449,7 @@ func (s *world) carve(left leftover) (formPick, error) {
 	return best, nil
 }
 
-func (s *world) carvePaper(left leftover, hole [][2]float64) (formPick, error) {
+func (s *world) carvePaper(left leftover, hole [][2]float64, sc *scratch) (formPick, error) {
 	curA := s.currentScore()
 	next := s.doc
 	reclaims := make([][]pix, s.paths)
@@ -434,7 +466,7 @@ func (s *world) carvePaper(left leftover, hole [][2]float64) (formPick, error) {
 		}
 		cand := withHoles(p, [][][2]float64{hole})
 		next = replaceAt(next, i+1, cand.Node())
-		reclaims[i] = ownedMinus(s.owner, left.island, s.w, uint16(i+1), s.scratch.seen)
+		reclaims[i] = ownedMinus(s.owner, left.island, s.w, uint16(i+1), sc.seen)
 		dirty0 = dirty0.Union(nodeRect(node))
 		any = true
 	}
@@ -456,7 +488,7 @@ func (s *world) carvePaper(left leftover, hole [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-func (s *world) simplify() (formPick, error) {
+func (s *world) simplify(buckets [][]pix) (formPick, error) {
 	curA := s.currentScore()
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
@@ -483,7 +515,7 @@ func (s *world) simplify() (formPick, error) {
 		if pathLen(cand.Node()) >= pathLen(node) {
 			continue
 		}
-		work := s.scratch.buckets[i]
+		work := buckets[i]
 		g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i]})
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, s.paths, "simplify", curA)
 		if err != nil {
@@ -499,11 +531,14 @@ func (s *world) simplify() (formPick, error) {
 	return best, nil
 }
 
-func (s *world) wash() (formPick, error) {
+func (s *world) wash(buckets [][]pix, sc *scratch) (formPick, error) {
+	if sc == nil {
+		sc = &scratch{}
+	}
 	curA := s.currentScore()
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
-		work := s.scratch.buckets[i]
+		work := buckets[i]
 		grad, ok := fitLinearFill(work, s.want)
 		if !ok {
 			continue
@@ -527,17 +562,17 @@ func (s *world) wash() (formPick, error) {
 	}
 	for i := 0; i < s.paths; i++ {
 		for j := i + 1; j < s.paths; j++ {
-			s.scratch.work = s.scratch.work[:0]
-			s.scratch.work = append(s.scratch.work, s.scratch.buckets[i]...)
-			s.scratch.work = append(s.scratch.work, s.scratch.buckets[j]...)
-			if len(s.scratch.work) < minIsland {
+			sc.work = sc.work[:0]
+			sc.work = append(sc.work, buckets[i]...)
+			sc.work = append(sc.work, buckets[j]...)
+			if len(sc.work) < minIsland {
 				continue
 			}
-			grad, ok := fitLinearFill(s.scratch.work, s.want)
+			grad, ok := fitLinearFill(sc.work, s.want)
 			if !ok {
 				continue
 			}
-			work := append([]pix{}, s.scratch.work...)
+			work := append([]pix{}, sc.work...)
 			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: quadRing(work)})
 			if len(g.ring) < 3 {
 				continue
@@ -560,22 +595,25 @@ func (s *world) wash() (formPick, error) {
 	return best, nil
 }
 
-func (s *world) join() (formPick, error) {
+func (s *world) join(buckets [][]pix, sc *scratch) (formPick, error) {
 	if s.paths < 2 {
 		return nonePick(), nil
+	}
+	if sc == nil {
+		sc = &scratch{}
 	}
 	curA := s.currentScore()
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
 		for j := i + 1; j < s.paths; j++ {
-			need := len(s.scratch.buckets[i]) + len(s.scratch.buckets[j])
+			need := len(buckets[i]) + len(buckets[j])
 			if need < minIsland {
 				continue
 			}
-			s.scratch.work = s.scratch.work[:0]
-			s.scratch.work = append(s.scratch.work, s.scratch.buckets[i]...)
-			s.scratch.work = append(s.scratch.work, s.scratch.buckets[j]...)
-			work := append([]pix{}, s.scratch.work...)
+			sc.work = sc.work[:0]
+			sc.work = append(sc.work, buckets[i]...)
+			sc.work = append(sc.work, buckets[j]...)
+			work := append([]pix{}, sc.work...)
 			g := s.seedGrow(grow{i: i, work: work, fill: meanFill(s.want, work), ring: quadRing(work)})
 			if len(g.ring) < 3 {
 				continue
@@ -646,6 +684,7 @@ func (s *world) drop() (formPick, error) {
 	if !ok {
 		return nonePick(), nil
 	}
+	started := time.Now()
 	next := dropAt(s.doc, idx+1)
 	ngot, err := render.Render(next)
 	if err != nil {
@@ -658,6 +697,7 @@ func (s *world) drop() (formPick, error) {
 	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
 	curA := s.currentScore()
 	a := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
+	s.logCandidate("drop", time.Since(started), a)
 	if a >= curA || nerr > s.errSum {
 		return nonePick(), nil
 	}

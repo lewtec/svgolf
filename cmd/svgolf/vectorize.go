@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/svgolf/internal/search/stack"
 	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +36,8 @@ func newVectorizeCmd() *cobra.Command {
 				return err
 			}
 			want := search.FromImage(img)
+			stack.LogCandidates(cmd.OutOrStdout())
+			defer stack.LogCandidates(nil)
 			var trace *Trace
 			if epochs != "" {
 				trace, err = NewTrace(epochs, cmd.OutOrStdout(), want)

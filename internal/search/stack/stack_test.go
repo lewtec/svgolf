@@ -1,11 +1,13 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -603,6 +605,25 @@ func TestStackTinyMark(t *testing.T) {
 	}
 	if n := len(forms(doc)); n < 2 {
 		t.Fatalf("paths=%d want plate + mark", n)
+	}
+}
+
+func TestCandidateLogLine(t *testing.T) {
+	var buf bytes.Buffer
+	LogCandidates(&buf)
+	t.Cleanup(func() { LogCandidates(nil) })
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	if _, err := search.Last((Stack{}).Search(t.Context(), img)); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "\trectangle elapsed=") || !strings.Contains(got, "score=") {
+		t.Fatalf("candidate log=%q", got)
 	}
 }
 
