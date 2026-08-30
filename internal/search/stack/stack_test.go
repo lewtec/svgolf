@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -50,14 +51,28 @@ func TestTryDropRedundant(t *testing.T) {
 		}
 	}
 	fills := []color.NRGBA{red, red}
-	n := 2
-	errSum := Score(got, img, 0)
-	ok, err := tryDrop(&doc, &got, img, owner, &fills, &n, &errSum)
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		doc:    doc,
+		owner:  owner,
+		fills:  fills,
+		paths:  2,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img, 0),
+	}
+	pick, err := s.drop()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || n != 1 {
-		t.Fatalf("drop=%v n=%d want drop the covered crumb", ok, n)
+	if !pick.ok {
+		t.Fatal("drop=false want drop the covered crumb")
+	}
+	s.apply(pick)
+	if s.paths != 1 {
+		t.Fatalf("paths=%d want 1", s.paths)
 	}
 }
 
@@ -83,7 +98,7 @@ func TestHottestIslandPrefersFullMiss(t *testing.T) {
 			want.SetNRGBA(x, y, black)
 		}
 	}
-	col, island := hottestIsland(got, want, nil, nil, nil, nil)
+	col, island := (&world{got: got, want: want}).hottest()
 	if len(island) != 64 {
 		t.Fatalf("island=%d want 64 (black miss), fill=%+v", len(island), col)
 	}

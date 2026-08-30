@@ -32,125 +32,35 @@ func init() {
 	search.Register("stack", func() search.Search { return Stack{} })
 }
 
-func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
-	return func(yield func(search.Epoch, error) bool) {
-		if err := ctx.Err(); err != nil {
-			yield(search.Epoch{}, err)
-			return
-		}
-		if target == nil {
-			yield(search.Epoch{}, fmt.Errorf("search: nil pixmap"))
-			return
-		}
-		b := target.Bounds()
-		w, h := b.Dx(), b.Dy()
-		doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
-		doc = doc.Append(whitePane(w, h).Node())
-		got, err := render.Render(doc)
-		if err != nil {
-			yield(search.Epoch{}, err)
-			return
-		}
-		skip := make([]byte, w*h)
-		owner := make([]uint16, w*h)
-		var fills []color.NRGBA
-		var sc scratch
-		yielded := false
-		n := 0
-		want := target
-		wantP := loss.NewPlane(want)
-		gotP := loss.NewPlane(got)
-		wantP.Ensure()
-		gotP.Ensure()
-		errSum := ScoreOn(gotP, wantP, 0)
-		started := time.Now()
-		emit := func(doc svg.Document, phase string) bool {
-			ep := epochOf(doc, phase)
-			ep.Elapsed = time.Since(started)
-			started = time.Now()
-			return yield(ep, nil)
-		}
-		for {
-			if err := ctx.Err(); err != nil {
-				if !yielded {
-					yield(search.Epoch{}, err)
-				}
-				return
-			}
-			col, island := hottestIsland(got, want, skip, &sc, gotP, wantP)
-			pick, phase, err := chooseStep(doc, got, want, island, col, owner, fills, n, errSum, w, h, &sc, gotP, wantP)
-			if err != nil {
-				yield(search.Epoch{}, err)
-				return
-			}
-			if !pick.ok {
-				if len(island) < minIsland {
-					break
-				}
-				markSkip(skip, island, w)
-				continue
-			}
-			doc, got, errSum, n, fills = applyPick(pick, doc, got, errSum, owner, fills, n, w)
-			gotP.Reset(got)
-			gotP.Ensure()
-			yielded = true
-			if !emit(doc, phase) {
-				return
-			}
-		}
-		if !yielded {
-			emit(doc, "")
-		}
-	}
+// world is the accepted document and the pixmap it paints.
+// leftover is this epoch's hottest miss. grow is one existing
+// path union that leftover. formPick is one scored operator.
+type world struct {
+	want, got   *image.NRGBA
+	wantP, gotP *loss.Plane
+	doc         svg.Document
+	skip        []byte
+	owner       []uint16
+	fills       []color.NRGBA
+	scratch     scratch
+	errSum      float64
+	paths       int
+	w, h        int
 }
 
-func epochOf(doc svg.Document, phase string) search.Epoch {
-	return search.Epoch{Document: doc, Scale: 1, Phase: phase}
+// leftover is the hottest residual blob and the paths that already
+// touch it. paper leftovers punch; others expand or refine.
+type leftover struct {
+	island []pix
+	col    color.NRGBA
+	paper  bool
+	grows  []grow
 }
 
-func applyPick(pick formPick, doc svg.Document, got *image.NRGBA, errSum float64, owner []uint16, fills []color.NRGBA, n, w int) (svg.Document, *image.NRGBA, float64, int, []color.NRGBA) {
-	doc, got, errSum = pick.doc, pick.got, pick.errSum
-	if pick.dropIdx >= 0 {
-		dropOwner(owner, uint16(pick.dropIdx+1), n)
-		fills = append(fills[:pick.dropIdx], fills[pick.dropIdx+1:]...)
-		return doc, got, errSum, n - 1, fills
-	}
-	if pick.mergeJ >= 0 {
-		j := pick.mergeJ
-		i := pick.replace
-		for k, v := range owner {
-			if v == uint16(j+1) {
-				owner[k] = uint16(i + 1)
-			}
-		}
-		dropOwner(owner, uint16(j+1), n)
-		fills[i] = pick.fill
-		fills = append(fills[:j], fills[j+1:]...)
-		clearOwner(owner, uint16(i+1))
-		claim(owner, pick.work, w, uint16(i+1))
-		return doc, got, errSum, n - 1, fills
-	}
-	if len(pick.reclaims) > 0 {
-		for i, work := range pick.reclaims {
-			if work == nil {
-				continue
-			}
-			id := uint16(i + 1)
-			clearOwner(owner, id)
-			claim(owner, work, w, id)
-		}
-		return doc, got, errSum, n, fills
-	}
-	if pick.replace >= 0 {
-		id := uint16(pick.replace + 1)
-		clearOwner(owner, id)
-		claim(owner, pick.work, w, id)
-		fills[pick.replace] = pick.fill
-		return doc, got, errSum, n, fills
-	}
-	claim(owner, pick.work, w, uint16(n+1))
-	fills = append(fills, pick.fill)
-	return doc, got, errSum, n + 1, fills
+type grow struct {
+	i    int
+	work []pix
+	fill color.NRGBA
 }
 
 type formPick struct {
@@ -167,26 +77,166 @@ type formPick struct {
 	ok       bool
 }
 
-type grow struct {
-	i    int
-	work []pix
+func nonePick() formPick {
+	return formPick{replace: -1, dropIdx: -1, mergeJ: -1}
 }
 
-// chooseStep scores every applicable operator and keeps the lowest Score.
-func chooseStep(
-	doc svg.Document,
-	got, want *image.NRGBA,
-	island []pix,
-	col color.NRGBA,
-	owner []uint16,
-	fills []color.NRGBA,
-	n int,
-	errSum float64,
-	w, h int,
-	sc *scratch,
-	gotP, wantP *loss.Plane,
-) (formPick, string, error) {
-	best := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+func newWorld(target *image.NRGBA) (*world, error) {
+	if target == nil {
+		return nil, fmt.Errorf("search: nil pixmap")
+	}
+	b := target.Bounds()
+	w, h := b.Dx(), b.Dy()
+	doc := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
+	doc = doc.Append(whitePane(w, h).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		return nil, err
+	}
+	wantP := loss.NewPlane(target)
+	gotP := loss.NewPlane(got)
+	wantP.Ensure()
+	gotP.Ensure()
+	return &world{
+		want:   target,
+		got:    got,
+		wantP:  wantP,
+		gotP:   gotP,
+		doc:    doc,
+		skip:   make([]byte, w*h),
+		owner:  make([]uint16, w*h),
+		w:      w,
+		h:      h,
+		errSum: ScoreOn(gotP, wantP, 0),
+	}, nil
+}
+
+func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
+	return func(yield func(search.Epoch, error) bool) {
+		if err := ctx.Err(); err != nil {
+			yield(search.Epoch{}, err)
+			return
+		}
+		s, err := newWorld(target)
+		if err != nil {
+			yield(search.Epoch{}, err)
+			return
+		}
+		started := time.Now()
+		emit := func(phase string) bool {
+			ep := epochOf(s.doc, phase)
+			ep.Elapsed = time.Since(started)
+			started = time.Now()
+			return yield(ep, nil)
+		}
+		yielded := false
+		for {
+			if err := ctx.Err(); err != nil {
+				if !yielded {
+					yield(search.Epoch{}, err)
+				}
+				return
+			}
+			left := s.leftover()
+			pick, phase, err := s.choose(left)
+			if err != nil {
+				yield(search.Epoch{}, err)
+				return
+			}
+			if !pick.ok {
+				if !left.big() {
+					break
+				}
+				s.ignore(left)
+				continue
+			}
+			s.apply(pick)
+			yielded = true
+			if !emit(phase) {
+				return
+			}
+		}
+		if !yielded {
+			emit("")
+		}
+	}
+}
+
+func epochOf(doc svg.Document, phase string) search.Epoch {
+	return search.Epoch{Document: doc, Scale: 1, Phase: phase}
+}
+
+func (left leftover) big() bool {
+	return len(left.island) >= minIsland
+}
+
+func (s *world) leftover() leftover {
+	col, island := s.hottest()
+	left := leftover{island: island, col: col, paper: len(island) >= minIsland && paperLeftover(col)}
+	if left.big() {
+		left.grows = s.connecting(island)
+	}
+	return left
+}
+
+func (s *world) currentScore() float64 {
+	return s.errSum + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(s.doc))
+}
+
+func (s *world) ignore(left leftover) {
+	markSkip(s.skip, left.island, s.w)
+}
+
+func (s *world) apply(pick formPick) {
+	s.doc, s.got, s.errSum = pick.doc, pick.got, pick.errSum
+	if pick.dropIdx >= 0 {
+		dropOwner(s.owner, uint16(pick.dropIdx+1), s.paths)
+		s.fills = append(s.fills[:pick.dropIdx], s.fills[pick.dropIdx+1:]...)
+		s.paths--
+	} else if pick.mergeJ >= 0 {
+		j := pick.mergeJ
+		i := pick.replace
+		for k, v := range s.owner {
+			if v == uint16(j+1) {
+				s.owner[k] = uint16(i + 1)
+			}
+		}
+		dropOwner(s.owner, uint16(j+1), s.paths)
+		s.fills[i] = pick.fill
+		s.fills = append(s.fills[:j], s.fills[j+1:]...)
+		clearOwner(s.owner, uint16(i+1))
+		claim(s.owner, pick.work, s.w, uint16(i+1))
+		s.paths--
+	} else if len(pick.reclaims) > 0 {
+		for i, work := range pick.reclaims {
+			if work == nil {
+				continue
+			}
+			id := uint16(i + 1)
+			clearOwner(s.owner, id)
+			claim(s.owner, work, s.w, id)
+		}
+	} else if pick.replace >= 0 {
+		id := uint16(pick.replace + 1)
+		clearOwner(s.owner, id)
+		claim(s.owner, pick.work, s.w, id)
+		s.fills[pick.replace] = pick.fill
+	} else {
+		claim(s.owner, pick.work, s.w, uint16(s.paths+1))
+		s.fills = append(s.fills, pick.fill)
+		s.paths++
+	}
+	if s.gotP == nil {
+		s.gotP = loss.NewPlane(s.got)
+	} else {
+		s.gotP.Reset(s.got)
+	}
+	s.gotP.Ensure()
+}
+
+// choose scores every applicable operator and keeps the lowest Score.
+func (s *world) choose(left leftover) (formPick, string, error) {
+	best := nonePick()
 	phase := ""
 	take := func(p formPick, ph string) {
 		if !p.ok {
@@ -197,142 +247,143 @@ func chooseStep(
 			phase = ph
 		}
 	}
-	hasIsland := len(island) >= minIsland
-	paper := hasIsland && paperLeftover(col)
-	var grows []grow
-	if hasIsland {
-		grows = connectingWorks(doc, island, owner, fills, w, h, sc.seen)
-	}
-	if hasIsland && !paper && n < maxPaths {
-		pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, false, grows, gotP, wantP)
+	if left.big() && !left.paper && s.paths < maxPaths {
+		pick, err := s.pickForm(left, false)
 		if err != nil {
-			return formPick{}, "", err
+			return nonePick(), "", err
 		}
 		take(pick, "expand")
 	}
-	if hasIsland && n > 0 && !paper {
-		pick, err := pickForm(doc, got, want, island, col, n, errSum, w, h, true, grows, gotP, wantP)
+	if left.big() && s.paths > 0 && !left.paper {
+		pick, err := s.pickForm(left, true)
 		if err != nil {
-			return formPick{}, "", err
+			return nonePick(), "", err
 		}
 		take(pick, "contract")
 	}
-	if paper && n > 0 {
-		var pick formPick
-		pick.replace, pick.dropIdx, pick.mergeJ = -1, -1, -1
-		curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-		if err := punchThrough(&pick, &curA, curA, doc, want, island, owner, fills, n, errSum, w, sc.seen); err != nil {
-			return formPick{}, "", err
+	if left.paper && s.paths > 0 {
+		pick, err := s.punch(left)
+		if err != nil {
+			return nonePick(), "", err
 		}
 		take(pick, "contract")
 	}
-	if n >= 2 {
-		pick, err := mergeLinearCand(doc, want, owner, fills, n, errSum, w, sc, wantP)
+	if s.paths >= 2 {
+		pick, err := s.mergeLinear()
 		if err != nil {
-			return formPick{}, "", err
+			return nonePick(), "", err
 		}
 		take(pick, "contract")
-		pick, err = dropCand(doc, want, owner, n, errSum, wantP)
+		pick, err = s.drop()
 		if err != nil {
-			return formPick{}, "", err
+			return nonePick(), "", err
 		}
 		take(pick, "contract")
 	}
 	return best, phase, nil
 }
 
-func connectingWorks(doc svg.Document, island []pix, owner []uint16, fills []color.NRGBA, w, h int, seen []byte) []grow {
+func (s *world) connecting(island []pix) []grow {
 	var out []grow
-	for i := range fills {
-		work := ownedUnion(owner, island, w, h, uint16(i+1), seen)
-		if len(work) <= len(island) && !paintsIsland(doc.Children()[i+1], island, w, h) {
+	for i := range s.fills {
+		work := ownedUnion(s.owner, island, s.w, s.h, uint16(i+1), s.scratch.seen)
+		if len(work) <= len(island) && !s.paintsIsland(s.doc.Children()[i+1], island) {
 			continue
 		}
-		out = append(out, grow{i: i, work: work})
+		out = append(out, grow{i: i, work: work, fill: meanFill(s.want, work)})
 	}
 	return out
 }
 
 // pickForm: cover (refine=false) grows a hull or adds a hull.
 // refine rewrites a connecting path (filledFit / linear). Score picks.
-func pickForm(
-	doc svg.Document,
-	got, want *image.NRGBA,
-	island []pix,
-	col color.NRGBA,
-	n int,
-	errSum float64,
-	w, h int,
-	refine bool,
-	grows []grow,
-	gotP, wantP *loss.Plane,
-) (formPick, error) {
-	best := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
-	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
+func (s *world) pickForm(left leftover, refine bool) (formPick, error) {
+	best := nonePick()
+	curA := s.currentScore()
 	bestA := curA
 	var bestLen int
-	consider := func(work []pix, fill color.NRGBA, replace int, refine bool) error {
-		parts := n
-		dirty0 := islandRect(work)
-		if replace >= 0 {
-			dirty0 = dirty0.Union(nodeRect(doc.Children()[replace+1]))
-		} else {
-			parts = n + 1
+	consider := func(work []pix, fill color.NRGBA, replace int) error {
+		pick, plen, err := s.scoreForm(work, fill, replace, refine, curA)
+		if err != nil || !pick.ok {
+			return err
 		}
-		for _, cand := range formPaths(work, fill, refine, !refine && replace < 0, got, want) {
-			var next svg.Document
-			if replace >= 0 {
-				next = replaceAt(doc, replace+1, cand.Node())
-			} else {
-				next = doc.Append(cand.Node())
-			}
-			ngot, err := render.Render(next)
-			if err != nil {
-				return err
-			}
-			dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
-			ngotP := loss.NewPlane(ngot)
-			nerr := errSum + ScoreRectOn(ngotP, wantP, dirty) - ScoreRectOn(gotP, wantP, dirty)
-			plen := pathLen(cand.Node())
-			cmds := docCmdLen(next)
-			if replace >= 0 && cand.FillRule() == svg.FillEvenOdd {
-				cmds = docCmdLen(doc)
-			}
-			a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
-			if a > bestA || a > curA {
-				continue
-			}
-			if a == bestA && (!best.ok || plen >= bestLen) {
-				continue
-			}
-			bestA = a
-			bestLen = plen
-			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: work, fill: fill, dropIdx: -1, mergeJ: -1, ok: true}
+		if pick.a > bestA || pick.a > curA {
+			return nil
 		}
+		if pick.a == bestA && (!best.ok || plen >= bestLen) {
+			return nil
+		}
+		bestA = pick.a
+		bestLen = plen
+		best = pick
 		return nil
 	}
-	for _, g := range grows {
-		if err := consider(g.work, meanFill(want, g.work), g.i, refine); err != nil {
-			return formPick{}, err
+	for _, g := range left.grows {
+		if err := consider(g.work, g.fill, g.i); err != nil {
+			return nonePick(), err
 		}
 	}
 	if !refine {
-		if err := consider(island, col, -1, false); err != nil {
-			return formPick{}, err
+		if err := consider(left.island, left.col, -1); err != nil {
+			return nonePick(), err
 		}
 	}
 	return best, nil
 }
 
-// punchThrough shrinks every path that covers a paper leftover so the
-// hole opens to the pane. Punching only the top layer reveals the
-// plate underneath and Score gets worse.
-func paintsIsland(node svg.Node, island []pix, w, h int) bool {
+func (s *world) scoreForm(work []pix, fill color.NRGBA, replace int, refine bool, curA float64) (formPick, int, error) {
+	parts := s.paths
+	dirty0 := islandRect(work)
+	if replace >= 0 {
+		dirty0 = dirty0.Union(nodeRect(s.doc.Children()[replace+1]))
+	} else {
+		parts = s.paths + 1
+	}
+	best := nonePick()
+	var bestLen int
+	bestA := curA
+	for _, cand := range s.formPaths(work, fill, refine, !refine && replace < 0) {
+		var next svg.Document
+		if replace >= 0 {
+			next = replaceAt(s.doc, replace+1, cand.Node())
+		} else {
+			next = s.doc.Append(cand.Node())
+		}
+		ngot, err := render.Render(next)
+		if err != nil {
+			return nonePick(), 0, err
+		}
+		dirty := dirty0.Union(nodeRect(cand.Node())).Inset(-2)
+		ngotP := loss.NewPlane(ngot)
+		nerr := s.errSum + ScoreRectOn(ngotP, s.wantP, dirty) - ScoreRectOn(s.gotP, s.wantP, dirty)
+		plen := pathLen(cand.Node())
+		cmds := docCmdLen(next)
+		if replace >= 0 && cand.FillRule() == svg.FillEvenOdd {
+			cmds = docCmdLen(s.doc)
+		}
+		a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
+		if a > bestA || a > curA {
+			continue
+		}
+		if a == bestA && (!best.ok || plen >= bestLen) {
+			continue
+		}
+		bestA = a
+		bestLen = plen
+		best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: replace, work: work, fill: fill, dropIdx: -1, mergeJ: -1, ok: true}
+	}
+	return best, bestLen, nil
+}
+
+// punch shrinks every path that covers a paper leftover so the hole
+// opens to the pane. Punching only the top layer reveals the plate
+// underneath and Score gets worse.
+func (s *world) paintsIsland(node svg.Node, island []pix) bool {
 	if !nodeRect(node).Overlaps(islandRect(island)) {
 		return false
 	}
-	d := svg.NewDocument(float64(w), float64(h)).WithViewBox(0, 0, float64(w), float64(h))
-	d = d.Append(whitePane(w, h).Node()).Append(node)
+	d := svg.NewDocument(float64(s.w), float64(s.h)).WithViewBox(0, 0, float64(s.w), float64(s.h))
+	d = d.Append(whitePane(s.w, s.h).Node()).Append(node)
 	img, err := render.Render(d)
 	if err != nil {
 		return false
@@ -345,36 +396,24 @@ func paintsIsland(node svg.Node, island []pix, w, h int) bool {
 	return false
 }
 
-func punchThrough(
-	best *formPick,
-	bestA *float64,
-	curA float64,
-	doc svg.Document,
-	want *image.NRGBA,
-	island []pix,
-	owner []uint16,
-	fills []color.NRGBA,
-	n int,
-	errSum float64,
-	w int,
-	seen []byte,
-) error {
-	next := doc
-	reclaims := make([][]pix, n)
+func (s *world) punch(left leftover) (formPick, error) {
+	curA := s.currentScore()
+	next := s.doc
+	reclaims := make([][]pix, s.paths)
 	any := false
-	for i := 0; i < n; i++ {
-		if !ownsAny(owner, island, w, uint16(i+1)) && !paintsIsland(doc.Children()[i+1], island, w, int(doc.Height())) {
+	for i := 0; i < s.paths; i++ {
+		if !ownsAny(s.owner, left.island, s.w, uint16(i+1)) && !s.paintsIsland(s.doc.Children()[i+1], left.island) {
 			continue
 		}
-		work := ownedMinus(owner, island, w, uint16(i+1), seen)
+		work := ownedMinus(s.owner, left.island, s.w, uint16(i+1), s.scratch.seen)
 		ring := convexHull(islandPoints(work))
 		if len(ring) < 3 {
 			continue
 		}
 		// Punch only this leftover. holeRings(work) would also
 		// carve every other void in the plate (trees, scale blocks).
-		cand := filledPath(ring, fills[i])
-		if hole := convexHull(islandPoints(island)); len(hole) >= 3 {
+		cand := filledPath(ring, s.fills[i])
+		if hole := convexHull(islandPoints(left.island)); len(hole) >= 3 {
 			cand = withHoles(cand, [][][2]float64{hole})
 		}
 		next = replaceAt(next, i+1, cand.Node())
@@ -382,20 +421,18 @@ func punchThrough(
 		any = true
 	}
 	if !any {
-		return nil
+		return nonePick(), nil
 	}
 	ngot, err := render.Render(next)
 	if err != nil {
-		return err
+		return nonePick(), err
 	}
-	nerr := Score(ngot, want, 0)
-	a := nerr + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-	if a >= curA || nerr >= errSum {
-		return nil
+	nerr := Score(ngot, s.want, 0)
+	a := nerr + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(s.doc))
+	if a >= curA || nerr >= s.errSum {
+		return nonePick(), nil
 	}
-	*bestA = a
-	*best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, work: island, reclaims: reclaims, dropIdx: -1, mergeJ: -1, ok: true}
-	return nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, work: left.island, reclaims: reclaims, dropIdx: -1, mergeJ: -1, ok: true}, nil
 }
 
 func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
@@ -417,108 +454,75 @@ func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
 	return buckets
 }
 
-func mergeLinearCand(doc svg.Document, want *image.NRGBA, owner []uint16, fills []color.NRGBA, n int, errSum float64, w int, sc *scratch, wantP *loss.Plane) (formPick, error) {
-	none := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
-	if n < 2 {
-		return none, nil
+func (s *world) mergeLinear() (formPick, error) {
+	best := nonePick()
+	if s.paths < 2 {
+		return best, nil
 	}
-	if sc == nil {
-		sc = &scratch{}
-	}
-	sc.buckets = fillBuckets(owner, w, n, sc.buckets)
-	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-	best := none
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			need := len(sc.buckets[i]) + len(sc.buckets[j])
+	s.scratch.buckets = fillBuckets(s.owner, s.w, s.paths, s.scratch.buckets)
+	curA := s.currentScore()
+	for i := 0; i < s.paths; i++ {
+		for j := i + 1; j < s.paths; j++ {
+			need := len(s.scratch.buckets[i]) + len(s.scratch.buckets[j])
 			if need < minIsland {
 				continue
 			}
-			sc.work = sc.work[:0]
-			sc.work = append(sc.work, sc.buckets[i]...)
-			sc.work = append(sc.work, sc.buckets[j]...)
-			gradient, ok := fitLinearFill(sc.work, want)
+			s.scratch.work = s.scratch.work[:0]
+			s.scratch.work = append(s.scratch.work, s.scratch.buckets[i]...)
+			s.scratch.work = append(s.scratch.work, s.scratch.buckets[j]...)
+			gradient, ok := fitLinearFill(s.scratch.work, s.want)
 			if !ok {
 				continue
 			}
-			ring := convexHull(islandPoints(sc.work))
+			ring := convexHull(islandPoints(s.scratch.work))
 			if len(ring) < 3 {
 				continue
 			}
-			next := replaceAt(doc, i+1, filledPath(ring, fills[i]).WithLinearFill(gradient).Node())
+			next := replaceAt(s.doc, i+1, filledPath(ring, s.fills[i]).WithLinearFill(gradient).Node())
 			next = dropAt(next, j+1)
 			ngot, err := render.Render(next)
 			if err != nil {
-				return none, err
+				return nonePick(), err
 			}
-			nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
-			a := nerr + pathCost*float64(n-1) + cmdCost*float64(docCmdLen(next))
+			nerr := ScoreOn(loss.NewPlane(ngot), s.wantP, 0)
+			a := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
 			if a >= curA {
 				continue
 			}
 			if best.ok && a >= best.a {
 				continue
 			}
-			work := append([]pix{}, sc.work...)
-			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: i, work: work, fill: meanFill(want, work), dropIdx: -1, mergeJ: j, ok: true}
+			work := append([]pix{}, s.scratch.work...)
+			best = formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: i, work: work, fill: meanFill(s.want, work), dropIdx: -1, mergeJ: j, ok: true}
 		}
 	}
 	return best, nil
 }
 
-func dropCand(doc svg.Document, want *image.NRGBA, owner []uint16, n int, errSum float64, wantP *loss.Plane) (formPick, error) {
-	none := formPick{replace: -1, dropIdx: -1, mergeJ: -1}
-	if n < 2 {
-		return none, nil
+func (s *world) drop() (formPick, error) {
+	if s.paths < 2 {
+		return nonePick(), nil
 	}
-	idx, ok := smallestOwner(owner, n)
+	idx, ok := smallestOwner(s.owner, s.paths)
 	if !ok {
-		return none, nil
+		return nonePick(), nil
 	}
-	next := dropAt(doc, idx+1)
+	next := dropAt(s.doc, idx+1)
 	ngot, err := render.Render(next)
 	if err != nil {
-		return none, err
+		return nonePick(), err
+	}
+	wantP := s.wantP
+	if wantP == nil {
+		wantP = loss.NewPlane(s.want)
 	}
 	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
-	curA := errSum + pathCost*float64(n) + cmdCost*float64(docCmdLen(doc))
-	a := nerr + pathCost*float64(n-1) + cmdCost*float64(docCmdLen(next))
-	if a >= curA || nerr > errSum {
-		return none, nil
+	curA := s.currentScore()
+	a := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
+	if a >= curA || nerr > s.errSum {
+		return nonePick(), nil
 	}
 	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, ok: true}, nil
-}
-
-// tryDrop removes the smallest claimed path if Score does not rise.
-// owner[] is place-time area, not paint after overlays; the accept
-// test is a full re-Score without that child.
-func tryDrop(doc *svg.Document, got **image.NRGBA, want *image.NRGBA, owner []uint16, fills *[]color.NRGBA, n *int, errSum *float64) (bool, error) {
-	if *n < 2 {
-		return false, nil
-	}
-	idx, ok := smallestOwner(owner, *n)
-	if !ok {
-		return false, nil
-	}
-	next := dropAt(*doc, idx+1)
-	ngot, err := render.Render(next)
-	if err != nil {
-		return false, err
-	}
-	nerr := Score(ngot, want, 0)
-	curA := *errSum + pathCost*float64(*n) + cmdCost*float64(docCmdLen(*doc))
-	a := nerr + pathCost*float64(*n-1) + cmdCost*float64(docCmdLen(next))
-	// cmd tax can exceed a real mark's pixel win. Do not drop if
-	// the pixmap gets worse — only redundant paint.
-	if a >= curA || nerr > *errSum {
-		return false, nil
-	}
-	*doc, *got, *errSum = next, ngot, nerr
-	dropOwner(owner, uint16(idx+1), *n)
-	f := *fills
-	*fills = append(f[:idx], f[idx+1:]...)
-	*n--
-	return true, nil
 }
 
 func smallestOwner(owner []uint16, n int) (int, bool) {
@@ -590,7 +594,7 @@ func whitePane(w, h int) svg.Path {
 	}, paper)
 }
 
-func formPaths(island []pix, col color.NRGBA, refine, holes bool, got, want *image.NRGBA) []svg.Path {
+func (s *world) formPaths(island []pix, col color.NRGBA, refine, holes bool) []svg.Path {
 	ring := convexHull(islandPoints(island))
 	if len(ring) < 3 {
 		return nil
@@ -600,17 +604,17 @@ func formPaths(island []pix, col color.NRGBA, refine, holes bool, got, want *ima
 		out = append(out, filledFit(island, ring, col))
 	}
 	if holes {
-		if hs := leftoverRings(island, got, want, col); len(hs) > 0 {
+		if hs := leftoverRings(island, s.got, s.want, col); len(hs) > 0 {
 			// A solid hull over a ring is a cover plate. Only the
 			// evenodd ring is on the menu.
 			out = []svg.Path{withHoles(filledPath(ring, col), hs)}
-		} else if sameColorHollow(island, want, col) {
+		} else if sameColorHollow(island, s.want, col) {
 			return nil
 		}
 	}
 	// Linear is a contract of stairs, not an expand cover.
 	if refine {
-		if gradient, ok := fitLinearFill(island, want); ok {
+		if gradient, ok := fitLinearFill(island, s.want); ok {
 			n := len(out)
 			for i := 0; i < n; i++ {
 				out = append(out, out[i].WithLinearFill(gradient))

@@ -150,23 +150,26 @@ func residualHSV(got, want *loss.Plane, skip []byte, x, y, w int) bool {
 	return colorErrHSV(got.At(x, y), want.At(x, y)) > minErr
 }
 
-// hottestIsland is the leftover blob Score would miss the most:
+// hottest is the leftover blob Score would miss the most:
 // same-coarse 4-connected leftover, ranked by ΣerrAt. Pixel count
 // preferred a huge mild rim over a small full miss. A later spike
 // or gap detector would feed the same ranking, not a second loop.
-func hottestIsland(got, want *image.NRGBA, skip []byte, sc *scratch, gotP, wantP *loss.Plane) (color.NRGBA, []pix) {
+func (s *world) hottest() (color.NRGBA, []pix) {
+	got, want := s.got, s.want
+	skip := s.skip
 	b := want.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if sc == nil {
-		sc = &scratch{}
-	}
+	sc := &s.scratch
 	sc.ensure(w * h)
 	mark, family := sc.mark, sc.family
+	gotP, wantP := s.gotP, s.wantP
 	if gotP == nil {
 		gotP = loss.NewPlane(got)
+		s.gotP = gotP
 	}
 	if wantP == nil {
 		wantP = loss.NewPlane(want)
+		s.wantP = wantP
 	}
 	gotP.Ensure()
 	wantP.Ensure()
