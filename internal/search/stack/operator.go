@@ -13,9 +13,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Operator is one iterative edit. It carries the world it reads and
-// its own scratch. choose starts every applicable Operator and waits
-// once.
+// Operator is one edit. choose starts every applicable Operator
+// and waits once. Score ranks the pool.
 type Operator interface {
 	Name() string
 	Applies() bool

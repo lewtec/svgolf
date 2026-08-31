@@ -370,6 +370,67 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 }
 
+func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	blue := color.NRGBA{B: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 8; x < 16; x++ {
+			want.SetNRGBA(x, y, blue)
+		}
+	}
+	plate := filledPath([][2]float64{{0, 0}, {32, 0}, {32, 32}, {0, 32}}, red)
+	bdoc := svg.NewDocument(32, 32).WithViewBox(0, 0, 32, 32)
+	bdoc = bdoc.Append(whitePane(32, 32).Node()).Append(plate.Node())
+	bgot, err := render.Render(bdoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   want,
+		got:    bgot,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(bgot),
+		doc:    bdoc,
+		skip:   make([]byte, 32*32),
+		owner:  make([]uint16, 32*32),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      32,
+		h:      32,
+		errSum: Score(bgot, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	lefts := s.leftovers()
+	if len(lefts) == 0 || !lefts[0].big() {
+		t.Fatal("sibling leftover empty")
+	}
+	adoc := svg.NewDocument(32, 32).WithViewBox(0, 0, 32, 32)
+	adoc = adoc.Append(whitePane(32, 32).Node())
+	agot, err := render.Render(adoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.doc, s.got, s.fills, s.owner, s.paths = adoc, agot, nil, make([]uint16, 32*32), 0
+	s.errSum = Score(agot, want, 0)
+	s.gotP.Reset(agot)
+	s.gotP.Ensure()
+	lefts = s.bindLeftovers(lefts)
+	pick, err := (Rectangle{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("rectangle=false want sibling leftover on this parent")
+	}
+}
+
 func TestStackTwoColorGetsBoth(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {

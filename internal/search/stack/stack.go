@@ -26,8 +26,8 @@ const (
 	survivorPicks = 3
 )
 
-// Stack scores leftover ops plus elementary delete/swap on up to
-// three survivor documents and keeps the Y lowest Score. Want stays native.
+// Stack crosses every pair of survivors: leftover of B on document A,
+// plus every world Operator on A. Score keeps the strongest. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -179,15 +179,22 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					bestA = a
 				}
 			}
+			miss := make([][]leftover, len(survivors))
+			for j, b := range survivors {
+				s.load(b)
+				miss[j] = s.leftovers()
+			}
 			var pool []formPick
-			for _, sv := range survivors {
-				s.load(sv)
-				picks, err := s.choose(ctx, s.leftovers(), sv)
-				if err != nil {
-					yield(search.Epoch{}, err)
-					return
+			for _, a := range survivors {
+				for j := range survivors {
+					s.load(a)
+					picks, err := s.choose(ctx, s.bindLeftovers(miss[j]), a)
+					if err != nil {
+						yield(search.Epoch{}, err)
+						return
+					}
+					pool = append(pool, picks...)
 				}
-				pool = append(pool, picks...)
 			}
 			kept := rankGeneration(pool, bestA, survivorPicks)
 			if len(kept) == 0 {
@@ -239,11 +246,21 @@ func (s *world) leftovers() []leftover {
 	blobs := s.hottestN(leftoverPicks)
 	out := make([]leftover, 0, len(blobs))
 	for _, b := range blobs {
-		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)}
+		out = append(out, leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)})
+	}
+	return s.bindLeftovers(out)
+}
+
+// bindLeftovers scores leftover islands against the loaded document
+// so a sibling's miss can be applied onto this parent.
+func (s *world) bindLeftovers(lefts []leftover) []leftover {
+	out := make([]leftover, len(lefts))
+	for i, left := range lefts {
+		left.grows = nil
 		if left.big() {
-			left.fresh = s.seedGrow(grow{i: -1, work: b.island, fill: b.col})
+			left.fresh = s.seedGrow(grow{i: -1, work: left.island, fill: left.col})
 		}
-		out = append(out, left)
+		out[i] = left
 	}
 	return out
 }
@@ -316,6 +333,7 @@ func (s *world) apply(pick formPick) {
 	if pick.owner != nil {
 		s.owner = pick.owner
 		s.fills = pick.fills
+		s.paths = len(s.fills)
 	} else if pick.dropIdx >= 0 {
 		dropOwner(s.owner, uint16(pick.dropIdx+1), s.paths)
 		s.fills = append(s.fills[:pick.dropIdx], s.fills[pick.dropIdx+1:]...)
