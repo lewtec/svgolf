@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"iter"
+	"sort"
 	"sync"
 	"time"
 
@@ -17,15 +18,17 @@ import (
 )
 
 const (
-	maxPaths  = 512
-	minIsland = 8
-	minErr    = 8
-	polyFit   = 2
+	maxPaths      = 512
+	minIsland     = 8
+	minErr        = 8
+	polyFit       = 2
+	leftoverPicks = 3
 )
 
-// Stack scores every applicable operator on the hottest leftover
-// (and join/drop) and keeps the best Score. Operators: absorb,
-// rectangle, grow, carve, simplify, wash, join, drop. Want stays native.
+// Stack scores every applicable operator on the three hottest
+// leftovers (and join/drop/restack) and keeps the best Score.
+// Operators: absorb, rectangle, ring, grow, carve, simplify, wash,
+// join, drop, restack. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -92,6 +95,9 @@ type formPick struct {
 	mergeJ   int
 	op       string
 	ok       bool
+	island   []pix
+	fills    []color.NRGBA
+	owner    []uint16
 }
 
 func nonePick() formPick {
@@ -156,22 +162,29 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				return
 			}
-			left := s.leftover()
-			pick, err := s.choose(ctx, left)
+			lefts := s.leftovers()
+			pick, err := s.choose(ctx, lefts)
 			if err != nil {
 				yield(search.Epoch{}, err)
 				return
 			}
 			if !pick.ok {
-				if !left.big() {
+				any := false
+				for _, left := range lefts {
+					if !left.big() {
+						continue
+					}
+					s.ignore(left)
+					any = true
+				}
+				if !any {
 					break
 				}
-				s.ignore(left)
 				continue
 			}
 			s.apply(pick)
 			yielded = true
-			if !emit(pick.op, left.island) {
+			if !emit(pick.op, pick.island) {
 				return
 			}
 		}
@@ -189,14 +202,17 @@ func (left leftover) big() bool {
 	return len(left.island) >= minIsland
 }
 
-func (s *world) leftover() leftover {
-	col, island := s.hottest()
-	left := leftover{island: island, col: col, paper: len(island) >= minIsland && paperLeftover(col)}
-	if !left.big() {
-		return left
+func (s *world) leftovers() []leftover {
+	blobs := s.hottestN(leftoverPicks)
+	out := make([]leftover, 0, len(blobs))
+	for _, b := range blobs {
+		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)}
+		if left.big() {
+			left.fresh = s.seedGrow(grow{i: -1, work: b.island, fill: b.col})
+		}
+		out = append(out, left)
 	}
-	left.fresh = s.seedGrow(grow{i: -1, work: island, fill: col})
-	return left
+	return out
 }
 
 func (s *world) seedGrow(g grow) grow {
@@ -218,7 +234,10 @@ func (s *world) ignore(left leftover) {
 
 func (s *world) apply(pick formPick) {
 	s.doc, s.got, s.errSum = pick.doc, pick.got, pick.errSum
-	if pick.dropIdx >= 0 {
+	if pick.owner != nil {
+		s.owner = pick.owner
+		s.fills = pick.fills
+	} else if pick.dropIdx >= 0 {
 		dropOwner(s.owner, uint16(pick.dropIdx+1), s.paths)
 		s.fills = append(s.fills[:pick.dropIdx], s.fills[pick.dropIdx+1:]...)
 		s.paths--
@@ -261,6 +280,57 @@ func (s *world) apply(pick formPick) {
 		s.gotP.Reset(s.got)
 	}
 	s.gotP.Ensure()
+}
+
+// restackOrder is large drawn area under smaller details. Pane stays
+// first. The live document is unchanged; Restack scores the proposal.
+func (s *world) restackOrder() (svg.Document, []color.NRGBA, []uint16, bool) {
+	if s.paths < 2 {
+		return svg.Document{}, nil, nil, false
+	}
+	kids := s.doc.Children()
+	type item struct {
+		node svg.Node
+		fill color.NRGBA
+		old  uint16
+		area float64
+	}
+	items := make([]item, s.paths)
+	for i := 0; i < s.paths; i++ {
+		items[i] = item{kids[i+1], s.fills[i], uint16(i + 1), pathArea(kids[i+1])}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].area > items[j].area
+	})
+	changed := false
+	for i, it := range items {
+		if it.old != uint16(i+1) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return svg.Document{}, nil, nil, false
+	}
+	out := svg.NewDocument(s.doc.Width(), s.doc.Height())
+	if vb := s.doc.ViewBox(); vb.Set() {
+		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
+	}
+	out = out.Append(kids[0])
+	fills := make([]color.NRGBA, s.paths)
+	toNew := make([]uint16, s.paths+2)
+	for i, it := range items {
+		out = out.Append(it.node)
+		toNew[it.old] = uint16(i + 1)
+		fills[i] = it.fill
+	}
+	owner := append([]uint16(nil), s.owner...)
+	for i, v := range owner {
+		if v != 0 && int(v) < len(toNew) {
+			owner[i] = toNew[v]
+		}
+	}
+	return out, fills, owner, true
 }
 
 func (s *world) connecting(island []pix, seen []byte) []grow {
@@ -483,6 +553,34 @@ func withHoles(p svg.Path, holes [][][2]float64) svg.Path {
 		p = appendRing(p, h)
 	}
 	return p.WithFillRule(svg.FillEvenOdd)
+}
+
+func pathArea(n svg.Node) float64 {
+	p, ok := n.Path()
+	if !ok {
+		return 0
+	}
+	rings := pathRings(p)
+	if len(rings) == 0 {
+		return 0
+	}
+	return shoelace(rings[0])
+}
+
+func shoelace(ring [][2]float64) float64 {
+	n := len(ring)
+	if n < 3 {
+		return 0
+	}
+	var a float64
+	for i := 0; i < n; i++ {
+		j := (i + 1) % n
+		a += ring[i][0]*ring[j][1] - ring[j][0]*ring[i][1]
+	}
+	if a < 0 {
+		a = -a
+	}
+	return a / 2
 }
 
 func pathRings(p svg.Path) [][][2]float64 {

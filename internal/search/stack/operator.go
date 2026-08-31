@@ -499,46 +499,127 @@ func (d Drop) Run() (formPick, error) {
 	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, op: d.Name(), ok: true}, nil
 }
 
-func (s *world) operators(left leftover) []Operator {
-	var buckets [][]pix
-	if s.paths > 0 {
-		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
+// Restack sorts existing paths by drawn area: large under small.
+// Score judges the reorder; apply never shuffles after accept.
+type Restack struct {
+	world *world
+}
+
+func (Restack) Name() string { return "restack" }
+func (r Restack) Applies() bool {
+	return r.world.paths >= 2
+}
+
+func (r Restack) Run() (formPick, error) {
+	s := r.world
+	next, fills, owner, ok := s.restackOrder()
+	if !ok {
+		return nonePick(), nil
 	}
+	ngot, err := render.Render(next)
+	if err != nil {
+		return nonePick(), err
+	}
+	wantP := s.wantP
+	if wantP == nil {
+		wantP = loss.NewPlane(s.want)
+	}
+	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
+	curA := s.currentScore()
+	a := nerr + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(next))
+	if a >= curA {
+		return nonePick(), nil
+	}
+	return formPick{
+		doc: next, got: ngot, errSum: nerr, a: a,
+		replace: -1, dropIdx: -1, mergeJ: -1,
+		op: r.Name(), ok: true,
+		fills: fills, owner: owner,
+	}, nil
+}
+
+func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
 		&Absorb{world: s, left: left},
 		Rectangle{world: s, left: left},
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
+	}
+}
+
+func (s *world) worldOps() []Operator {
+	var buckets [][]pix
+	if s.paths > 0 {
+		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
+	}
+	return []Operator{
 		Simplify{world: s, buckets: buckets},
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
 		Drop{world: s},
+		Restack{world: s},
 	}
 }
 
-func (s *world) choose(ctx context.Context, left leftover) (formPick, error) {
+var operatorNames = []string{
+	"absorb", "rectangle", "ring", "grow", "carve",
+	"simplify", "wash", "join", "drop", "restack",
+}
+
+func (s *world) choose(ctx context.Context, lefts []leftover) (formPick, error) {
+	type job struct {
+		op    Operator
+		left  leftover
+		bound bool
+	}
+	var jobs []job
+	for _, left := range lefts {
+		for _, op := range s.leftoverOps(left) {
+			if op.Applies() {
+				jobs = append(jobs, job{op: op, left: left, bound: true})
+			}
+		}
+	}
+	for _, op := range s.worldOps() {
+		if op.Applies() {
+			jobs = append(jobs, job{op: op})
+		}
+	}
+	type named struct {
+		pick    formPick
+		elapsed time.Duration
+	}
+	bestByName := make(map[string]*named, len(operatorNames))
 	var mu sync.Mutex
 	best := nonePick()
 	g, _ := errgroup.WithContext(ctx)
-	for _, op := range s.operators(left) {
-		if !op.Applies() {
-			continue
-		}
-		op := op
+	for _, job := range jobs {
+		job := job
 		g.Go(func() error {
 			started := time.Now()
-			p, err := op.Run()
-			s.logCandidate(op.Name(), time.Since(started), p)
+			p, err := job.op.Run()
 			if err != nil {
 				return err
 			}
-			if !p.ok {
-				return nil
+			if p.ok && job.bound {
+				p.island = job.left.island
 			}
+			elapsed := time.Since(started)
 			mu.Lock()
 			defer mu.Unlock()
-			if !best.ok || p.a < best.a {
+			st := bestByName[job.op.Name()]
+			if st == nil {
+				st = &named{}
+				bestByName[job.op.Name()] = st
+			}
+			if elapsed > st.elapsed {
+				st.elapsed = elapsed
+			}
+			if p.ok && (!st.pick.ok || p.a < st.pick.a) {
+				st.pick = p
+			}
+			if p.ok && (!best.ok || p.a < best.a) {
 				best = p
 			}
 			return nil
@@ -546,6 +627,11 @@ func (s *world) choose(ctx context.Context, left leftover) (formPick, error) {
 	}
 	if err := g.Wait(); err != nil {
 		return nonePick(), err
+	}
+	for _, name := range operatorNames {
+		if st, ok := bestByName[name]; ok {
+			s.logCandidate(name, st.elapsed, st.pick)
+		}
 	}
 	return best, nil
 }

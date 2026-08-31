@@ -150,11 +150,27 @@ func residualHSV(got, want *loss.Plane, skip []byte, x, y, w int) bool {
 	return colorErrHSV(got.At(x, y), want.At(x, y)) > minErr
 }
 
+type leftoverBlob struct {
+	col    color.NRGBA
+	island []pix
+	errSum float64
+}
+
 // hottest is the leftover blob Score would miss the most:
 // same-coarse 4-connected leftover, ranked by ΣerrAt. Pixel count
-// preferred a huge mild rim over a small full miss. A later spike
-// or gap detector would feed the same ranking, not a second loop.
+// preferred a huge mild rim over a small full miss.
 func (s *world) hottest() (color.NRGBA, []pix) {
+	top := s.hottestN(1)
+	if len(top) == 0 {
+		return color.NRGBA{}, nil
+	}
+	return top[0].col, top[0].island
+}
+
+func (s *world) hottestN(k int) []leftoverBlob {
+	if k <= 0 || s.want == nil {
+		return nil
+	}
 	got, want := s.got, s.want
 	skip := s.skip
 	b := want.Bounds()
@@ -183,8 +199,7 @@ func (s *world) hottest() (color.NRGBA, []pix) {
 		}
 	}
 	despeckle(mark, w, h)
-	best := []pix{}
-	var bestErr float64
+	best := make([]leftoverBlob, 0, k)
 	var cur []pix
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
 	for y := 0; y < h; y++ {
@@ -214,16 +229,36 @@ func (s *world) hottest() (color.NRGBA, []pix) {
 					pending = append(pending, pix{nx, ny})
 				}
 			}
-			if len(cur) < minIsland {
-				continue
-			}
-			if errSum > bestErr {
-				bestErr = errSum
-				best = append(best[:0], cur...)
-			}
+			best = rankBlob(best, k, leftoverBlob{
+				col:    meanFill(want, cur),
+				island: append([]pix{}, cur...),
+				errSum: errSum,
+			})
 		}
 	}
-	return meanFill(want, best), best
+	return best
+}
+
+func rankBlob(best []leftoverBlob, k int, b leftoverBlob) []leftoverBlob {
+	if len(b.island) < minIsland {
+		return best
+	}
+	pos := len(best)
+	for i := range best {
+		if b.errSum > best[i].errSum {
+			pos = i
+			break
+		}
+	}
+	if pos == k {
+		return best
+	}
+	if len(best) < k {
+		best = append(best, leftoverBlob{})
+	}
+	copy(best[pos+1:], best[pos:])
+	best[pos] = b
+	return best
 }
 
 func despeckle(mark []byte, w, h int) {

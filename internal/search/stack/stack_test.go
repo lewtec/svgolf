@@ -110,6 +110,49 @@ func TestHottestIslandPrefersFullMiss(t *testing.T) {
 	}
 }
 
+func TestHottestNKeepsThree(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	want := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for y := 0; y < 48; y++ {
+		for x := 0; x < 48; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
+	for y := 4; y < 24; y++ {
+		for x := 4; x < 24; x++ {
+			want.SetNRGBA(x, y, pale)
+		}
+	}
+	mid := color.NRGBA{R: 80, G: 80, B: 80, A: 255}
+	for y := 4; y < 16; y++ {
+		for x := 30; x < 42; x++ {
+			want.SetNRGBA(x, y, mid)
+		}
+	}
+	black := color.NRGBA{A: 255}
+	for y := 30; y < 38; y++ {
+		for x := 30; x < 38; x++ {
+			want.SetNRGBA(x, y, black)
+		}
+	}
+	top := (&world{got: got, want: want}).hottestN(3)
+	if len(top) != 3 {
+		t.Fatalf("hottestN=%d want 3", len(top))
+	}
+	seen := map[int]bool{}
+	for i, b := range top {
+		seen[len(b.island)] = true
+		if i > 0 && top[i-1].errSum < b.errSum {
+			t.Fatalf("not ranked by Σerr: %v", []float64{top[0].errSum, top[1].errSum, top[2].errSum})
+		}
+	}
+	if !seen[64] || !seen[144] || !seen[400] {
+		t.Fatalf("islands=%v want 64, 144, 400", []int{len(top[0].island), len(top[1].island), len(top[2].island)})
+	}
+}
+
 func TestStackRampOnePathNative(t *testing.T) {
 	// coarse() splits this ramp. Score must still keep one linear
 	// instead of a second flat for the light band.
@@ -216,6 +259,97 @@ func TestStackUnblurDoesNotRestack(t *testing.T) {
 	}
 	if n := len(forms(doc)); n != 1 {
 		t.Fatalf("paths=%d want 1 (polished plate)", n)
+	}
+}
+
+func TestStackLargePlateUnderSmall(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 8; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
+		}
+	}
+	doc, err := search.Last((Stack{}).Search(t.Context(), img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := forms(doc)
+	if len(fs) < 2 {
+		t.Fatalf("paths=%d want plate + mark", len(fs))
+	}
+	if pathArea(fs[0]) < pathArea(fs[1]) {
+		t.Fatalf("drawn order small-then-large: %v then %v", pathArea(fs[0]), pathArea(fs[1]))
+	}
+}
+
+func TestRestackUncoversMark(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	blue := color.NRGBA{B: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 8; x < 16; x++ {
+			want.SetNRGBA(x, y, blue)
+		}
+	}
+	doc := svg.NewDocument(32, 32).WithViewBox(0, 0, 32, 32)
+	doc = doc.Append(whitePane(32, 32).Node())
+	mark := filledPath([][2]float64{{8, 8}, {16, 8}, {16, 16}, {8, 16}}, blue)
+	plate := filledPath([][2]float64{{0, 0}, {32, 0}, {32, 32}, {0, 32}}, red)
+	doc = doc.Append(mark.Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 32*32)
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			owner[y*32+x] = 2
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 8; x < 16; x++ {
+			owner[y*32+x] = 1
+		}
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{blue, red},
+		paths:  2,
+		w:      32,
+		h:      32,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Restack{world: s}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("restack=false want large under small")
+	}
+	s.apply(pick)
+	kids := s.doc.Children()
+	if pathArea(kids[1]) < pathArea(kids[2]) {
+		t.Fatalf("still small-then-large: %v then %v", pathArea(kids[1]), pathArea(kids[2]))
+	}
+	if c := s.got.NRGBAAt(12, 12); c.B < 200 {
+		t.Fatalf("mark still hidden %+v", c)
 	}
 }
 
