@@ -397,10 +397,13 @@ func (s *world) apply(pick formPick) {
 	}
 }
 
-// swapAdjacent exchanges path i with i+1. Pane stays first.
-func (s *world) swapAdjacent(i int) (svg.Document, []color.NRGBA, []uint16, bool) {
-	if i < 0 || i+1 >= s.paths {
+// swapPaths exchanges path i with path j. Pane stays first.
+func (s *world) swapPaths(i, j int) (svg.Document, []color.NRGBA, []uint16, bool) {
+	if i < 0 || j < 0 || i >= s.paths || j >= s.paths || i == j {
 		return svg.Document{}, nil, nil, false
+	}
+	if i > j {
+		i, j = j, i
 	}
 	kids := s.doc.Children()
 	out := svg.NewDocument(s.doc.Width(), s.doc.Height())
@@ -408,19 +411,19 @@ func (s *world) swapAdjacent(i int) (svg.Document, []color.NRGBA, []uint16, bool
 		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
 	}
 	out = out.Append(kids[0])
-	for j := 0; j < s.paths; j++ {
-		src := j
-		if j == i {
-			src = i + 1
-		} else if j == i+1 {
+	for k := 0; k < s.paths; k++ {
+		src := k
+		if k == i {
+			src = j
+		} else if k == j {
 			src = i
 		}
 		out = out.Append(kids[src+1])
 	}
 	fills := append([]color.NRGBA(nil), s.fills...)
-	fills[i], fills[i+1] = fills[i+1], fills[i]
+	fills[i], fills[j] = fills[j], fills[i]
 	owner := append([]uint16(nil), s.owner...)
-	idA, idB := uint16(i+1), uint16(i+2)
+	idA, idB := uint16(i+1), uint16(j+1)
 	for k, v := range owner {
 		switch v {
 		case idA:
@@ -469,11 +472,6 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 	}
 	nerr := s.errSum + ScoreRectOn(loss.NewPlane(ngot), s.wantP, dirty) - old
 	cmds := docCmdLen(next)
-	if g.i >= 0 {
-		if p, ok := cand.Path(); ok && p.FillRule() == svg.FillEvenOdd {
-			cmds = docCmdLen(s.doc)
-		}
-	}
 	a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
 	if a >= curA {
 		return nonePick(), nil

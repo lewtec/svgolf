@@ -287,33 +287,47 @@ func (s Simplify) Run() (formPick, error) {
 			continue
 		}
 		rings := pathRings(p)
-		if len(rings) == 0 || len(rings[0]) < 4 {
-			continue
-		}
-		shorter := rdpClosed(rings[0], polyFit)
-		if len(shorter) >= len(rings[0]) {
-			continue
-		}
-		cand := filledPath(shorter, w.fills[i])
-		if len(rings) > 1 {
-			cand = withHoles(cand, rings[1:])
-		}
-		if lin, ok := node.LinearFill(); ok {
-			cand = cand.WithLinearFill(lin)
-		}
-		if pathLen(cand.Node()) >= pathLen(node) {
+		if len(rings) == 0 {
 			continue
 		}
 		g := w.seedGrow(grow{i: i, work: s.buckets[i], fill: w.fills[i]})
-		pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
-		if err != nil {
-			return nonePick(), err
+		lin, hasLin := node.LinearFill()
+		paint := func(outer [][2]float64, holes [][][2]float64) svg.Path {
+			cand := filledPath(outer, w.fills[i])
+			if len(holes) > 0 {
+				cand = withHoles(cand, holes)
+			}
+			if hasLin {
+				cand = cand.WithLinearFill(lin)
+			}
+			return cand
 		}
-		if pick.ok && pick.errSum > w.errSum {
-			continue
+		if len(rings[0]) >= 4 {
+			shorter := rdpClosed(rings[0], polyFit)
+			if len(shorter) < len(rings[0]) {
+				cand := paint(shorter, rings[1:])
+				if pathLen(cand.Node()) < pathLen(node) {
+					pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
+					if err != nil {
+						return nonePick(), err
+					}
+					if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
+						best = pick
+					}
+				}
+			}
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
-			best = pick
+		for h := 1; h < len(rings); h++ {
+			keep := append([][][2]float64{}, rings[1:h]...)
+			keep = append(keep, rings[h+1:]...)
+			cand := paint(rings[0], keep)
+			pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
+			if err != nil {
+				return nonePick(), err
+			}
+			if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
+				best = pick
+			}
 		}
 	}
 	return best, nil
@@ -511,20 +525,185 @@ func (d Delete) Run() (formPick, error) {
 	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
 }
 
-// Swap exchanges adjacent paths i and i+1. Score judges the painted order.
+// Slide moves one vertex of a touching path toward the leftover outline.
+type Slide struct {
+	world *world
+	left  leftover
+}
+
+func (Slide) Name() string { return "slide" }
+func (sl Slide) Applies() bool {
+	return sl.left.big() && sl.world.paths > 0
+}
+
+func (sl Slide) Run() (formPick, error) {
+	s := sl.world
+	target := outline(sl.left.island)
+	if len(target) < 1 {
+		return nonePick(), nil
+	}
+	curA := s.currentScore()
+	best := nonePick()
+	hot := islandRect(sl.left.island)
+	for i := 0; i < s.paths; i++ {
+		node := s.doc.Children()[i+1]
+		if !nodeRect(node).Overlaps(hot) {
+			continue
+		}
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := pathRings(p)
+		if len(rings) == 0 || len(rings[0]) < 3 {
+			continue
+		}
+		outer := rings[0]
+		vi, bestD := 0, -1.0
+		for v, q := range outer {
+			pull := nearest(target, q)
+			d := (q[0]-pull[0])*(q[0]-pull[0]) + (q[1]-pull[1])*(q[1]-pull[1])
+			if bestD < 0 || d < bestD {
+				vi, bestD = v, d
+			}
+		}
+		pull := nearest(target, outer[vi])
+		if pull[0] == outer[vi][0] && pull[1] == outer[vi][1] {
+			pull = leftoverCenter(sl.left.island)
+		}
+		if pull[0] == outer[vi][0] && pull[1] == outer[vi][1] {
+			continue
+		}
+		moved := append([][2]float64{}, outer...)
+		moved[vi] = pull
+		cand := filledPath(moved, s.fills[i])
+		if len(rings) > 1 {
+			cand = withHoles(cand, rings[1:])
+		}
+		if lin, ok := node.LinearFill(); ok {
+			cand = cand.WithLinearFill(lin)
+		}
+		g := s.seedGrow(grow{i: i, work: sl.left.island, fill: s.fills[i]})
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, s.paths, sl.Name(), curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
+}
+
+// Bend pulls the leftover-facing edge into a cubic toward the residual.
+type Bend struct {
+	world *world
+	left  leftover
+}
+
+func (Bend) Name() string { return "bend" }
+func (b Bend) Applies() bool {
+	return b.left.big() && b.world.paths > 0
+}
+
+func (b Bend) Run() (formPick, error) {
+	s := b.world
+	target := outline(b.left.island)
+	if len(target) < 1 {
+		return nonePick(), nil
+	}
+	curA := s.currentScore()
+	best := nonePick()
+	hot := islandRect(b.left.island)
+	for i := 0; i < s.paths; i++ {
+		node := s.doc.Children()[i+1]
+		if !nodeRect(node).Overlaps(hot) {
+			continue
+		}
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := pathRings(p)
+		if len(rings) == 0 || len(rings[0]) < 3 {
+			continue
+		}
+		outer := rings[0]
+		n := len(outer)
+		ei, bestD := 0, -1.0
+		var pull [2]float64
+		for e := 0; e < n; e++ {
+			a, c := outer[e], outer[(e+1)%n]
+			mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
+			q := nearest(target, mid)
+			d := (mid[0]-q[0])*(mid[0]-q[0]) + (mid[1]-q[1])*(mid[1]-q[1])
+			if bestD < 0 || d < bestD {
+				ei, bestD, pull = e, d, q
+			}
+		}
+		a, c := outer[ei], outer[(ei+1)%n]
+		mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
+		if pull[0] == mid[0] && pull[1] == mid[1] {
+			pull = leftoverCenter(b.left.island)
+		}
+		if pull[0] == mid[0] && pull[1] == mid[1] {
+			continue
+		}
+		c1 := [2]float64{(a[0] + pull[0]) / 2, (a[1] + pull[1]) / 2}
+		c2 := [2]float64{(c[0] + pull[0]) / 2, (c[1] + pull[1]) / 2}
+		cand := bentPath(outer, rings[1:], s.fills[i], ei, c1, c2)
+		if lin, ok := node.LinearFill(); ok {
+			cand = cand.WithLinearFill(lin)
+		}
+		g := s.seedGrow(grow{i: i, work: b.left.island, fill: s.fills[i]})
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, s.paths, b.Name(), curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
+}
+
+func bentPath(outer [][2]float64, holes [][][2]float64, col color.NRGBA, edge int, c1, c2 [2]float64) svg.Path {
+	n := len(outer)
+	if n < 3 {
+		return filledPath(outer, col)
+	}
+	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: outer[0][0], Y: outer[0][1]}}
+	for e := 0; e < n; e++ {
+		to := outer[(e+1)%n]
+		if e == edge {
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdCubic, X1: c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1], X: to[0], Y: to[1]})
+			continue
+		}
+		cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: to[0], Y: to[1]})
+	}
+	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
+	p, _ := svg.NewPath().WithCommands(cmds)
+	p = p.WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
+	if len(holes) > 0 {
+		p = withHoles(p, holes)
+	}
+	return p
+}
+
+// Swap exchanges paths i and j. Score judges the painted order.
 type Swap struct {
 	world *world
-	i     int
+	i, j  int
 }
 
 func (Swap) Name() string { return "swap" }
 func (sw Swap) Applies() bool {
-	return sw.i >= 0 && sw.i+1 < sw.world.paths
+	return sw.i >= 0 && sw.j > sw.i && sw.j < sw.world.paths
 }
 
 func (sw Swap) Run() (formPick, error) {
 	s := sw.world
-	next, fills, owner, ok := s.swapAdjacent(sw.i)
+	next, fills, owner, ok := s.swapPaths(sw.i, sw.j)
 	if !ok {
 		return nonePick(), nil
 	}
@@ -557,6 +736,8 @@ func (s *world) leftoverOps(left leftover) []Operator {
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
+		Slide{world: s, left: left},
+		Bend{world: s, left: left},
 	}
 }
 
@@ -570,8 +751,10 @@ func (s *world) worldOps() []Operator {
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
 	}
-	for i := 0; i+1 < s.paths; i++ {
-		ops = append(ops, Swap{world: s, i: i})
+	for i := 0; i < s.paths; i++ {
+		for j := i + 1; j < s.paths; j++ {
+			ops = append(ops, Swap{world: s, i: i, j: j})
+		}
 	}
 	for i := 0; i < s.paths; i++ {
 		ops = append(ops, Delete{world: s, i: i})
@@ -581,7 +764,7 @@ func (s *world) worldOps() []Operator {
 
 var operatorNames = []string{
 	"absorb", "cover", "ring", "grow", "carve",
-	"simplify", "wash", "join", "swap", "delete",
+	"slide", "bend", "simplify", "wash", "join", "swap", "delete",
 }
 
 func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot) ([]formPick, error) {

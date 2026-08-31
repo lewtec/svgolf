@@ -25,6 +25,58 @@ func forms(d svg.Document) []svg.Node {
 	return kids[1:]
 }
 
+func TestSimplifyDropsUselessHole(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	outer := [][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}
+	hole := [][2]float64{{4, 4}, {8, 4}, {8, 8}, {4, 8}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node())
+	doc = doc.Append(withHoles(filledPath(outer, red), [][][2]float64{hole}).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 16*16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			owner[y*16+x] = 1
+		}
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("simplify=false want drop the hole over red")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[1].Path()
+	if !ok || p.FillRule() == svg.FillEvenOdd {
+		t.Fatal("hole still punched")
+	}
+}
+
 func TestTryDropRedundant(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
@@ -369,7 +421,7 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Swap{world: s, i: 0}).Run()
+	pick, err := (Swap{world: s, i: 0, j: 1}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,6 +435,105 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 	if c := s.got.NRGBAAt(12, 12); c.B < 200 {
 		t.Fatalf("mark still hidden %+v", c)
+	}
+}
+
+func TestSlidePullsTowardLeftover(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	plate := filledPath([][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}, red)
+	doc := svg.NewDocument(32, 16).WithViewBox(0, 0, 32, 16)
+	doc = doc.Append(whitePane(32, 16).Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 32*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      32,
+		h:      16,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Slide{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("slide=false want pull toward leftover")
+	}
+}
+
+func TestBendPutsCubicTowardLeftover(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	plate := filledPath([][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}, red)
+	doc := svg.NewDocument(32, 16).WithViewBox(0, 0, 32, 16)
+	doc = doc.Append(whitePane(32, 16).Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 32*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      32,
+		h:      16,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Bend{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("bend=false want cubic toward leftover")
+	}
+	p, ok := pick.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	cubics := 0
+	for _, c := range p.Commands() {
+		if c.Kind == svg.CmdCubic {
+			cubics++
+		}
+	}
+	if cubics == 0 {
+		t.Fatal("bend added no cubic")
 	}
 }
 

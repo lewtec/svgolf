@@ -95,6 +95,34 @@ func coverRing(work []pix, sides int) [][2]float64 {
 	return collapseToSides(ring, sides)
 }
 
+func leftoverCenter(island []pix) [2]float64 {
+	if len(island) == 0 {
+		return [2]float64{}
+	}
+	var sx, sy float64
+	for _, p := range island {
+		sx += float64(p.x) + 0.5
+		sy += float64(p.y) + 0.5
+	}
+	n := float64(len(island))
+	return [2]float64{sx / n, sy / n}
+}
+
+func nearest(ring [][2]float64, q [2]float64) [2]float64 {
+	if len(ring) == 0 {
+		return q
+	}
+	best := ring[0]
+	bestD := (best[0]-q[0])*(best[0]-q[0]) + (best[1]-q[1])*(best[1]-q[1])
+	for _, p := range ring[1:] {
+		d := (p[0]-q[0])*(p[0]-q[0]) + (p[1]-q[1])*(p[1]-q[1])
+		if d < bestD {
+			best, bestD = p, d
+		}
+	}
+	return best
+}
+
 func collapseToSides(ring [][2]float64, sides int) [][2]float64 {
 	if sides < 3 {
 		sides = 3
