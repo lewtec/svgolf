@@ -170,6 +170,22 @@ func TestRankGenerationKeepsYBest(t *testing.T) {
 	}
 }
 
+func TestRankGenerationOnePerParent(t *testing.T) {
+	pool := []formPick{
+		{ok: true, a: 10, parent: snapshot{id: 1}},
+		{ok: true, a: 11, parent: snapshot{id: 1}},
+		{ok: true, a: 20, parent: snapshot{id: 2}},
+		{ok: true, a: 30, parent: snapshot{id: 3}},
+	}
+	got := rankGeneration(pool, 40, 3)
+	if len(got) != 3 {
+		t.Fatalf("kept=%d want 3", len(got))
+	}
+	if got[0].a != 10 || got[1].a != 20 || got[2].a != 30 {
+		t.Fatalf("order=%v want 10,20,30 (one per parent)", []float64{got[0].a, got[1].a, got[2].a})
+	}
+}
+
 func TestStackRampOnePathNative(t *testing.T) {
 	// coarse() splits this ramp. Score must still keep one linear
 	// instead of a second flat for the light band.

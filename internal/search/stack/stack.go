@@ -52,6 +52,7 @@ type world struct {
 	w, h         int
 	candidateLog io.Writer
 	logMu        sync.Mutex
+	snapID       int
 }
 
 var candidateLog io.Writer
@@ -101,6 +102,7 @@ type formPick struct {
 }
 
 type snapshot struct {
+	id     int
 	doc    svg.Document
 	got    *image.NRGBA
 	fills  []color.NRGBA
@@ -283,7 +285,9 @@ func (sn snapshot) score() float64 {
 }
 
 func (s *world) snap() snapshot {
+	s.snapID++
 	return snapshot{
+		id:     s.snapID,
 		doc:    s.doc,
 		got:    s.got,
 		fills:  append([]color.NRGBA(nil), s.fills...),
@@ -318,10 +322,21 @@ func rankGeneration(pool []formPick, bestA float64, y int) []formPick {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].a < out[j].a })
-	if y > 0 && len(out) > y {
-		out = out[:y]
+	var kept []formPick
+	seen := map[int]bool{}
+	for _, p := range out {
+		if p.parent.id != 0 && seen[p.parent.id] {
+			continue
+		}
+		if p.parent.id != 0 {
+			seen[p.parent.id] = true
+		}
+		kept = append(kept, p)
+		if y > 0 && len(kept) == y {
+			break
+		}
 	}
-	return out
+	return kept
 }
 
 func (s *world) ignore(left leftover) {
@@ -377,6 +392,9 @@ func (s *world) apply(pick formPick) {
 		s.gotP.Reset(s.got)
 	}
 	s.gotP.Ensure()
+	if s.skip != nil {
+		clear(s.skip)
+	}
 }
 
 // swapAdjacent exchanges path i with i+1. Pane stays first.
