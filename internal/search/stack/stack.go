@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"iter"
+	"math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -88,6 +89,7 @@ type formPick struct {
 	errSum   float64
 	a        float64
 	replace  int
+	insert   int
 	work     []pix
 	fill     color.NRGBA
 	reclaims [][]pix
@@ -113,7 +115,7 @@ type snapshot struct {
 }
 
 func nonePick() formPick {
-	return formPick{replace: -1, dropIdx: -1, mergeJ: -1}
+	return formPick{replace: -1, insert: -1, dropIdx: -1, mergeJ: -1}
 }
 
 func newWorld(target *image.NRGBA) (*world, error) {
@@ -381,6 +383,18 @@ func (s *world) apply(pick formPick) {
 		clearOwner(s.owner, id)
 		claim(s.owner, pick.work, s.w, id)
 		s.fills[pick.replace] = pick.fill
+	} else if pick.insert >= 0 && pick.insert < s.paths {
+		id := uint16(pick.insert + 1)
+		for i, v := range s.owner {
+			if v >= id {
+				s.owner[i] = v + 1
+			}
+		}
+		s.fills = append(s.fills, color.NRGBA{})
+		copy(s.fills[pick.insert+1:], s.fills[pick.insert:])
+		s.fills[pick.insert] = pick.fill
+		claim(s.owner, pick.work, s.w, id)
+		s.paths++
 	} else {
 		claim(s.owner, pick.work, s.w, uint16(s.paths+1))
 		s.fills = append(s.fills, pick.fill)
@@ -488,7 +502,39 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 	if a >= curA {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: g.i, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: true}, nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: true}, nil
+}
+
+// addLayer scores a new path on top and at one random existing
+// slot. A background plate loses on top; Score keeps it if the
+// random slot is behind the thing it must not cover.
+func (s *world) addLayer(cand svg.Path, g grow, op string) (formPick, error) {
+	node := cand.Node()
+	curA := s.currentScore()
+	best := nonePick()
+	slots := []int{s.paths}
+	if s.paths > 0 {
+		slots = append(slots, rand.IntN(s.paths))
+	}
+	for _, at := range slots {
+		var next svg.Document
+		if at >= s.paths {
+			next = s.doc.Append(node)
+		} else {
+			next = insertAt(s.doc, at+1, node)
+		}
+		pick, err := s.scoreCand(next, node, g, s.paths+1, op, curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && at < s.paths {
+			pick.insert = at
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
 }
 
 func (s *world) paintsIsland(node svg.Node, island []pix) bool {
@@ -789,6 +835,27 @@ func nodeRect(ns ...svg.Node) image.Rectangle {
 		}
 	}
 	return r
+}
+
+func insertAt(d svg.Document, i int, n svg.Node) svg.Document {
+	kids := d.Children()
+	out := svg.NewDocument(d.Width(), d.Height())
+	if vb := d.ViewBox(); vb.Set() {
+		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
+	}
+	if i < 0 {
+		i = 0
+	}
+	for j, k := range kids {
+		if j == i {
+			out = out.Append(n)
+		}
+		out = out.Append(k)
+	}
+	if i >= len(kids) {
+		out = out.Append(n)
+	}
+	return out
 }
 
 func replaceAt(d svg.Document, i int, n svg.Node) svg.Document {

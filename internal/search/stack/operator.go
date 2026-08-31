@@ -42,8 +42,7 @@ func (c Cover) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g.ring = ring
-	cand := filledPath(ring, g.fill)
-	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, c.Name(), s.currentScore())
+	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
 }
 
 // Hull places the leftover convex hull as a path. Score picks
@@ -68,8 +67,7 @@ func (h Hull) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g.ring = ring
-	cand := filledPath(ring, g.fill)
-	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, h.Name(), s.currentScore())
+	return s.addLayer(filledPath(ring, g.fill), g, h.Name())
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -98,8 +96,7 @@ func (r Ring) Run() (formPick, error) {
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
-	cand := withHoles(filledPath(g.ring, g.fill), holes)
-	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, r.Name(), s.currentScore())
+	return s.addLayer(withHoles(filledPath(g.ring, g.fill), holes), g, r.Name())
 }
 
 // Absorb writes leftover error back into a touching path as a 2-stop.
@@ -520,7 +517,7 @@ func (d Delete) Run() (formPick, error) {
 	if a >= curA || nerr > s.errSum {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
 }
 
 // Slide moves one vertex of a touching path toward the leftover outline.
@@ -770,7 +767,7 @@ func (sw Swap) Run() (formPick, error) {
 	}
 	return formPick{
 		doc: next, got: ngot, errSum: nerr, a: a,
-		replace: -1, dropIdx: -1, mergeJ: -1,
+		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
 		op: sw.Name(), ok: true,
 		fills: fills, owner: owner,
 	}, nil

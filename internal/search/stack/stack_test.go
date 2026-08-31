@@ -604,6 +604,77 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 }
 
+func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	blue := color.NRGBA{B: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	for y := 12; y < 20; y++ {
+		for x := 12; x < 20; x++ {
+			want.SetNRGBA(x, y, blue)
+		}
+	}
+	mark := filledPath([][2]float64{{12, 12}, {20, 12}, {20, 20}, {12, 20}}, blue)
+	doc := svg.NewDocument(32, 32).WithViewBox(0, 0, 32, 32)
+	doc = doc.Append(whitePane(32, 32).Node()).Append(mark.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 32*32)
+	for y := 12; y < 20; y++ {
+		for x := 12; x < 20; x++ {
+			owner[y*32+x] = 1
+		}
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{blue},
+		paths:  1,
+		w:      32,
+		h:      32,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("cover=false want red behind the mark")
+	}
+	if pick.insert != 0 {
+		t.Fatalf("insert=%d want 0 (behind mark)", pick.insert)
+	}
+	s.apply(pick)
+	if s.paths != 2 {
+		t.Fatalf("paths=%d want 2", s.paths)
+	}
+	if s.fills[0] != red || s.fills[1] != blue {
+		t.Fatalf("fills=%v want red then blue", s.fills)
+	}
+	if c := s.got.NRGBAAt(16, 16); c.B < 200 {
+		t.Fatalf("mark covered %+v", c)
+	}
+	if c := s.got.NRGBAAt(2, 2); c.R < 200 {
+		t.Fatalf("field not red %+v", c)
+	}
+}
+
 func TestSlidePullsTowardLeftover(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
