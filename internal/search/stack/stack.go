@@ -585,16 +585,16 @@ func whitePane(w, h int) svg.Path {
 func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2]float64 {
 	var rings [][][2]float64
 	for _, h := range voids(island) {
-		if paperLeftover(meanFill(want, h)) {
+		if paperLeftover(modeFill(want, h)) {
 			continue
 		}
-		if loss.ColorAt(meanFill(want, h), col) <= minErr {
+		if loss.ColorAt(modeFill(want, h), col) <= minErr {
 			continue
 		}
 		if !holePainted(got, want, h) {
 			continue
 		}
-		r := quadRing(h)
+		r := coverRing(h)
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}
@@ -604,10 +604,10 @@ func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2
 
 func sameColorHollow(island []pix, want *image.NRGBA, col color.NRGBA) bool {
 	for _, h := range voids(island) {
-		if paperLeftover(meanFill(want, h)) {
+		if paperLeftover(modeFill(want, h)) {
 			continue
 		}
-		if loss.ColorAt(meanFill(want, h), col) <= minErr {
+		if loss.ColorAt(modeFill(want, h), col) <= minErr {
 			return true
 		}
 	}

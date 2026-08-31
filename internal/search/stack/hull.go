@@ -1,7 +1,6 @@
 package stack
 
 import (
-	"math"
 	"sort"
 )
 
@@ -77,14 +76,20 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// quadRing is coverRing with four sides.
-func quadRing(work []pix) [][2]float64 {
-	return coverRing(work, 4)
+func hullRing(work []pix) [][2]float64 {
+	if len(work) == 0 {
+		return nil
+	}
+	hull := convexHull(islandCorners(work))
+	if len(hull) < 3 {
+		return bbox(work)
+	}
+	return uncross(hull)
 }
 
-// coverRing walks the residual outline, then collapses to sides.
-// Convex hull filled notches; the outline does not.
-func coverRing(work []pix, sides int) [][2]float64 {
+// coverRing is the leftover outline with only exact colinear
+// vertices removed. Simplify drops more vertices later.
+func coverRing(work []pix) [][2]float64 {
 	if len(work) == 0 {
 		return nil
 	}
@@ -92,7 +97,30 @@ func coverRing(work []pix, sides int) [][2]float64 {
 	if len(ring) < 3 {
 		return bbox(work)
 	}
-	return uncross(collapseToSides(ring, sides))
+	return uncross(collapseColinear(ring))
+}
+
+func collapseColinear(ring [][2]float64) [][2]float64 {
+	if len(ring) < 4 {
+		return ring
+	}
+	out := append([][2]float64{}, ring...)
+	for len(out) > 3 {
+		n := len(out)
+		drop := -1
+		for i := 0; i < n; i++ {
+			a, b, c := out[(i-1+n)%n], out[i], out[(i+1)%n]
+			if (b[0]-a[0])*(c[1]-a[1]) == (b[1]-a[1])*(c[0]-a[0]) {
+				drop = i
+				break
+			}
+		}
+		if drop < 0 {
+			break
+		}
+		out = append(out[:drop], out[drop+1:]...)
+	}
+	return out
 }
 
 func edgesCross(a, b, c, d [2]float64) bool {
@@ -162,28 +190,4 @@ func nearest(ring [][2]float64, q [2]float64) [2]float64 {
 		}
 	}
 	return best
-}
-
-func collapseToSides(ring [][2]float64, sides int) [][2]float64 {
-	if sides < 3 {
-		sides = 3
-	}
-	if len(ring) <= sides {
-		return ring
-	}
-	out := append([][2]float64{}, ring...)
-	for len(out) > sides {
-		n := len(out)
-		drop := 0
-		best := math.Inf(1)
-		for i := 0; i < n; i++ {
-			d := distLine(out[i], out[(i-1+n)%n], out[(i+1)%n])
-			if d < best {
-				best = d
-				drop = i
-			}
-		}
-		out = append(out[:drop], out[drop+1:]...)
-	}
-	return out
 }

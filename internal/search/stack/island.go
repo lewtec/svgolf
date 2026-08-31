@@ -230,7 +230,7 @@ func (s *world) hottestN(k int) []leftoverBlob {
 				}
 			}
 			best = rankBlob(best, k, leftoverBlob{
-				col:    meanFill(want, cur),
+				col:    modeFill(want, cur),
 				island: append([]pix{}, cur...),
 				errSum: errSum,
 			})
@@ -287,6 +287,31 @@ func despeckle(mark []byte, w, h int) {
 	for _, i := range drop {
 		mark[i] = 0
 	}
+}
+
+func modeFill(want *image.NRGBA, island []pix) color.NRGBA {
+	if len(island) == 0 {
+		return color.NRGBA{}
+	}
+	counts := make(map[color.NRGBA]int, 8)
+	var best color.NRGBA
+	bestN := -1
+	for _, p := range island {
+		c := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
+		if c.A < 128 {
+			continue
+		}
+		n := counts[c] + 1
+		counts[c] = n
+		if n > bestN {
+			best, bestN = c, n
+		}
+	}
+	if bestN < 0 {
+		return paper
+	}
+	best.A = 255
+	return best
 }
 
 func meanFill(want *image.NRGBA, island []pix) color.NRGBA {

@@ -21,8 +21,7 @@ type Operator interface {
 	Run() (formPick, error)
 }
 
-// Cover maps a low-edge polygon onto an HSV leftover island.
-// Sides 3–6 are scored; Score keeps the cheapest.
+// Cover places the leftover outline as a path. Mode fill.
 type Cover struct {
 	world *world
 	left  leftover
@@ -34,28 +33,43 @@ func (c Cover) Applies() bool {
 }
 
 func (c Cover) Run() (formPick, error) {
-	s, g0 := c.world, c.left.fresh
-	if len(g0.work) < minIsland {
+	s, g := c.world, c.left.fresh
+	if len(g.work) < minIsland {
 		return nonePick(), nil
 	}
-	curA := s.currentScore()
-	best := nonePick()
-	for sides := 3; sides <= 6; sides++ {
-		g := g0
-		g.ring = coverRing(g.work, sides)
-		if len(g.ring) < 3 {
-			continue
-		}
-		cand := filledPath(g.ring, g.fill)
-		pick, err := s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, c.Name(), curA)
-		if err != nil {
-			return nonePick(), err
-		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
-			best = pick
-		}
+	ring := coverRing(g.work)
+	if len(ring) < 3 {
+		return nonePick(), nil
 	}
-	return best, nil
+	g.ring = ring
+	cand := filledPath(ring, g.fill)
+	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, c.Name(), s.currentScore())
+}
+
+// Hull places the leftover convex hull as a path. Score picks
+// hull versus Cover outline.
+type Hull struct {
+	world *world
+	left  leftover
+}
+
+func (Hull) Name() string { return "hull" }
+func (h Hull) Applies() bool {
+	return h.left.big() && !h.left.paper && h.world.paths < maxPaths
+}
+
+func (h Hull) Run() (formPick, error) {
+	s, g := h.world, h.left.fresh
+	if len(g.work) < minIsland {
+		return nonePick(), nil
+	}
+	ring := hullRing(g.work)
+	if len(ring) < 3 {
+		return nonePick(), nil
+	}
+	g.ring = ring
+	cand := filledPath(ring, g.fill)
+	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, h.Name(), s.currentScore())
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -80,7 +94,7 @@ func (r Ring) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g := r.left.fresh
-	g.ring = quadRing(g.work)
+	g.ring = coverRing(g.work)
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
@@ -118,11 +132,12 @@ func (a *Absorb) Run() (formPick, error) {
 		if !ok {
 			continue
 		}
-		g.ring = quadRing(g.work)
-		if len(g.ring) < 3 {
+		node := s.doc.Children()[g.i+1]
+		p, ok := node.Path()
+		if !ok {
 			continue
 		}
-		cand := filledPath(g.ring, g.fill).WithLinearFill(grad)
+		cand := p.WithLinearFill(grad)
 		pick, err := s.scoreCand(replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, s.paths, a.Name(), curA)
 		if err != nil {
 			return nonePick(), err
@@ -155,11 +170,12 @@ func (g *Grow) Run() (formPick, error) {
 	curA := s.currentScore()
 	best := nonePick()
 	for _, work := range works {
-		work.ring = quadRing(work.work)
-		if len(work.ring) < 3 {
+		ring := coverRing(work.work)
+		if len(ring) < 3 {
 			continue
 		}
-		cand := filledPath(work.ring, work.fill)
+		work.ring = ring
+		cand := filledPath(ring, work.fill)
 		pick, err := s.scoreCand(replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, s.paths, g.Name(), curA)
 		if err != nil {
 			return nonePick(), err
@@ -188,7 +204,7 @@ func (c *Carve) Run() (formPick, error) {
 	c.scratch.ensure(s.w * s.h)
 	hole := c.left.fresh.ring
 	if len(hole) < 3 {
-		hole = quadRing(c.left.island)
+		hole = coverRing(c.left.island)
 	}
 	if len(hole) < 3 {
 		return nonePick(), nil
@@ -265,13 +281,13 @@ func (c *Carve) paper(hole [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-// Simplify shortens one existing path with RDP.
+// Simplify drops one vertex or one hole. Score picks the drop.
 type Simplify struct {
 	world   *world
 	buckets [][]pix
 }
 
-func (Simplify) Name() string { return "simplify" }
+func (s Simplify) Name() string { return "simplify" }
 func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
@@ -302,18 +318,21 @@ func (s Simplify) Run() (formPick, error) {
 			}
 			return cand
 		}
-		if len(rings[0]) >= 4 {
-			shorter := rdpClosed(rings[0], polyFit)
-			if len(shorter) < len(rings[0]) {
+		outer := rings[0]
+		if len(outer) >= 4 {
+			for v := 0; v < len(outer); v++ {
+				shorter := append([][2]float64{}, outer[:v]...)
+				shorter = append(shorter, outer[v+1:]...)
+				if ringCrosses(shorter) {
+					continue
+				}
 				cand := paint(shorter, rings[1:])
-				if pathLen(cand.Node()) < pathLen(node) {
-					pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
-					if err != nil {
-						return nonePick(), err
-					}
-					if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
-						best = pick
-					}
+				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
+				if err != nil {
+					return nonePick(), err
+				}
+				if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
+					best = pick
 				}
 			}
 		}
@@ -351,7 +370,7 @@ func (w *Wash) Run() (formPick, error) {
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
 		work := w.buckets[i]
-		grad, ok := fitLinearFill(work, s.want)
+		grad, ok := fitLinearStops(work, s.want)
 		if !ok {
 			continue
 		}
@@ -380,12 +399,12 @@ func (w *Wash) Run() (formPick, error) {
 			if len(w.scratch.work) < minIsland {
 				continue
 			}
-			grad, ok := fitLinearFill(w.scratch.work, s.want)
+			grad, ok := fitLinearStops(w.scratch.work, s.want)
 			if !ok {
 				continue
 			}
 			work := append([]pix{}, w.scratch.work...)
-			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: quadRing(work)})
+			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: coverRing(work)})
 			if len(g.ring) < 3 {
 				continue
 			}
@@ -443,14 +462,17 @@ func (j *Join) Run() (formPick, error) {
 			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
 			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
 			work := append([]pix{}, j.scratch.work...)
-			fill := meanTwo(s.fills[i], s.fills[jn])
-			g := s.seedGrow(grow{i: i, work: work, fill: fill})
-			for sides := 3; sides <= 6; sides++ {
-				g.ring = coverRing(work, sides)
-				if len(g.ring) < 3 {
-					continue
-				}
-				cand := filledPath(g.ring, fill)
+			fills := []color.NRGBA{s.fills[i], s.fills[jn]}
+			if fills[0] == fills[1] {
+				fills = fills[:1]
+			}
+			ring := coverRing(work)
+			if len(ring) < 3 {
+				continue
+			}
+			for _, fill := range fills {
+				g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: ring})
+				cand := filledPath(ring, fill)
 				next := replaceAt(s.doc, i+1, cand.Node())
 				next = dropAt(next, jn+1)
 				pick, err := s.scoreCand(next, cand.Node(), g, s.paths-1, j.Name(), curA)
@@ -468,15 +490,6 @@ func (j *Join) Run() (formPick, error) {
 		}
 	}
 	return best, nil
-}
-
-func meanTwo(a, b color.NRGBA) color.NRGBA {
-	return color.NRGBA{
-		R: uint8((int(a.R) + int(b.R)) / 2),
-		G: uint8((int(a.G) + int(b.G)) / 2),
-		B: uint8((int(a.B) + int(b.B)) / 2),
-		A: 255,
-	}
 }
 
 // Delete removes path i if Score improves.
@@ -615,28 +628,28 @@ func (b Bend) Run() (formPick, error) {
 		}
 		outer := rings[0]
 		n := len(outer)
+		if n < 3 {
+			continue
+		}
+		ctr := leftoverCenter(b.left.island)
 		ei, bestD := 0, -1.0
-		var pull [2]float64
 		for e := 0; e < n; e++ {
 			a, c := outer[e], outer[(e+1)%n]
 			mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
-			q := nearest(target, mid)
-			d := (mid[0]-q[0])*(mid[0]-q[0]) + (mid[1]-q[1])*(mid[1]-q[1])
+			d := (mid[0]-ctr[0])*(mid[0]-ctr[0]) + (mid[1]-ctr[1])*(mid[1]-ctr[1])
 			if bestD < 0 || d < bestD {
-				ei, bestD, pull = e, d, q
+				ei, bestD = e, d
 			}
 		}
 		a, c := outer[ei], outer[(ei+1)%n]
 		mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
+		pull := nearest(target, mid)
 		if pull[0] == mid[0] && pull[1] == mid[1] {
-			pull = leftoverCenter(b.left.island)
-		}
-		if pull[0] == mid[0] && pull[1] == mid[1] {
-			continue
+			pull = ctr
 		}
 		c1 := [2]float64{(a[0] + pull[0]) / 2, (a[1] + pull[1]) / 2}
 		c2 := [2]float64{(c[0] + pull[0]) / 2, (c[1] + pull[1]) / 2}
-		cand := bentPath(outer, rings[1:], s.fills[i], ei, c1, c2)
+		cand := bentEdge(outer, rings[1:], s.fills[i], ei, c1, c2)
 		if lin, ok := node.LinearFill(); ok {
 			cand = cand.WithLinearFill(lin)
 		}
@@ -652,19 +665,19 @@ func (b Bend) Run() (formPick, error) {
 	return best, nil
 }
 
-func bentPath(outer [][2]float64, holes [][][2]float64, col color.NRGBA, edge int, c1, c2 [2]float64) svg.Path {
+func bentEdge(outer [][2]float64, holes [][][2]float64, col color.NRGBA, ei int, c1, c2 [2]float64) svg.Path {
 	n := len(outer)
-	if n < 3 {
+	if n < 3 || ei < 0 || ei >= n {
 		return filledPath(outer, col)
 	}
 	cmds := []svg.PathCmd{{Kind: svg.CmdMove, X: outer[0][0], Y: outer[0][1]}}
-	for e := 0; e < n; e++ {
-		to := outer[(e+1)%n]
-		if e == edge {
-			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdCubic, X1: c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1], X: to[0], Y: to[1]})
+	for i := 0; i < n; i++ {
+		dest := outer[(i+1)%n]
+		if i == ei {
+			cmds = append(cmds, svg.PathCmd{Kind: svg.CmdCubic, X1: c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1], X: dest[0], Y: dest[1]})
 			continue
 		}
-		cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: to[0], Y: to[1]})
+		cmds = append(cmds, svg.PathCmd{Kind: svg.CmdLine, X: dest[0], Y: dest[1]})
 	}
 	cmds = append(cmds, svg.PathCmd{Kind: svg.CmdClose})
 	p, _ := svg.NewPath().WithCommands(cmds)
@@ -673,6 +686,55 @@ func bentPath(outer [][2]float64, holes [][][2]float64, col color.NRGBA, edge in
 		p = withHoles(p, holes)
 	}
 	return p
+}
+
+// HullPath replaces one path's outer ring with the convex hull of
+// its owned pixels. Score keeps it only when that is cheaper.
+type HullPath struct {
+	world   *world
+	buckets [][]pix
+}
+
+func (HullPath) Name() string { return "hull" }
+func (h HullPath) Applies() bool {
+	return h.world.paths > 0
+}
+
+func (h HullPath) Run() (formPick, error) {
+	s := h.world
+	curA := s.currentScore()
+	best := nonePick()
+	for i := 0; i < s.paths; i++ {
+		if len(h.buckets[i]) < 3 {
+			continue
+		}
+		ring := hullRing(h.buckets[i])
+		if len(ring) < 3 {
+			continue
+		}
+		node := s.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := pathRings(p)
+		cand := filledPath(ring, s.fills[i])
+		if len(rings) > 1 {
+			cand = withHoles(cand, rings[1:])
+		}
+		if lin, ok := node.LinearFill(); ok {
+			cand = cand.WithLinearFill(lin)
+		}
+		g := s.seedGrow(grow{i: i, work: h.buckets[i], fill: s.fills[i], ring: ring})
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, s.paths, h.Name(), curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
 }
 
 // Swap exchanges paths i and j. Score judges the painted order.
@@ -718,6 +780,7 @@ func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
 		&Absorb{world: s, left: left},
 		Cover{world: s, left: left},
+		Hull{world: s, left: left},
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
@@ -733,6 +796,7 @@ func (s *world) worldOps() []Operator {
 	}
 	ops := []Operator{
 		Simplify{world: s, buckets: buckets},
+		HullPath{world: s, buckets: buckets},
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
 	}
@@ -748,7 +812,7 @@ func (s *world) worldOps() []Operator {
 }
 
 var operatorNames = []string{
-	"absorb", "cover", "ring", "grow", "carve",
+	"absorb", "cover", "hull", "ring", "grow", "carve",
 	"slide", "bend", "simplify", "wash", "join", "swap", "delete",
 }
 

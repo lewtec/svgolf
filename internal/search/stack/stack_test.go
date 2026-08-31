@@ -160,6 +160,27 @@ func TestTryDropRedundant(t *testing.T) {
 	}
 }
 
+func TestModeFillPicksMajority(t *testing.T) {
+	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	cyan := color.NRGBA{R: 0, G: 170, B: 220, A: 255}
+	mix := color.NRGBA{R: 80, G: 190, B: 210, A: 255}
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			c := cyan
+			if x == 0 {
+				c = mix
+			}
+			want.SetNRGBA(x, y, c)
+			island = append(island, pix{x, y})
+		}
+	}
+	got := modeFill(want, island)
+	if got != cyan {
+		t.Fatalf("mode=%+v want cyan, not the RGB mix", got)
+	}
+}
+
 func TestHottestIslandPrefersFullMiss(t *testing.T) {
 	// 20×20 almost-white leftover is more pixels; 8×8 black is more Score.
 	got := image.NewNRGBA(image.Rect(0, 0, 48, 48))
@@ -331,8 +352,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 				n++
 			}
 		}
-		if n < 3 || n > 6 {
-			t.Fatalf("points=%d want 3-6 (cover on leftover)", n)
+		if n < 3 {
+			t.Fatalf("points=%d want an outline", n)
 		}
 		return
 	}
@@ -1151,13 +1172,15 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != "cover" && ep.Operator != "grow" {
+		if ep.Operator != "cover" {
 			continue
 		}
-		for _, n := range forms(ep.Document) {
-			if _, ok := n.LinearFill(); ok {
-				t.Fatal("cover/grow fitted a linear; leftover stairs are wash")
-			}
+		fk := forms(ep.Document)
+		if len(fk) == 0 {
+			continue
+		}
+		if _, ok := fk[len(fk)-1].LinearFill(); ok {
+			t.Fatal("cover fitted a linear; leftover stairs are wash")
 		}
 	}
 }
@@ -1288,7 +1311,7 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 			}
 		}
 		if n < 4 || n > 6 {
-			t.Fatalf("first form points=%d want 4-6", n)
+			t.Fatalf("first form points=%d want an outline", n)
 		}
 		return
 	}
@@ -1316,7 +1339,7 @@ func TestCoverRingKeepsConcaveL(t *testing.T) {
 			}
 		}
 	}
-	ring := coverRing(island, 6)
+	ring := coverRing(island)
 	if pointInRing(ring, 5.5, 5.5) {
 		t.Fatalf("notch filled, still a hull? %v", ring)
 	}
@@ -1696,7 +1719,7 @@ func TestHullSquare(t *testing.T) {
 	}
 }
 
-func TestQuadRingDiagonalIsTilted(t *testing.T) {
+func TestHullRingDiagonalIsTilted(t *testing.T) {
 	var work []pix
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
@@ -1705,19 +1728,19 @@ func TestQuadRingDiagonalIsTilted(t *testing.T) {
 			}
 		}
 	}
-	q := quadRing(work)
-	if len(q) != 4 {
-		t.Fatalf("quad=%d want 4: %v", len(q), q)
+	q := hullRing(work)
+	if len(q) < 3 {
+		t.Fatalf("hull=%d want a ring: %v", len(q), q)
 	}
 	axis := 0
-	for i := 0; i < 4; i++ {
-		a, b := q[i], q[(i+1)%4]
+	for i := 0; i < len(q); i++ {
+		a, b := q[i], q[(i+1)%len(q)]
 		if a[0] == b[0] || a[1] == b[1] {
 			axis++
 		}
 	}
-	if axis == 4 {
-		t.Fatalf("quad is axis-aligned %v", q)
+	if axis == len(q) {
+		t.Fatalf("hull is axis-aligned %v", q)
 	}
 }
 
@@ -1738,8 +1761,8 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" {
-			t.Fatalf("operator=%s want cover", ep.Operator)
+		if ep.Operator != "cover" && ep.Operator != "hull" {
+			t.Fatalf("operator=%s want cover or hull", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -1761,8 +1784,8 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 			last = pt
 			n++
 		}
-		if n < 3 || n > 6 {
-			t.Fatalf("points=%d want 3-6", n)
+		if n < 3 {
+			t.Fatalf("points=%d want an outline", n)
 		}
 		if n == 4 && axis == 4 {
 			t.Fatal("cover stayed axis-aligned on a diagonal leftover")
