@@ -297,7 +297,12 @@ func (s Simplify) Applies() bool {
 func (s Simplify) Run() (formPick, error) {
 	w := s.world
 	curA := w.currentScore()
-	best := nonePick()
+	type job struct {
+		next svg.Document
+		node svg.Node
+		g    grow
+	}
+	var jobs []job
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
@@ -329,27 +334,38 @@ func (s Simplify) Run() (formPick, error) {
 					continue
 				}
 				cand := paint(shorter, rings[1:])
-				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
-				if err != nil {
-					return nonePick(), err
-				}
-				if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
-					best = pick
-				}
+				jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
 			}
 		}
 		for h := 1; h < len(rings); h++ {
 			keep := append([][][2]float64{}, rings[1:h]...)
 			keep = append(keep, rings[h+1:]...)
 			cand := paint(rings[0], keep)
-			pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
-			if err != nil {
-				return nonePick(), err
-			}
-			if pick.ok && pick.errSum <= w.errSum && (!best.ok || pick.a < best.a) {
-				best = pick
-			}
+			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
 		}
+	}
+	var mu sync.Mutex
+	best := nonePick()
+	eg := new(errgroup.Group)
+	for _, job := range jobs {
+		job := job
+		eg.Go(func() error {
+			pick, err := w.scoreCand(job.next, job.node, job.g, w.paths, s.Name(), curA)
+			if err != nil {
+				return err
+			}
+			if pick.ok && pick.errSum <= w.errSum {
+				mu.Lock()
+				if !best.ok || pick.a < best.a {
+					best = pick
+				}
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nonePick(), err
 	}
 	return best, nil
 }
