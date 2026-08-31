@@ -160,7 +160,9 @@ func (g *Grow) Run() (formPick, error) {
 	return best, nil
 }
 
-// Carve cuts this leftover out of a covering path.
+// Carve cuts a painted leftover out of a covering path.
+// Paper leftover shrinks the covering ring instead of stacking
+// an evenodd white hole.
 type Carve struct {
 	world   *world
 	left    leftover
@@ -214,13 +216,14 @@ func (c *Carve) Run() (formPick, error) {
 	return best, nil
 }
 
-func (c *Carve) paper(hole [][2]float64) (formPick, error) {
+func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	s := c.world
 	curA := s.currentScore()
 	next := s.doc
 	reclaims := make([][]pix, s.paths)
 	any := false
 	dirty0 := islandRect(c.left.island)
+	var last svg.Node
 	for i := 0; i < s.paths; i++ {
 		node := s.doc.Children()[i+1]
 		if !ownsAny(s.owner, c.left.island, s.w, uint16(i+1)) && !s.paintsIsland(node, c.left.island) {
@@ -230,8 +233,33 @@ func (c *Carve) paper(hole [][2]float64) (formPick, error) {
 		if !ok {
 			continue
 		}
-		cand := withHoles(p, [][][2]float64{hole})
+		rings := pathRings(p)
+		if len(rings) == 0 {
+			continue
+		}
+		owned := ownerBucket(s.owner, s.w, uint16(i+1))
+		var cand svg.Path
+		if leftoverIsHole(owned, c.left.island) {
+			hole := hullRing(c.left.island)
+			if len(hole) < 3 {
+				continue
+			}
+			cand = withHoles(p, [][][2]float64{hole})
+		} else {
+			outer := shrinkOuter(rings[0], c.left.island)
+			if len(outer) < 3 {
+				continue
+			}
+			cand = filledPath(outer, s.fills[i])
+			if len(rings) > 1 {
+				cand = withHoles(cand, rings[1:])
+			}
+			if lin, ok := node.LinearFill(); ok {
+				cand = cand.WithLinearFill(lin)
+			}
+		}
 		next = replaceAt(next, i+1, cand.Node())
+		last = cand.Node()
 		reclaims[i] = ownedMinus(s.owner, c.left.island, s.w, uint16(i+1), c.scratch.seen)
 		dirty0 = dirty0.Union(nodeRect(node))
 		any = true
@@ -240,7 +268,7 @@ func (c *Carve) paper(hole [][2]float64) (formPick, error) {
 		return nonePick(), nil
 	}
 	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
-	pick, err := s.scoreCand(next, next.Children()[1], gr, s.paths, c.Name(), curA)
+	pick, err := s.scoreCand(next, last, gr, s.paths, c.Name(), curA)
 	if err != nil {
 		return nonePick(), err
 	}

@@ -562,6 +562,16 @@ func (s *world) paintsIsland(node svg.Node, island []pix) bool {
 	return false
 }
 
+func ownerBucket(owner []uint16, w int, id uint16) []pix {
+	var out []pix
+	for i, v := range owner {
+		if v == id {
+			out = append(out, pix{i % w, i / w})
+		}
+	}
+	return out
+}
+
 func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
 	if cap(buckets) < n {
 		buckets = make([][]pix, n)

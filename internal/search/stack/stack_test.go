@@ -734,6 +734,97 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 	}
 }
 
+func TestShrinkOuterDentsRectNotch(t *testing.T) {
+	var leftover []pix
+	for y := 0; y < 8; y++ {
+		for x := 12; x < 32; x++ {
+			leftover = append(leftover, pix{x, y})
+		}
+	}
+	outer := [][2]float64{{0, 0}, {32, 0}, {32, 16}, {0, 16}}
+	got := shrinkOuter(outer, leftover)
+	if len(got) < 4 {
+		t.Fatalf("ring=%v", got)
+	}
+	if pointInRing(got, 20, 4) {
+		t.Fatalf("notch still inside %v", got)
+	}
+	if !pointInRing(got, 4, 12) {
+		t.Fatalf("body lost %v", got)
+	}
+}
+
+func TestCarvePaperShrinksNotHole(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			c := paper
+			if y >= 8 || x < 12 {
+				c = red
+			}
+			want.SetNRGBA(x, y, c)
+		}
+	}
+	plate := filledPath([][2]float64{{0, 0}, {32, 0}, {32, 16}, {0, 16}}, red)
+	doc := svg.NewDocument(32, 16).WithViewBox(0, 0, 32, 16)
+	doc = doc.Append(whitePane(32, 16).Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 32*16)
+	for i := range owner {
+		owner[i] = 1
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      32,
+		h:      16,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	var paperLeft leftover
+	for _, left := range s.leftovers() {
+		if left.paper {
+			paperLeft = left
+			break
+		}
+	}
+	if !paperLeft.big() {
+		t.Fatal("no paper leftover")
+	}
+	pick, err := (&Carve{world: s, left: paperLeft}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("carve=false want shrink the overshoot")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if p.FillRule() == svg.FillEvenOdd {
+		t.Fatal("paper leftover became an evenodd white hole")
+	}
+	if c := s.got.NRGBAAt(20, 4); c.G < 200 || c.B < 200 {
+		t.Fatalf("notch still painted %+v", c)
+	}
+	if c := s.got.NRGBAAt(4, 12); c.R < 200 {
+		t.Fatalf("body lost %+v", c)
+	}
+}
+
 func TestSlidePullsTowardLeftover(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))

@@ -177,6 +177,101 @@ func leftoverCenter(island []pix) [2]float64 {
 	return [2]float64{sx / n, sy / n}
 }
 
+// leftoverIsHole is true when removing leftover from owned leaves
+// leftover as an enclosed void. An outer overshoot is not a hole.
+func leftoverIsHole(owned, leftover []pix) bool {
+	drop := pixSet(leftover)
+	var rem []pix
+	for _, p := range owned {
+		if !drop[p] {
+			rem = append(rem, p)
+		}
+	}
+	if len(rem) == 0 {
+		return false
+	}
+	want := pixSet(leftover)
+	for _, h := range voids(rem) {
+		for _, p := range h {
+			if want[p] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// shrinkOuter pulls one covering edge onto the leftover outline
+// so a hull overshoot becomes a dent, not an evenodd white hole.
+func shrinkOuter(outer [][2]float64, leftover []pix) [][2]float64 {
+	bite := coverRing(leftover)
+	if len(outer) < 3 || len(bite) < 2 {
+		return nil
+	}
+	ctr := leftoverCenter(leftover)
+	n := len(outer)
+	ei, bestD := 0, -1.0
+	for e := 0; e < n; e++ {
+		a, c := outer[e], outer[(e+1)%n]
+		mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
+		d := (mid[0]-ctr[0])*(mid[0]-ctr[0]) + (mid[1]-ctr[1])*(mid[1]-ctr[1])
+		if bestD < 0 || d < bestD {
+			ei, bestD = e, d
+		}
+	}
+	chain := longerBite(bite, outer[ei], outer[(ei+1)%n])
+	if len(chain) < 1 {
+		return nil
+	}
+	out := append([][2]float64{}, outer[:ei+1]...)
+	out = append(out, chain...)
+	out = append(out, outer[ei+1:]...)
+	return uncross(collapseColinear(out))
+}
+
+func longerBite(bite [][2]float64, a, b [2]float64) [][2]float64 {
+	n := len(bite)
+	ia, ib := 0, 0
+	da, db := -1.0, -1.0
+	for i, p := range bite {
+		d := (p[0]-a[0])*(p[0]-a[0]) + (p[1]-a[1])*(p[1]-a[1])
+		if da < 0 || d < da {
+			da, ia = d, i
+		}
+		d = (p[0]-b[0])*(p[0]-b[0]) + (p[1]-b[1])*(p[1]-b[1])
+		if db < 0 || d < db {
+			db, ib = d, i
+		}
+	}
+	if ia == ib {
+		return nil
+	}
+	walk := func(step int) [][2]float64 {
+		var out [][2]float64
+		for i := ia; i != ib; i = (i + step + n) % n {
+			if i != ia {
+				out = append(out, bite[i])
+			}
+		}
+		return out
+	}
+	w1, w2 := walk(1), walk(-1)
+	if biteLen(w2) > biteLen(w1) {
+		return w2
+	}
+	return w1
+}
+
+func biteLen(pts [][2]float64) float64 {
+	var sum float64
+	for i := 1; i < len(pts); i++ {
+		dx := pts[i][0] - pts[i-1][0]
+		dy := pts[i][1] - pts[i-1][1]
+		sum += dx*dx + dy*dy
+	}
+	return sum
+}
+
 func nearest(ring [][2]float64, q [2]float64) [2]float64 {
 	if len(ring) == 0 {
 		return q
