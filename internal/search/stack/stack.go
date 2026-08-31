@@ -461,17 +461,29 @@ func (s *world) logCandidate(op string, elapsed time.Duration, p formPick) {
 }
 
 func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, op string, curA float64) (formPick, error) {
+	if p, ok := cand.Path(); ok {
+		for _, r := range pathRings(p) {
+			if ringCrosses(r) {
+				return nonePick(), nil
+			}
+		}
+	}
 	ngot, err := render.Render(next)
 	if err != nil {
 		return nonePick(), err
 	}
+	gotP := loss.NewPlane(ngot)
 	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
 	old := g.oldErr
 	if dirty != g.dirty0.Inset(-2) {
 		old = ScoreRectOn(s.gotP, s.wantP, dirty)
 	}
-	nerr := s.errSum + ScoreRectOn(loss.NewPlane(ngot), s.wantP, dirty) - old
+	nerrDirty := s.errSum + ScoreRectOn(gotP, s.wantP, dirty) - old
 	cmds := docCmdLen(next)
+	if nerrDirty+pathCost*float64(parts)+cmdCost*float64(cmds) >= curA {
+		return nonePick(), nil
+	}
+	nerr := ScoreOn(gotP, s.wantP, 0)
 	a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
 	if a >= curA {
 		return nonePick(), nil

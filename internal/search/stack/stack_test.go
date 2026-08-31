@@ -77,6 +77,35 @@ func TestSimplifyDropsUselessHole(t *testing.T) {
 	}
 }
 
+func TestScoreCandStoresFullError(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	s, err := newWorld(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("cover=false")
+	}
+	full := ScoreOn(loss.NewPlane(pick.got), s.wantP, 0)
+	if pick.errSum != full {
+		t.Fatalf("errSum=%v full=%v (dirty rect lied)", pick.errSum, full)
+	}
+}
+
 func TestTryDropRedundant(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
@@ -1291,13 +1320,23 @@ func TestFanOrderUncrossesBowtie(t *testing.T) {
 	}
 }
 
-func edgesCross(a, b, c, d [2]float64) bool {
-	cross := func(p, q, r [2]float64) float64 {
-		return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
+func TestRingCrossesBowtie(t *testing.T) {
+	bow := [][2]float64{{0, 0}, {2, 2}, {0, 2}, {2, 0}}
+	if !ringCrosses(bow) {
+		t.Fatal("bowtie not detected")
 	}
-	d1, d2 := cross(a, b, c), cross(a, b, d)
-	d3, d4 := cross(c, d, a), cross(c, d, b)
-	return d1*d2 < 0 && d3*d4 < 0
+	// from 20260831-111731 outer ring (slide/bend zigzag)
+	job := [][2]float64{{322, 524}, {357, 100}, {121, 554}, {528, 563}, {124, 564}, {120, 94}, {298, 438}}
+	if !ringCrosses(job) {
+		t.Fatal("job ring not detected")
+	}
+	if ringCrosses([][2]float64{{0, 0}, {4, 0}, {4, 4}, {0, 4}}) {
+		t.Fatal("square flagged as crossing")
+	}
+	got := uncross(bow)
+	if len(got) < 3 || ringCrosses(got) {
+		t.Fatalf("uncross=%v", got)
+	}
 }
 
 func TestFitPolyCollapsesStair(t *testing.T) {

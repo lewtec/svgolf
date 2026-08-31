@@ -92,7 +92,48 @@ func coverRing(work []pix, sides int) [][2]float64 {
 	if len(ring) < 3 {
 		return bbox(work)
 	}
-	return collapseToSides(ring, sides)
+	return uncross(collapseToSides(ring, sides))
+}
+
+func edgesCross(a, b, c, d [2]float64) bool {
+	cross := func(p, q, r [2]float64) float64 {
+		return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
+	}
+	d1, d2 := cross(a, b, c), cross(a, b, d)
+	d3, d4 := cross(c, d, a), cross(c, d, b)
+	return d1*d2 < 0 && d3*d4 < 0
+}
+
+func ringCrosses(ring [][2]float64) bool {
+	n := len(ring)
+	if n < 4 {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		a, b := ring[i], ring[(i+1)%n]
+		for j := i + 1; j < n; j++ {
+			if (i+1)%n == j || (j+1)%n == i {
+				continue
+			}
+			if edgesCross(a, b, ring[j], ring[(j+1)%n]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// uncross keeps a simple ring. Fan-order around the centroid
+// repairs a bowtie; if that still crosses, the ring is dropped.
+func uncross(ring [][2]float64) [][2]float64 {
+	if len(ring) < 3 || !ringCrosses(ring) {
+		return ring
+	}
+	out := fanOrder(ring)
+	if len(out) < 3 || ringCrosses(out) {
+		return nil
+	}
+	return out
 }
 
 func leftoverCenter(island []pix) [2]float64 {
