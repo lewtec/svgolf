@@ -401,6 +401,60 @@ func TestStackLargePlateUnderSmall(t *testing.T) {
 	}
 }
 
+func TestJoinCollapsesTwoPlates(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 170, B: 220, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 24; x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	left := filledPath([][2]float64{{0, 0}, {14, 0}, {14, 16}, {0, 16}}, cyan)
+	right := filledPath([][2]float64{{10, 0}, {24, 0}, {24, 16}, {10, 16}}, cyan)
+	doc := svg.NewDocument(24, 16).WithViewBox(0, 0, 24, 16)
+	doc = doc.Append(whitePane(24, 16).Node()).Append(left.Node()).Append(right.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 24*16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 14; x++ {
+			owner[y*24+x] = 1
+		}
+		for x := 10; x < 24; x++ {
+			owner[y*24+x] = 2
+		}
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{cyan, cyan},
+		paths:  2,
+		w:      24,
+		h:      16,
+		errSum: Score(got, img, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	buckets := fillBuckets(s.owner, s.w, s.paths, nil)
+	pick, err := (&Join{world: s, buckets: buckets}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("join=false want one plate")
+	}
+	s.apply(pick)
+	if s.paths != 1 {
+		t.Fatalf("paths=%d want 1", s.paths)
+	}
+}
+
 func TestSwapUncoversMark(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	blue := color.NRGBA{B: 255, A: 255}

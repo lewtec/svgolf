@@ -407,7 +407,7 @@ func (w *Wash) Run() (formPick, error) {
 	return best, nil
 }
 
-// Join merges two paths into one four-sided solid.
+// Join merges two same-family paths into one leftover outline.
 type Join struct {
 	world   *world
 	buckets [][]pix
@@ -427,7 +427,6 @@ func (j *Join) Run() (formPick, error) {
 	for i := 0; i < s.paths; i++ {
 		rects[i] = islandRect(j.buckets[i])
 	}
-	kids := s.doc.Children()
 	for i := 0; i < s.paths; i++ {
 		for jn := i + 1; jn < s.paths; jn++ {
 			if !rects[i].Inset(-1).Overlaps(rects[jn]) {
@@ -440,49 +439,35 @@ func (j *Join) Run() (formPick, error) {
 			if need < minIsland {
 				continue
 			}
-			ring := joinRing(kids[i+1], kids[jn+1])
-			if len(ring) < 3 {
-				continue
-			}
 			j.scratch.work = j.scratch.work[:0]
 			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
 			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
-			g := s.seedGrow(grow{i: i, work: j.scratch.work, fill: meanTwo(s.fills[i], s.fills[jn]), ring: ring})
-			cand := filledPath(ring, g.fill)
-			next := replaceAt(s.doc, i+1, cand.Node())
-			next = dropAt(next, jn+1)
-			pick, err := s.scoreCand(next, cand.Node(), g, s.paths-1, j.Name(), curA)
-			if err != nil {
-				return nonePick(), err
-			}
-			if pick.ok {
-				pick.mergeJ = jn
-				pick.work = append([]pix{}, j.scratch.work...)
-			}
-			if pick.ok && (!best.ok || pick.a < best.a) {
-				best = pick
+			work := append([]pix{}, j.scratch.work...)
+			fill := meanTwo(s.fills[i], s.fills[jn])
+			g := s.seedGrow(grow{i: i, work: work, fill: fill})
+			for sides := 3; sides <= 6; sides++ {
+				g.ring = coverRing(work, sides)
+				if len(g.ring) < 3 {
+					continue
+				}
+				cand := filledPath(g.ring, fill)
+				next := replaceAt(s.doc, i+1, cand.Node())
+				next = dropAt(next, jn+1)
+				pick, err := s.scoreCand(next, cand.Node(), g, s.paths-1, j.Name(), curA)
+				if err != nil {
+					return nonePick(), err
+				}
+				if pick.ok {
+					pick.mergeJ = jn
+					pick.work = work
+				}
+				if pick.ok && (!best.ok || pick.a < best.a) {
+					best = pick
+				}
 			}
 		}
 	}
 	return best, nil
-}
-
-func joinRing(a, b svg.Node) [][2]float64 {
-	var pts [][2]float64
-	if p, ok := a.Path(); ok {
-		for _, r := range pathRings(p) {
-			pts = append(pts, r...)
-		}
-	}
-	if p, ok := b.Path(); ok {
-		for _, r := range pathRings(p) {
-			pts = append(pts, r...)
-		}
-	}
-	if len(pts) < 3 {
-		return nil
-	}
-	return collapseToSides(convexHull(pts), 4)
 }
 
 func meanTwo(a, b color.NRGBA) color.NRGBA {
