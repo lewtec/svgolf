@@ -427,7 +427,7 @@ func (w *Wash) Run() (formPick, error) {
 	return best, nil
 }
 
-// Join merges two same-family paths into one hull.
+// Join unifies two overlapping same-family paths into one hull.
 type Join struct {
 	world   *world
 	buckets [][]pix
@@ -443,20 +443,19 @@ func (j *Join) Run() (formPick, error) {
 	s := j.world
 	curA := s.currentScore()
 	best := nonePick()
-	rects := make([]image.Rectangle, s.paths)
-	for i := 0; i < s.paths; i++ {
-		rects[i] = islandRect(j.buckets[i])
-	}
+	outers := pathOuters(s.doc, s.paths)
 	for i := 0; i < s.paths; i++ {
 		for jn := i + 1; jn < s.paths; jn++ {
-			if !rects[i].Inset(-1).Overlaps(rects[jn]) {
+			if !ringsOverlap(outers[i], outers[jn]) {
 				continue
 			}
 			if !sameRampFamily(s.fills[i], s.fills[jn]) {
 				continue
 			}
-			need := len(j.buckets[i]) + len(j.buckets[jn])
-			if need < minIsland {
+			pts := append([][2]float64{}, outers[i]...)
+			pts = append(pts, outers[jn]...)
+			ring := uncross(convexHull(pts))
+			if len(ring) < 3 {
 				continue
 			}
 			j.scratch.work = j.scratch.work[:0]
@@ -466,10 +465,6 @@ func (j *Join) Run() (formPick, error) {
 			fills := []color.NRGBA{s.fills[i], s.fills[jn]}
 			if fills[0] == fills[1] {
 				fills = fills[:1]
-			}
-			ring := hullRing(work)
-			if len(ring) < 3 {
-				continue
 			}
 			for _, fill := range fills {
 				g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: ring})
@@ -487,6 +482,58 @@ func (j *Join) Run() (formPick, error) {
 				if pick.ok && (!best.ok || pick.a < best.a) {
 					best = pick
 				}
+			}
+		}
+	}
+	return best, nil
+}
+
+// Subtract punches one overlapping path out of another. Score
+// keeps it when the lower plate should not paint under the upper.
+type Subtract struct {
+	world   *world
+	buckets [][]pix
+}
+
+func (Subtract) Name() string { return "subtract" }
+func (s Subtract) Applies() bool {
+	return s.world.paths >= 2
+}
+
+func (s Subtract) Run() (formPick, error) {
+	w := s.world
+	curA := w.currentScore()
+	best := nonePick()
+	outers := pathOuters(w.doc, w.paths)
+	for i := 0; i < w.paths; i++ {
+		for j := 0; j < w.paths; j++ {
+			if i == j || !ringsOverlap(outers[i], outers[j]) {
+				continue
+			}
+			if len(outers[i]) < 3 || len(outers[j]) < 3 {
+				continue
+			}
+			node := w.doc.Children()[j+1]
+			bounds := nodeRect(node).Intersect(image.Rect(0, 0, w.w, w.h))
+			rem := ringSubtract(outers[j], outers[i], bounds)
+			if !hasInterior(rem) {
+				continue
+			}
+			ring := hullRing(rem)
+			if len(ring) < 3 {
+				continue
+			}
+			cand := filledPath(ring, w.fills[j])
+			if lin, ok := node.LinearFill(); ok {
+				cand = cand.WithLinearFill(lin)
+			}
+			g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
+			pick, err := w.scoreCand(replaceAt(w.doc, j+1, cand.Node()), cand.Node(), g, w.paths, s.Name(), curA)
+			if err != nil {
+				return nonePick(), err
+			}
+			if pick.ok && (!best.ok || pick.a < best.a) {
+				best = pick
 			}
 		}
 	}
@@ -803,6 +850,7 @@ func (s *world) worldOps() []Operator {
 		HullPath{world: s, buckets: buckets},
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
+		Subtract{world: s, buckets: buckets},
 	}
 	for i := 0; i < s.paths; i++ {
 		for j := i + 1; j < s.paths; j++ {
@@ -817,7 +865,7 @@ func (s *world) worldOps() []Operator {
 
 var operatorNames = []string{
 	"absorb", "cover", "hull", "ring", "grow", "carve",
-	"slide", "bend", "simplify", "wash", "join", "swap", "delete",
+	"slide", "bend", "simplify", "wash", "join", "subtract", "swap", "delete",
 }
 
 func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, world bool) ([]formPick, error) {

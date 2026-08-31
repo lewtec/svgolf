@@ -597,6 +597,93 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 	}
 }
 
+func TestRingsOverlapDetectsShareAndMiss(t *testing.T) {
+	a := [][2]float64{{0, 0}, {10, 0}, {10, 10}, {0, 10}}
+	b := [][2]float64{{5, 5}, {15, 5}, {15, 15}, {5, 15}}
+	c := [][2]float64{{20, 20}, {24, 20}, {24, 24}, {20, 24}}
+	if !ringsOverlap(a, b) {
+		t.Fatal("overlapping rects")
+	}
+	if ringsOverlap(a, c) {
+		t.Fatal("disjoint rects")
+	}
+	inner := [][2]float64{{2, 2}, {8, 2}, {8, 8}, {2, 8}}
+	if !ringsOverlap(a, inner) {
+		t.Fatal("contained rect")
+	}
+}
+
+func TestSubtractPunchesOverlap(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	blue := color.NRGBA{B: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			c := red
+			if x >= 16 {
+				c = blue
+			}
+			want.SetNRGBA(x, y, c)
+		}
+	}
+	under := filledPath([][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}, red)
+	over := filledPath([][2]float64{{8, 0}, {32, 0}, {32, 16}, {8, 16}}, blue)
+	doc := svg.NewDocument(32, 16).WithViewBox(0, 0, 32, 16)
+	doc = doc.Append(whitePane(32, 16).Node()).Append(under.Node()).Append(over.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 32*16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			owner[y*32+x] = 1
+		}
+		for x := 8; x < 32; x++ {
+			owner[y*32+x] = 2
+		}
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{red, blue},
+		paths:  2,
+		w:      32,
+		h:      16,
+		errSum: Score(got, want, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("subtract=false want blue minus red overshoot")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[2].Path()
+	if !ok {
+		t.Fatal("upper path missing")
+	}
+	if p.FillRule() == svg.FillEvenOdd {
+		t.Fatal("subtract stacked an evenodd hole")
+	}
+	if c := s.got.NRGBAAt(4, 8); c.R < 200 {
+		t.Fatalf("red body lost %+v", c)
+	}
+	if c := s.got.NRGBAAt(12, 8); c.R < 200 {
+		t.Fatalf("overlap still blue %+v", c)
+	}
+	if c := s.got.NRGBAAt(24, 8); c.B < 200 {
+		t.Fatalf("blue body lost %+v", c)
+	}
+}
+
 func TestSwapUncoversMark(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	blue := color.NRGBA{B: 255, A: 255}
@@ -1680,21 +1767,6 @@ func TestFitPolyKeepsConcaveL(t *testing.T) {
 	if pointInRing(ring, 5.5, 5.5) {
 		t.Fatalf("notch filled, fan-order hull? %v", ring)
 	}
-}
-
-func pointInRing(ring [][2]float64, x, y float64) bool {
-	in := false
-	n := len(ring)
-	for i := 0; i < n; i++ {
-		a, b := ring[i], ring[(i+1)%n]
-		if (a[1] > y) != (b[1] > y) {
-			t := (y - a[1]) / (b[1] - a[1])
-			if x < a[0]+t*(b[0]-a[0]) {
-				in = !in
-			}
-		}
-	}
-	return in
 }
 
 func TestFanOrderUncrossesBowtie(t *testing.T) {

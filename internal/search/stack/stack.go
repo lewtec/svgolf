@@ -753,6 +753,27 @@ func shoelace(ring [][2]float64) float64 {
 	return a / 2
 }
 
+func pathOuter(n svg.Node) [][2]float64 {
+	p, ok := n.Path()
+	if !ok {
+		return nil
+	}
+	rings := pathRings(p)
+	if len(rings) == 0 {
+		return nil
+	}
+	return rings[0]
+}
+
+func pathOuters(doc svg.Document, n int) [][][2]float64 {
+	out := make([][][2]float64, n)
+	kids := doc.Children()
+	for i := 0; i < n && i+1 < len(kids); i++ {
+		out[i] = pathOuter(kids[i+1])
+	}
+	return out
+}
+
 func pathRings(p svg.Path) [][][2]float64 {
 	var rings [][][2]float64
 	var cur [][2]float64

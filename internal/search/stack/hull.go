@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"image"
 	"sort"
 )
 
@@ -123,6 +124,74 @@ func collapseColinear(ring [][2]float64) [][2]float64 {
 	return out
 }
 
+func pointInRing(ring [][2]float64, x, y float64) bool {
+	in := false
+	n := len(ring)
+	for i := 0; i < n; i++ {
+		a, b := ring[i], ring[(i+1)%n]
+		if (a[1] > y) != (b[1] > y) {
+			t := (y - a[1]) / (b[1] - a[1])
+			if x < a[0]+t*(b[0]-a[0]) {
+				in = !in
+			}
+		}
+	}
+	return in
+}
+
+func pointOnSeg(p, a, b [2]float64) bool {
+	if (b[0]-a[0])*(p[1]-a[1]) != (b[1]-a[1])*(p[0]-a[0]) {
+		return false
+	}
+	minX, maxX := a[0], b[0]
+	if minX > maxX {
+		minX, maxX = maxX, minX
+	}
+	minY, maxY := a[1], b[1]
+	if minY > maxY {
+		minY, maxY = maxY, minY
+	}
+	return p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY
+}
+
+// ringsOverlap is true when two simple rings share area or an edge.
+func ringsOverlap(a, b [][2]float64) bool {
+	if len(a) < 3 || len(b) < 3 {
+		return false
+	}
+	hit := func(p [2]float64, ring [][2]float64) bool {
+		if pointInRing(ring, p[0], p[1]) {
+			return true
+		}
+		n := len(ring)
+		for i := 0; i < n; i++ {
+			if pointOnSeg(p, ring[i], ring[(i+1)%n]) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range a {
+		if hit(p, b) {
+			return true
+		}
+	}
+	for _, p := range b {
+		if hit(p, a) {
+			return true
+		}
+	}
+	na, nb := len(a), len(b)
+	for i := 0; i < na; i++ {
+		for j := 0; j < nb; j++ {
+			if edgesCross(a[i], a[(i+1)%na], b[j], b[(j+1)%nb]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func edgesCross(a, b, c, d [2]float64) bool {
 	cross := func(p, q, r [2]float64) float64 {
 		return (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0])
@@ -179,6 +248,22 @@ func leftoverCenter(island []pix) [2]float64 {
 
 // leftoverIsHole is true when removing leftover from owned leaves
 // leftover as an enclosed void. An outer overshoot is not a hole.
+func ringSubtract(keep, cut [][2]float64, bounds image.Rectangle) []pix {
+	if len(keep) < 3 || bounds.Empty() {
+		return nil
+	}
+	var out []pix
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			fx, fy := float64(x)+0.5, float64(y)+0.5
+			if pointInRing(keep, fx, fy) && (len(cut) < 3 || !pointInRing(cut, fx, fy)) {
+				out = append(out, pix{x, y})
+			}
+		}
+	}
+	return out
+}
+
 func leftoverIsHole(owned, leftover []pix) bool {
 	drop := pixSet(leftover)
 	var rem []pix
