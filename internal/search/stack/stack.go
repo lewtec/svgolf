@@ -58,6 +58,22 @@ type world struct {
 
 var candidateLog io.Writer
 
+var scorePlanePool = sync.Pool{New: func() any { return &loss.Plane{} }}
+
+func acquirePlane(img *image.NRGBA) *loss.Plane {
+	p := scorePlanePool.Get().(*loss.Plane)
+	p.Reset(img)
+	return p
+}
+
+func releasePlane(p *loss.Plane) {
+	if p == nil {
+		return
+	}
+	p.Reset(nil)
+	scorePlanePool.Put(p)
+}
+
 // LogCandidates writes one tab-indented line per scored candidate.
 func LogCandidates(w io.Writer) {
 	candidateLog = w
@@ -493,7 +509,8 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 	if err != nil {
 		return nonePick(), err
 	}
-	gotP := loss.NewPlane(ngot)
+	gotP := acquirePlane(ngot)
+	defer releasePlane(gotP)
 	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
 	old := g.oldErr
 	if dirty != g.dirty0.Inset(-2) {

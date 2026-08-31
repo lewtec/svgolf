@@ -515,7 +515,9 @@ func (d Delete) Run() (formPick, error) {
 	if wantP == nil {
 		wantP = loss.NewPlane(s.want)
 	}
-	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
+	gotP := acquirePlane(ngot)
+	nerr := ScoreOn(gotP, wantP, 0)
+	releasePlane(gotP)
 	curA := s.currentScore()
 	a := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
 	if a >= curA || nerr > s.errSum {
@@ -763,7 +765,9 @@ func (sw Swap) Run() (formPick, error) {
 	if wantP == nil {
 		wantP = loss.NewPlane(s.want)
 	}
-	nerr := ScoreOn(loss.NewPlane(ngot), wantP, 0)
+	gotP := acquirePlane(ngot)
+	nerr := ScoreOn(gotP, wantP, 0)
+	releasePlane(gotP)
 	curA := s.currentScore()
 	a := nerr + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(next))
 	if a >= curA {

@@ -35,6 +35,26 @@ func TestPlaneEnsureRectLeavesRestUnset(t *testing.T) {
 	}
 }
 
+func TestPlaneResetReusesBuffer(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	p := NewPlane(img)
+	p.Ensure()
+	buf := p.pix
+	p.Reset(img)
+	p.EnsureRect(image.Rect(0, 0, 2, 2))
+	if cap(p.pix) != cap(buf) {
+		t.Fatalf("EnsureRect cap=%d want %d", cap(p.pix), cap(buf))
+	}
+	if p.pix[3+1*8].A != 0 {
+		t.Fatal("reused EnsureRect did not clear the rest")
+	}
+	p.Reset(img)
+	p.Ensure()
+	if cap(p.pix) != cap(buf) {
+		t.Fatalf("Ensure cap=%d want %d", cap(p.pix), cap(buf))
+	}
+}
+
 func TestPlaneConvertsOnce(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})

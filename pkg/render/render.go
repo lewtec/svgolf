@@ -19,6 +19,7 @@ func Render(d svg.Document) (*image.NRGBA, error) {
 		return nil, fmt.Errorf("render: invalid viewBox")
 	}
 	pm := newPixmap(int(w), int(h))
+	defer releasePixmap(pm)
 	if err := paintNodes(pm, d.Children(), sx, sy, tx, ty); err != nil {
 		return nil, err
 	}

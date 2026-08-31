@@ -25,6 +25,7 @@ type Plane struct {
 	img  *image.NRGBA
 	once sync.Once
 	pix  []Pix
+	buf  []Pix
 }
 
 // NewPlane wraps img. Convert runs on the first At / Ensure.
@@ -52,6 +53,7 @@ func (p *Plane) Ensure() {
 }
 
 // Reset points the plane at a new pixmap and forgets the table.
+// The backing buffer is kept for the next Ensure / EnsureRect.
 func (p *Plane) Reset(img *image.NRGBA) {
 	if p == nil {
 		return
@@ -87,7 +89,7 @@ func (p *Plane) EnsureRect(r image.Rectangle) {
 		return
 	}
 	if p.pix == nil {
-		p.pix = make([]Pix, b.Dx()*b.Dy())
+		p.pix = p.growPix(b.Dx()*b.Dy(), true)
 	}
 	w := b.Dx()
 	for y := r.Min.Y; y < r.Max.Y; y++ {
@@ -98,10 +100,22 @@ func (p *Plane) EnsureRect(r image.Rectangle) {
 	}
 }
 
+func (p *Plane) growPix(n int, zero bool) []Pix {
+	if cap(p.buf) < n {
+		p.buf = make([]Pix, n)
+	} else {
+		p.buf = p.buf[:n]
+		if zero {
+			clear(p.buf)
+		}
+	}
+	return p.buf
+}
+
 func (p *Plane) convert() {
 	b := p.img.Rect
 	n := b.Dx() * b.Dy()
-	p.pix = make([]Pix, n)
+	p.pix = p.growPix(n, false)
 	i := 0
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
