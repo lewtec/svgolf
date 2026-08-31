@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lewtec/svgolf/internal/loss"
+	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 	"golang.org/x/sync/errgroup"
@@ -863,12 +864,17 @@ func (s *world) worldOps() []Operator {
 	return ops
 }
 
+type namedPick struct {
+	pick    formPick
+	elapsed time.Duration
+}
+
 var operatorNames = []string{
 	"absorb", "cover", "hull", "ring", "grow", "carve",
 	"slide", "bend", "simplify", "wash", "join", "subtract", "swap", "delete",
 }
 
-func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, world bool) ([]formPick, error) {
+func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, world bool) ([]formPick, []search.Rated, error) {
 	type job struct {
 		op    Operator
 		left  leftover
@@ -889,11 +895,7 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, w
 			}
 		}
 	}
-	type named struct {
-		pick    formPick
-		elapsed time.Duration
-	}
-	bestByName := make(map[string]*named, len(operatorNames))
+	bestByName := make(map[string]*namedPick, len(operatorNames))
 	var mu sync.Mutex
 	var pool []formPick
 	g, _ := errgroup.WithContext(ctx)
@@ -916,7 +918,7 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, w
 			defer mu.Unlock()
 			st := bestByName[job.op.Name()]
 			if st == nil {
-				st = &named{}
+				st = &namedPick{}
 				bestByName[job.op.Name()] = st
 			}
 			if elapsed > st.elapsed {
@@ -932,12 +934,53 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, w
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, name := range operatorNames {
 		if st, ok := bestByName[name]; ok {
 			s.logCandidate(name, st.elapsed, st.pick)
 		}
 	}
-	return pool, nil
+	return pool, collectRated(bestByName), nil
+}
+
+func collectRated(bestByName map[string]*namedPick) []search.Rated {
+	var out []search.Rated
+	for _, name := range operatorNames {
+		st, ok := bestByName[name]
+		if !ok {
+			continue
+		}
+		r := search.Rated{Name: name, Ok: st.pick.ok}
+		if st.pick.ok {
+			s := st.pick.a
+			r.Score = &s
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func mergeRated(dst, src []search.Rated) []search.Rated {
+	by := make(map[string]search.Rated, len(dst)+len(src))
+	for _, r := range dst {
+		by[r.Name] = r
+	}
+	for _, r := range src {
+		old, ok := by[r.Name]
+		if !ok {
+			by[r.Name] = r
+			continue
+		}
+		if r.Score != nil && (old.Score == nil || *r.Score < *old.Score) {
+			by[r.Name] = r
+		}
+	}
+	var out []search.Rated
+	for _, name := range operatorNames {
+		if r, ok := by[name]; ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }

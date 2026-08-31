@@ -66,16 +66,17 @@ type server struct {
 }
 
 type jobMeta struct {
-	ID       string    `json:"id"`
-	Status   string    `json:"status"`
-	Search   string    `json:"search"`
-	Epochs   int       `json:"epochs"`
-	Operator string    `json:"operator"`
-	Score    float64   `json:"score"`
-	Scores   []float64 `json:"scores,omitempty"`
-	Paths    int       `json:"paths"`
-	Elapsed  string    `json:"elapsed"`
-	Err      string    `json:"error,omitempty"`
+	ID       string           `json:"id"`
+	Status   string           `json:"status"`
+	Search   string           `json:"search"`
+	Epochs   int              `json:"epochs"`
+	Operator string           `json:"operator"`
+	Score    float64          `json:"score"`
+	Scores   []float64        `json:"scores,omitempty"`
+	Rounds   [][]search.Rated `json:"rounds,omitempty"`
+	Paths    int              `json:"paths"`
+	Elapsed  string           `json:"elapsed"`
+	Err      string           `json:"error,omitempty"`
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +197,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 	}
 	n := 0
 	var scores []float64
+	var rounds [][]search.Rated
 	for ep, err := range searcher.Search(context.Background(), want) {
 		if err != nil {
 			s.fail(dir, id, err)
@@ -208,6 +210,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 		n++
 		sc := epScore(ep, want)
 		scores = append(scores, sc)
+		rounds = append(rounds, ep.Rated)
 		meta := jobMeta{
 			ID:       id,
 			Status:   "running",
@@ -216,6 +219,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 			Operator: ep.Operator,
 			Score:    sc,
 			Scores:   scores,
+			Rounds:   rounds,
 			Paths:    len(ep.Document.Children()),
 			Elapsed:  ep.Elapsed.String(),
 		}
@@ -338,12 +342,17 @@ func epochPayload(m jobMeta) map[string]any {
 	if scores == nil {
 		scores = []float64{}
 	}
+	rounds := m.Rounds
+	if rounds == nil {
+		rounds = [][]search.Rated{}
+	}
 	return map[string]any{
 		"n":        n,
 		"status":   m.Status,
 		"operator": m.Operator,
 		"score":    fmt.Sprintf("%.3f", m.Score),
 		"scores":   scores,
+		"rounds":   rounds,
 		"paths":    m.Paths,
 		"elapsed":  m.Elapsed,
 	}
@@ -429,6 +438,14 @@ func toView(m jobMeta) web.JobView {
 	if err != nil {
 		b = []byte("[]")
 	}
+	rounds := m.Rounds
+	if rounds == nil {
+		rounds = [][]search.Rated{}
+	}
+	rb, err := json.Marshal(rounds)
+	if err != nil {
+		rb = []byte("[]")
+	}
 	return web.JobView{
 		ID:         m.ID,
 		Status:     m.Status,
@@ -437,6 +454,7 @@ func toView(m jobMeta) web.JobView {
 		Operator:   m.Operator,
 		Score:      strconv.FormatFloat(m.Score, 'f', 3, 64),
 		ScoresJSON: string(b),
+		RoundsJSON: string(rb),
 		Paths:      m.Paths,
 		Err:        m.Err,
 	}

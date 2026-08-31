@@ -23,6 +23,17 @@ type Epoch struct {
 	// Nil when the adapter does not publish debug frames.
 	Heat   *image.NRGBA
 	Island *image.NRGBA
+	// Rated is every operator that ran this epoch. Score is set
+	// when Score accepted the proposal; Ok is false when it ran
+	// and lost.
+	Rated []Rated
+}
+
+// Rated is one operator's best proposal in an epoch.
+type Rated struct {
+	Name  string   `json:"name"`
+	Score *float64 `json:"score"`
+	Ok    bool     `json:"ok"`
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.

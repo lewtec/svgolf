@@ -1480,6 +1480,31 @@ func TestCandidateLogLine(t *testing.T) {
 	}
 }
 
+func TestStackEpochRatesCover(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := false
+		for _, r := range ep.Rated {
+			if r.Name == "cover" && r.Ok && r.Score != nil {
+				ok = true
+			}
+		}
+		if !ok {
+			t.Fatalf("rated=%v want cover with a score", ep.Rated)
+		}
+		return
+	}
+	t.Fatal("no epoch")
+}
+
 func TestStackNilPixmap(t *testing.T) {
 	_, err := search.Last((Stack{}).Search(t.Context(), nil))
 	if err == nil {

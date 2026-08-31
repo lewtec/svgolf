@@ -177,10 +177,11 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		}
 		s.candidateLog = candidateLog
 		started := time.Now()
-		emit := func(op string, blob []pix) bool {
+		emit := func(op string, blob []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, op)
 			ep.Elapsed = time.Since(started)
 			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob)
+			ep.Rated = rated
 			started = time.Now()
 			return yield(ep, nil)
 		}
@@ -205,22 +206,25 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				miss[j] = s.leftovers()
 			}
 			var pool []formPick
+			var rated []search.Rated
 			for _, a := range survivors {
 				s.load(a)
-				world, err := s.choose(ctx, nil, a, true)
+				world, wr, err := s.choose(ctx, nil, a, true)
 				if err != nil {
 					yield(search.Epoch{}, err)
 					return
 				}
 				pool = append(pool, world...)
+				rated = mergeRated(rated, wr)
 				for j := range survivors {
 					s.load(a)
-					picks, err := s.choose(ctx, s.bindLeftovers(miss[j]), a, false)
+					picks, pr, err := s.choose(ctx, s.bindLeftovers(miss[j]), a, false)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
 					}
 					pool = append(pool, picks...)
+					rated = mergeRated(rated, pr)
 				}
 			}
 			kept := rankGeneration(pool, bestA, survivorPicks)
@@ -251,12 +255,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			s.load(next[0])
 			survivors = next
 			yielded = true
-			if !emit(kept[0].op, kept[0].island) {
+			if !emit(kept[0].op, kept[0].island, rated) {
 				return
 			}
 		}
 		if !yielded {
-			emit("", nil)
+			emit("", nil, nil)
 		}
 	}
 }

@@ -16,6 +16,7 @@ type JobView struct {
 	Operator   string
 	Score      string
 	ScoresJSON string
+	RoundsJSON string
 	Paths      int
 	Err        string
 }
@@ -48,7 +49,7 @@ func Layout(title string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 21, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 22, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -125,7 +126,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var5 templ.SafeURL
 					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs("/jobs/" + j.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 57, Col: 34}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 58, Col: 34}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 					if templ_7745c5c3_Err != nil {
@@ -138,7 +139,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(j.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 57, Col: 56}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 58, Col: 56}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -151,7 +152,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var7 string
 					templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(j.Status)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 58, Col: 39}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 59, Col: 39}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 					if templ_7745c5c3_Err != nil {
@@ -164,7 +165,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var8 string
 					templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(j.Operator)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 59, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 60, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 					if templ_7745c5c3_Err != nil {
@@ -177,7 +178,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var9 string
 					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(j.Epochs)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 59, Col: 70}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 60, Col: 70}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 					if templ_7745c5c3_Err != nil {
@@ -247,7 +248,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(j.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 76, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 77, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -260,7 +261,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(j.Status)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 79, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 80, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -273,7 +274,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(j.Operator)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 80, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 81, Col: 48}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -286,7 +287,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(j.Score)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 80, Col: 69}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 81, Col: 69}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -299,7 +300,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(j.Paths)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 80, Col: 84}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 81, Col: 84}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -312,7 +313,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(j.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 83, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 84, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -325,13 +326,26 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(j.ScoresJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 83, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 84, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\"><div class=\"grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "\" data-rounds=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var19 string
+			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(j.RoundsJSON)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 84, Col: 104}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "\"><div class=\"grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -351,7 +365,7 @@ func JobPage(j JobView) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "</div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Loss</h2><p id=\"loss-scale\" class=\"text-sm opacity-70\">one point per epoch</p><svg id=\"loss\" viewBox=\"0 0 800 200\" class=\"w-full h-48 text-base-content\" role=\"img\" aria-label=\"loss over epochs\"></svg></div></div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Epochs</h2><div id=\"epochs\" class=\"flex flex-wrap gap-2\"></div></div></div></main><script>\n\t\t\tconst root = document.querySelector(\"main\");\n\t\t\tconst id = root.dataset.job;\n\t\t\tconst box = document.getElementById(\"epochs\");\n\t\t\tlet scores = [];\n\t\t\ttry { scores = JSON.parse(root.dataset.scores || \"[]\"); } catch (e) { scores = []; }\n\t\t\tfunction show(n) {\n\t\t\t\tconst pad = String(n).padStart(3, \"0\");\n\t\t\t\tfor (const [sel, name] of [\n\t\t\t\t\t[\"got\", \"last.png\"],\n\t\t\t\t\t[\"HSV delta\", \"last-error.png\"],\n\t\t\t\t\t[\"hottest leftover\", \"last-island.png\"],\n\t\t\t\t]) {\n\t\t\t\t\tconst img = document.querySelector(`img[alt=\"${sel}\"]`);\n\t\t\t\t\tif (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;\n\t\t\t\t}\n\t\t\t\tconst a = document.createElement(\"a\");\n\t\t\t\ta.className = \"btn btn-sm\";\n\t\t\t\ta.href = `/jobs/${id}/files/${pad}.png`;\n\t\t\t\ta.textContent = pad;\n\t\t\t\tbox.appendChild(a);\n\t\t\t}\n\t\t\tfunction fmt(v) {\n\t\t\t\tif (!Number.isFinite(v)) return \"-\";\n\t\t\t\tif (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-2)) return v.toExponential(2);\n\t\t\t\treturn v.toFixed(2);\n\t\t\t}\n\t\t\tfunction drawLoss(vals) {\n\t\t\t\tconst svg = document.getElementById(\"loss\");\n\t\t\t\tconst note = document.getElementById(\"loss-scale\");\n\t\t\t\tconst w = 800, h = 200;\n\t\t\t\tconst pad = { l: 64, r: 16, t: 16, b: 28 };\n\t\t\t\twhile (svg.firstChild) svg.removeChild(svg.firstChild);\n\t\t\t\tif (!vals.length) {\n\t\t\t\t\tnote.textContent = \"waiting for the first epoch\";\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tlet ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);\n\t\t\t\tif (ymin === ymax) {\n\t\t\t\t\tymin = ymin * 0.9;\n\t\t\t\t\tymax = ymax * 1.1 || 1;\n\t\t\t\t}\n\t\t\t\tconst log = ymin > 0 && ymax / ymin >= 10;\n\t\t\t\tnote.textContent = log ? \"log10 score · one point per epoch\" : \"score · one point per epoch\";\n\t\t\t\tconst yOf = (v) => {\n\t\t\t\t\tconst a = log ? Math.log10(v) : v;\n\t\t\t\t\tconst lo = log ? Math.log10(ymin) : ymin;\n\t\t\t\t\tconst hi = log ? Math.log10(ymax) : ymax;\n\t\t\t\t\treturn pad.t + (1 - (a - lo) / (hi - lo)) * (h - pad.t - pad.b);\n\t\t\t\t};\n\t\t\t\tconst xOf = (i) => {\n\t\t\t\t\tconst n = Math.max(vals.length - 1, 1);\n\t\t\t\t\treturn pad.l + (i / n) * (w - pad.l - pad.r);\n\t\t\t\t};\n\t\t\t\tconst ns = \"http://www.w3.org/2000/svg\";\n\t\t\t\tconst el = (name, attrs) => {\n\t\t\t\t\tconst n = document.createElementNS(ns, name);\n\t\t\t\t\tfor (const k in (attrs || {})) n.setAttribute(k, attrs[k]);\n\t\t\t\t\treturn n;\n\t\t\t\t};\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: pad.t + 4, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymax);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: h - pad.b, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymin);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: pad.l, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = \"0\";\n\t\t\t\tsvg.appendChild(el(\"text\", { x: w - pad.r, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\", \"text-anchor\": \"end\" })).textContent = String(vals.length - 1);\n\t\t\t\tif (vals.length === 1) {\n\t\t\t\t\tsvg.appendChild(el(\"circle\", { cx: xOf(0), cy: yOf(vals[0]), r: 4, fill: \"currentColor\" }));\n\t\t\t\t} else {\n\t\t\t\t\tconst d = vals.map((v, i) => (i === 0 ? \"M\" : \"L\") + xOf(i) + \" \" + yOf(v)).join(\" \");\n\t\t\t\t\tsvg.appendChild(el(\"path\", { d: d, fill: \"none\", stroke: \"currentColor\", \"stroke-width\": \"2\" }));\n\t\t\t\t\tfor (let i = 0; i < vals.length; i++) {\n\t\t\t\t\t\tconst c = el(\"circle\", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: \"currentColor\" });\n\t\t\t\t\t\tc.appendChild(el(\"title\")).textContent = \"epoch \" + i + \" · \" + fmt(vals[i]);\n\t\t\t\t\t\tsvg.appendChild(c);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tdrawLoss(scores);\n\t\t\tlet last = -1;\n\t\t\tconst es = new EventSource(`/jobs/${id}/events`);\n\t\t\tes.addEventListener(\"epoch\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tdocument.getElementById(\"meta\").textContent =\n\t\t\t\t\t`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.elapsed}`;\n\t\t\t\tif (Array.isArray(d.scores)) scores = d.scores;\n\t\t\t\telse if (d.n >= scores.length) scores.push(parseFloat(d.score));\n\t\t\t\tdrawLoss(scores);\n\t\t\t\tfor (let i = last + 1; i <= d.n; i++) show(i);\n\t\t\t\tlast = d.n;\n\t\t\t});\n\t\t\tes.addEventListener(\"done\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tes.close();\n\t\t\t});\n\t\t</script>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Loss</h2><p id=\"loss-scale\" class=\"text-sm opacity-70\">one point per epoch</p><svg id=\"loss\" viewBox=\"0 0 800 200\" class=\"w-full h-48 text-base-content\" role=\"img\" aria-label=\"loss over epochs\"></svg></div></div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Epochs</h2><div class=\"overflow-x-auto\"><table class=\"table table-xs table-pin-rows\"><thead><tr id=\"epoch-head\"></tr></thead> <tbody id=\"epochs\"></tbody></table></div></div></div></main><script>\n\t\t\tconst root = document.querySelector(\"main\");\n\t\t\tconst id = root.dataset.job;\n\t\t\tconst box = document.getElementById(\"epochs\");\n\t\t\tconst head = document.getElementById(\"epoch-head\");\n\t\t\tlet scores = [];\n\t\t\tlet rounds = [];\n\t\t\ttry { scores = JSON.parse(root.dataset.scores || \"[]\"); } catch (e) { scores = []; }\n\t\t\ttry { rounds = JSON.parse(root.dataset.rounds || \"[]\"); } catch (e) { rounds = []; }\n\t\t\tconst names = [];\n\t\t\tfunction remember(round) {\n\t\t\t\tif (!Array.isArray(round)) return;\n\t\t\t\tfor (const r of round) {\n\t\t\t\t\tif (r && r.name && !names.includes(r.name)) names.push(r.name);\n\t\t\t\t}\n\t\t\t}\n\t\t\tfor (const round of rounds) remember(round);\n\t\t\tfunction scoreOf(round, name) {\n\t\t\t\tif (!Array.isArray(round)) return undefined;\n\t\t\t\tfor (const r of round) {\n\t\t\t\t\tif (r && r.name === name) return r;\n\t\t\t\t}\n\t\t\t\treturn undefined;\n\t\t\t}\n\t\t\tfunction paintHead() {\n\t\t\t\thead.replaceChildren();\n\t\t\t\tconst cols = [\"epoch\", \"win\", ...names];\n\t\t\t\tfor (const name of cols) {\n\t\t\t\t\tconst th = document.createElement(\"th\");\n\t\t\t\t\tth.textContent = name;\n\t\t\t\t\thead.appendChild(th);\n\t\t\t\t}\n\t\t\t}\n\t\t\tfunction paintRows() {\n\t\t\t\tbox.replaceChildren();\n\t\t\t\tpaintHead();\n\t\t\t\tfor (let i = 0; i < scores.length; i++) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\tconst pad = String(i).padStart(3, \"0\");\n\t\t\t\t\tconst ep = document.createElement(\"th\");\n\t\t\t\t\tconst a = document.createElement(\"a\");\n\t\t\t\t\ta.className = \"link\";\n\t\t\t\t\ta.href = `/jobs/${id}/files/${pad}.png`;\n\t\t\t\t\ta.textContent = pad;\n\t\t\t\t\tep.appendChild(a);\n\t\t\t\t\ttr.appendChild(ep);\n\t\t\t\t\tconst win = document.createElement(\"td\");\n\t\t\t\t\tconst last = rounds[i];\n\t\t\t\t\tlet winner = \"\";\n\t\t\t\t\tif (last) {\n\t\t\t\t\t\tfor (const r of last) {\n\t\t\t\t\t\t\tif (r && r.ok && r.score != null && (winner === \"\" || r.score < scoreOf(last, winner).score)) winner = r.name;\n\t\t\t\t\t\t}\n\t\t\t\t\t}\n\t\t\t\t\twin.textContent = winner || \"—\";\n\t\t\t\t\ttr.appendChild(win);\n\t\t\t\t\tfor (const name of names) {\n\t\t\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\t\t\ttd.className = \"font-mono\";\n\t\t\t\t\t\tconst r = scoreOf(rounds[i], name);\n\t\t\t\t\t\tif (!r) td.textContent = \"\";\n\t\t\t\t\t\telse if (!r.ok || r.score == null) td.textContent = \"—\";\n\t\t\t\t\t\telse {\n\t\t\t\t\t\t\ttd.textContent = fmt(r.score);\n\t\t\t\t\t\t\tif (name === winner) td.classList.add(\"text-success\", \"font-bold\");\n\t\t\t\t\t\t}\n\t\t\t\t\t\ttr.appendChild(td);\n\t\t\t\t\t}\n\t\t\t\t\tbox.appendChild(tr);\n\t\t\t\t}\n\t\t\t}\n\t\t\tfunction show(n) {\n\t\t\t\tfor (const [sel, name] of [\n\t\t\t\t\t[\"got\", \"last.png\"],\n\t\t\t\t\t[\"HSV delta\", \"last-error.png\"],\n\t\t\t\t\t[\"hottest leftover\", \"last-island.png\"],\n\t\t\t\t]) {\n\t\t\t\t\tconst img = document.querySelector(`img[alt=\"${sel}\"]`);\n\t\t\t\t\tif (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;\n\t\t\t\t}\n\t\t\t\tpaintRows();\n\t\t\t}\n\t\t\tfunction fmt(v) {\n\t\t\t\tif (!Number.isFinite(v)) return \"-\";\n\t\t\t\tif (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-2)) return v.toExponential(2);\n\t\t\t\treturn v.toFixed(2);\n\t\t\t}\n\t\t\tfunction drawLoss(vals) {\n\t\t\t\tconst svg = document.getElementById(\"loss\");\n\t\t\t\tconst note = document.getElementById(\"loss-scale\");\n\t\t\t\tconst w = 800, h = 200;\n\t\t\t\tconst pad = { l: 64, r: 16, t: 16, b: 28 };\n\t\t\t\twhile (svg.firstChild) svg.removeChild(svg.firstChild);\n\t\t\t\tif (!vals.length) {\n\t\t\t\t\tnote.textContent = \"waiting for the first epoch\";\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tlet ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);\n\t\t\t\tif (ymin === ymax) {\n\t\t\t\t\tymin = ymin * 0.9;\n\t\t\t\t\tymax = ymax * 1.1 || 1;\n\t\t\t\t}\n\t\t\t\tconst log = ymin > 0 && ymax / ymin >= 10;\n\t\t\t\tnote.textContent = log ? \"log10 score · one point per epoch\" : \"score · one point per epoch\";\n\t\t\t\tconst yOf = (v) => {\n\t\t\t\t\tconst a = log ? Math.log10(v) : v;\n\t\t\t\t\tconst lo = log ? Math.log10(ymin) : ymin;\n\t\t\t\t\tconst hi = log ? Math.log10(ymax) : ymax;\n\t\t\t\t\treturn pad.t + (1 - (a - lo) / (hi - lo)) * (h - pad.t - pad.b);\n\t\t\t\t};\n\t\t\t\tconst xOf = (i) => {\n\t\t\t\t\tconst n = Math.max(vals.length - 1, 1);\n\t\t\t\t\treturn pad.l + (i / n) * (w - pad.l - pad.r);\n\t\t\t\t};\n\t\t\t\tconst ns = \"http://www.w3.org/2000/svg\";\n\t\t\t\tconst el = (name, attrs) => {\n\t\t\t\t\tconst n = document.createElementNS(ns, name);\n\t\t\t\t\tfor (const k in (attrs || {})) n.setAttribute(k, attrs[k]);\n\t\t\t\t\treturn n;\n\t\t\t\t};\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: pad.t + 4, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymax);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: h - pad.b, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymin);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: pad.l, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = \"0\";\n\t\t\t\tsvg.appendChild(el(\"text\", { x: w - pad.r, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\", \"text-anchor\": \"end\" })).textContent = String(vals.length - 1);\n\t\t\t\tif (vals.length === 1) {\n\t\t\t\t\tsvg.appendChild(el(\"circle\", { cx: xOf(0), cy: yOf(vals[0]), r: 4, fill: \"currentColor\" }));\n\t\t\t\t} else {\n\t\t\t\t\tconst d = vals.map((v, i) => (i === 0 ? \"M\" : \"L\") + xOf(i) + \" \" + yOf(v)).join(\" \");\n\t\t\t\t\tsvg.appendChild(el(\"path\", { d: d, fill: \"none\", stroke: \"currentColor\", \"stroke-width\": \"2\" }));\n\t\t\t\t\tfor (let i = 0; i < vals.length; i++) {\n\t\t\t\t\t\tconst c = el(\"circle\", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: \"currentColor\" });\n\t\t\t\t\t\tc.appendChild(el(\"title\")).textContent = \"epoch \" + i + \" · \" + fmt(vals[i]);\n\t\t\t\t\t\tsvg.appendChild(c);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tdrawLoss(scores);\n\t\t\tpaintRows();\n\t\t\tconst es = new EventSource(`/jobs/${id}/events`);\n\t\t\tes.addEventListener(\"epoch\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tdocument.getElementById(\"meta\").textContent =\n\t\t\t\t\t`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.elapsed}`;\n\t\t\t\tif (Array.isArray(d.scores)) scores = d.scores;\n\t\t\t\telse if (d.n >= scores.length) scores.push(parseFloat(d.score));\n\t\t\t\tif (Array.isArray(d.rounds)) {\n\t\t\t\t\trounds = d.rounds;\n\t\t\t\t\tfor (const round of rounds) remember(round);\n\t\t\t\t}\n\t\t\t\tdrawLoss(scores);\n\t\t\t\tshow(d.n);\n\t\t\t});\n\t\t\tes.addEventListener(\"done\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tes.close();\n\t\t\t});\n\t\t</script>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -381,51 +395,51 @@ func frameCard(title string, src string) templ.Component {
 			}()
 		}
 		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var19 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var19 == nil {
-			templ_7745c5c3_Var19 = templ.NopComponent
+		templ_7745c5c3_Var20 := templ.GetChildren(ctx)
+		if templ_7745c5c3_Var20 == nil {
+			templ_7745c5c3_Var20 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<div class=\"card bg-base-200\"><figure class=\"bg-black\"><img src=\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		var templ_7745c5c3_Var20 string
-		templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(src)
-		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 208, Col: 17}
-		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "\" alt=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<div class=\"card bg-base-200\"><figure class=\"bg-black\"><img src=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var21 string
-		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(title)
+		templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(src)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 208, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 279, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" class=\"w-full h-auto\"></figure><div class=\"card-body p-3\"><h2 class=\"card-title text-sm\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "\" alt=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var22 string
 		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 211, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 279, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "</h2></div></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "\" class=\"w-full h-auto\"></figure><div class=\"card-body p-3\"><h2 class=\"card-title text-sm\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var23 string
+		templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(title)
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 282, Col: 41}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</h2></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

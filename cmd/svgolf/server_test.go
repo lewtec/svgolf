@@ -55,6 +55,9 @@ func TestServerJobFromCache(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "20") || !strings.Contains(rec.Body.String(), "12.5") {
 		t.Fatalf("missing score series: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `id="epochs"`) || !strings.Contains(rec.Body.String(), "<table") {
+		t.Fatalf("missing epochs table: %s", rec.Body.String())
+	}
 	if err := os.WriteFile(filepath.Join(job, "want.png"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +76,9 @@ func TestEpochPayloadScores(t *testing.T) {
 	}
 	if p["n"] != 1 {
 		t.Fatalf("n=%v want 1", p["n"])
+	}
+	if _, ok := p["rounds"]; !ok {
+		t.Fatal("missing rounds")
 	}
 }
 

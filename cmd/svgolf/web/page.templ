@@ -8,6 +8,7 @@ type JobView struct {
 	Operator   string
 	Score      string
 	ScoresJSON string
+	RoundsJSON string
 	Paths      int
 	Err        string
 }
@@ -80,7 +81,7 @@ templ JobPage(j JobView) {
 				<span id="meta" class="text-sm">{ j.Operator } · score { j.Score } · { j.Paths } paths</span>
 			</div>
 		</div>
-		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON }>
+		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON }>
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
 				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
@@ -97,7 +98,14 @@ templ JobPage(j JobView) {
 			<div class="card bg-base-200">
 				<div class="card-body">
 					<h2 class="card-title">Epochs</h2>
-					<div id="epochs" class="flex flex-wrap gap-2"></div>
+					<div class="overflow-x-auto">
+						<table class="table table-xs table-pin-rows">
+							<thead>
+								<tr id="epoch-head"></tr>
+							</thead>
+							<tbody id="epochs"></tbody>
+						</table>
+					</div>
 				</div>
 			</div>
 		</main>
@@ -105,10 +113,74 @@ templ JobPage(j JobView) {
 			const root = document.querySelector("main");
 			const id = root.dataset.job;
 			const box = document.getElementById("epochs");
+			const head = document.getElementById("epoch-head");
 			let scores = [];
+			let rounds = [];
 			try { scores = JSON.parse(root.dataset.scores || "[]"); } catch (e) { scores = []; }
+			try { rounds = JSON.parse(root.dataset.rounds || "[]"); } catch (e) { rounds = []; }
+			const names = [];
+			function remember(round) {
+				if (!Array.isArray(round)) return;
+				for (const r of round) {
+					if (r && r.name && !names.includes(r.name)) names.push(r.name);
+				}
+			}
+			for (const round of rounds) remember(round);
+			function scoreOf(round, name) {
+				if (!Array.isArray(round)) return undefined;
+				for (const r of round) {
+					if (r && r.name === name) return r;
+				}
+				return undefined;
+			}
+			function paintHead() {
+				head.replaceChildren();
+				const cols = ["epoch", "win", ...names];
+				for (const name of cols) {
+					const th = document.createElement("th");
+					th.textContent = name;
+					head.appendChild(th);
+				}
+			}
+			function paintRows() {
+				box.replaceChildren();
+				paintHead();
+				for (let i = 0; i < scores.length; i++) {
+					const tr = document.createElement("tr");
+					const pad = String(i).padStart(3, "0");
+					const ep = document.createElement("th");
+					const a = document.createElement("a");
+					a.className = "link";
+					a.href = `/jobs/${id}/files/${pad}.png`;
+					a.textContent = pad;
+					ep.appendChild(a);
+					tr.appendChild(ep);
+					const win = document.createElement("td");
+					const last = rounds[i];
+					let winner = "";
+					if (last) {
+						for (const r of last) {
+							if (r && r.ok && r.score != null && (winner === "" || r.score < scoreOf(last, winner).score)) winner = r.name;
+						}
+					}
+					win.textContent = winner || "—";
+					tr.appendChild(win);
+					for (const name of names) {
+						const td = document.createElement("td");
+						td.className = "font-mono";
+						const r = scoreOf(rounds[i], name);
+						if (!r) td.textContent = "";
+						else if (!r.ok || r.score == null) td.textContent = "—";
+						else {
+							td.textContent = fmt(r.score);
+							if (name === winner) td.classList.add("text-success", "font-bold");
+						}
+						tr.appendChild(td);
+					}
+					box.appendChild(tr);
+				}
+			}
 			function show(n) {
-				const pad = String(n).padStart(3, "0");
 				for (const [sel, name] of [
 					["got", "last.png"],
 					["HSV delta", "last-error.png"],
@@ -117,11 +189,7 @@ templ JobPage(j JobView) {
 					const img = document.querySelector(`img[alt="${sel}"]`);
 					if (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;
 				}
-				const a = document.createElement("a");
-				a.className = "btn btn-sm";
-				a.href = `/jobs/${id}/files/${pad}.png`;
-				a.textContent = pad;
-				box.appendChild(a);
+				paintRows();
 			}
 			function fmt(v) {
 				if (!Number.isFinite(v)) return "-";
@@ -180,7 +248,7 @@ templ JobPage(j JobView) {
 				}
 			}
 			drawLoss(scores);
-			let last = -1;
+			paintRows();
 			const es = new EventSource(`/jobs/${id}/events`);
 			es.addEventListener("epoch", (ev) => {
 				const d = JSON.parse(ev.data);
@@ -189,9 +257,12 @@ templ JobPage(j JobView) {
 					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.elapsed}`;
 				if (Array.isArray(d.scores)) scores = d.scores;
 				else if (d.n >= scores.length) scores.push(parseFloat(d.score));
+				if (Array.isArray(d.rounds)) {
+					rounds = d.rounds;
+					for (const round of rounds) remember(round);
+				}
 				drawLoss(scores);
-				for (let i = last + 1; i <= d.n; i++) show(i);
-				last = d.n;
+				show(d.n);
 			});
 			es.addEventListener("done", (ev) => {
 				const d = JSON.parse(ev.data);
