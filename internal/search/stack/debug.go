@@ -7,8 +7,8 @@ import (
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
-// DebugFrames is the leftover view hottest() uses: heat is ColorAt
-// 0–180 (black match, red miss). blob is the leftover this step used;
+// DebugFrames is the leftover view hottest() uses: heat is leftoverHeat
+// 0-1 (black match, red miss). blob is the leftover this step used;
 // if nil, hottest() is computed without skip (debug-only).
 func DebugFrames(got, want *image.NRGBA, blob []pix) (heat, island *image.NRGBA) {
 	if want == nil {
@@ -37,10 +37,10 @@ func DebugFrames(got, want *image.NRGBA, blob []pix) (heat, island *image.NRGBA)
 			mark[p.y*w+p.x] = 1
 		}
 	}
+	field := leftoverHeat(gotP, wantP, nil, w, h)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			e := colorErrHSV(gotP.At(x, y), wantP.At(x, y))
-			v := uint8(e / 180 * 255)
+			v := uint8(field[y*w+x] * 255)
 			heat.SetNRGBA(b.Min.X+x, b.Min.Y+y, color.NRGBA{R: v, B: 255 - v, A: 255})
 			c := want.NRGBAAt(b.Min.X+x, b.Min.Y+y)
 			if mark[y*w+x] != 0 {

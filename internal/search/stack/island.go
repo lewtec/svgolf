@@ -143,11 +143,33 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 	return colorErr(g, q) > minErr
 }
 
-func residualHSV(got, want *loss.Plane, skip []byte, x, y, w int) bool {
-	if skip != nil && skip[y*w+x] != 0 {
-		return false
+// leftoverHeat is HSV error scaled to the current max, 0–1.
+// hottest leftover and debug heat keep pixels > 1/2 so a close
+// tint still outlines when it is the remaining miss. Score still
+// uses raw errAtHSV.
+func leftoverHeat(got, want *loss.Plane, skip []byte, w, h int) []float64 {
+	field := make([]float64, w*h)
+	var maxE float64
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if skip != nil && skip[y*w+x] != 0 {
+				continue
+			}
+			e := colorErrHSV(got.At(x, y), want.At(x, y))
+			field[y*w+x] = e
+			if e > maxE {
+				maxE = e
+			}
+		}
 	}
-	return colorErrHSV(got.At(x, y), want.At(x, y)) > minErr
+	if maxE <= 0 {
+		return field
+	}
+	inv := 1 / maxE
+	for i, e := range field {
+		field[i] = e * inv
+	}
+	return field
 }
 
 type leftoverBlob struct {
@@ -189,9 +211,10 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	}
 	gotP.Ensure()
 	wantP.Ensure()
+	heat := leftoverHeat(gotP, wantP, skip, w, h)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			if !residualHSV(gotP, wantP, skip, x, y, w) {
+			if heat[y*w+x] <= 0.5 {
 				continue
 			}
 			mark[y*w+x] = 1

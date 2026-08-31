@@ -221,10 +221,10 @@ func TestHottestNKeepsThree(t *testing.T) {
 			want.SetNRGBA(x, y, paper)
 		}
 	}
-	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
+	dark := color.NRGBA{R: 40, G: 40, B: 40, A: 255}
 	for y := 4; y < 24; y++ {
 		for x := 4; x < 24; x++ {
-			want.SetNRGBA(x, y, pale)
+			want.SetNRGBA(x, y, dark)
 		}
 	}
 	mid := color.NRGBA{R: 80, G: 80, B: 80, A: 255}
@@ -252,6 +252,68 @@ func TestHottestNKeepsThree(t *testing.T) {
 	}
 	if !seen[64] || !seen[144] || !seen[400] {
 		t.Fatalf("islands=%v want 64, 144, 400", []int{len(top[0].island), len(top[1].island), len(top[2].island)})
+	}
+}
+
+func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 12; y++ {
+		for x := 4; x < 12; x++ {
+			want.SetNRGBA(x, y, pale)
+		}
+	}
+	gotP, wantP := loss.NewPlane(got), loss.NewPlane(want)
+	gotP.Ensure()
+	wantP.Ensure()
+	heat := leftoverHeat(gotP, wantP, nil, 16, 16)
+	if heat[8*16+8] <= 0.5 {
+		t.Fatalf("close tint heat=%v want > 1/2 when it is the leftover", heat[8*16+8])
+	}
+	if heat[0] != 0 {
+		t.Fatalf("paper heat=%v want 0", heat[0])
+	}
+	col, island := (&world{got: got, want: want, gotP: gotP, wantP: wantP}).hottest()
+	if len(island) != 64 {
+		t.Fatalf("island=%d want 64 close tint, fill=%+v", len(island), col)
+	}
+}
+
+func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
+	black := color.NRGBA{A: 255}
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 12; y++ {
+		for x := 2; x < 10; x++ {
+			want.SetNRGBA(x, y, pale)
+		}
+		for x := 18; x < 26; x++ {
+			want.SetNRGBA(x, y, black)
+		}
+	}
+	gotP, wantP := loss.NewPlane(got), loss.NewPlane(want)
+	gotP.Ensure()
+	wantP.Ensure()
+	heat := leftoverHeat(gotP, wantP, nil, 32, 16)
+	if heat[8*32+6] > 0.5 {
+		t.Fatalf("pale heat=%v want ≤ 1/2 next to a full miss", heat[8*32+6])
+	}
+	if heat[8*32+22] <= 0.5 {
+		t.Fatalf("black heat=%v want > 1/2", heat[8*32+22])
 	}
 }
 
@@ -339,8 +401,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" {
-			t.Fatalf("operator=%s want cover", ep.Operator)
+		if ep.Operator != "cover" && ep.Operator != "hull" {
+			t.Fatalf("operator=%s want cover or hull", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -1138,8 +1200,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || ops[0] != "cover" {
-		t.Fatalf("operators=%v want cover first", ops)
+	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull") {
+		t.Fatalf("operators=%v want cover or hull first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
