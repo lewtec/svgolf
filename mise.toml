@@ -14,6 +14,10 @@ run = "go build -o bin/svgolf ./cmd/svgolf"
 description = "Unit tests (resvg on PATH via mise)"
 run = "go test ./..."
 
+[tasks.server]
+description = "Watch Search from a cache folder (pass -- --cache DIR)"
+run = "go run ./cmd/svgolf server"
+
 [tasks.preview]
 description = "Run a Search on testdata/eval into testdata/preview (pass -- --search NAME)"
 run = "go run ./cmd/svgolf preview"

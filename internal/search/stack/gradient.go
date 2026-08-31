@@ -89,6 +89,54 @@ func fitLinearFill(island []pix, want *image.NRGBA) (svg.LinearFill, bool) {
 	return best, found
 }
 
+// fitLinearStops is a 2-stop on the island when it beats a solid mean.
+// No ColorAt or rampLike gate — Score rejects a smear of two flats.
+func fitLinearStops(island []pix, want *image.NRGBA) (svg.LinearFill, bool) {
+	if want == nil || len(island) < minIsland {
+		return svg.LinearFill{}, false
+	}
+	solid := meanFill(want, island)
+	var solidErr float64
+	for _, p := range island {
+		c := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
+		e := loss.ColorAt(c, solid)
+		solidErr += e * e
+	}
+	box := bbox(island)
+	minX, minY := box[0][0], box[0][1]
+	maxX, maxY := box[1][0], box[2][1]
+	midX := (minX + maxX) / 2
+	midY := (minY + maxY) / 2
+	axes := [][4]float64{
+		{minX, midY, maxX, midY},
+		{midX, minY, midX, maxY},
+		{minX, minY, maxX, maxY},
+		{minX, maxY, maxX, minY},
+	}
+	var best svg.LinearFill
+	bestErr := solidErr
+	found := false
+	for _, axis := range axes {
+		start, end := endQuartileColors(island, want, axis[0], axis[1], axis[2], axis[3])
+		if !sameRampFamily(start, end) {
+			continue
+		}
+		gradient := svg.NewLinearFill(axis[0], axis[1], axis[2], axis[3], start, end)
+		var errSum float64
+		for _, p := range island {
+			c := want.NRGBAAt(want.Rect.Min.X+p.x, want.Rect.Min.Y+p.y)
+			e := loss.ColorAt(c, gradient.ColorAt(float64(p.x)+0.5, float64(p.y)+0.5))
+			errSum += e * e
+		}
+		if errSum < bestErr {
+			bestErr = errSum
+			best = gradient
+			found = true
+		}
+	}
+	return best, found
+}
+
 // rampLike is true when a quarter of the pixels sit closer to the lerp
 // than to either stop. Two flats only have that on the AA seam.
 func rampLike(island []pix, want *image.NRGBA, gradient svg.LinearFill) bool {
@@ -151,5 +199,3 @@ func endQuartileColors(island []pix, want *image.NRGBA, x1, y1, x2, y2 float64) 
 	return color.NRGBA{R: uint8(startR / startN), G: uint8(startG / startN), B: uint8(startB / startN), A: 255},
 		color.NRGBA{R: uint8(endR / endN), G: uint8(endG / endN), B: uint8(endB / endN), A: 255}
 }
-
-

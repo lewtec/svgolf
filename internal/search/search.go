@@ -12,13 +12,17 @@ import (
 
 // Epoch is one Search yield: the Document, the adapter's working scale,
 // the operator that produced it, and how long that step took.
-// Scale is 1 at native size. Operator is rectangle, grow, carve,
-// simplify, wash, join, drop, or empty.
+// Scale is 1 at native size. Operator is absorb, rectangle, grow,
+// carve, simplify, wash, join, drop, or empty.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
 	Operator string
 	Elapsed  time.Duration
+	// Heat is ColorAt residual. Island is the leftover this step used.
+	// Nil when the adapter does not publish debug frames.
+	Heat   *image.NRGBA
+	Island *image.NRGBA
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.

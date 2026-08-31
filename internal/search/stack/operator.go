@@ -43,6 +43,82 @@ func (r Rectangle) Run() (formPick, error) {
 	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, r.Name(), s.currentScore())
 }
 
+// Ring is a leftover with a painted interior: evenodd outer plus holes
+// so a visor does not fill the face.
+type Ring struct {
+	world *world
+	left  leftover
+}
+
+func (Ring) Name() string { return "ring" }
+func (r Ring) Applies() bool {
+	if !r.left.big() || r.left.paper || r.world.paths >= maxPaths {
+		return false
+	}
+	return len(leftoverRings(r.left.island, r.world.got, r.world.want, r.left.col)) > 0
+}
+
+func (r Ring) Run() (formPick, error) {
+	s := r.world
+	holes := leftoverRings(r.left.island, s.got, s.want, r.left.col)
+	if len(holes) == 0 {
+		return nonePick(), nil
+	}
+	g := r.left.fresh
+	g.ring = quadRing(g.work)
+	if len(g.ring) < 3 {
+		return nonePick(), nil
+	}
+	cand := withHoles(filledPath(g.ring, g.fill), holes)
+	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, r.Name(), s.currentScore())
+}
+
+// Absorb writes leftover error back into a touching path as a 2-stop.
+// That is the backprop step: residual updates an existing plate
+// instead of stacking another flat.
+type Absorb struct {
+	world   *world
+	left    leftover
+	scratch scratch
+}
+
+func (Absorb) Name() string { return "absorb" }
+func (a Absorb) Applies() bool {
+	return a.left.big() && !a.left.paper && a.world.paths > 0
+}
+
+func (a *Absorb) Run() (formPick, error) {
+	s := a.world
+	works := a.left.grows
+	if works == nil {
+		works = s.connecting(a.left.island, a.scratch.seen)
+	}
+	curA := s.currentScore()
+	best := nonePick()
+	for _, g := range works {
+		if !sameRampFamily(g.fill, a.left.col) {
+			continue
+		}
+		grad, ok := fitLinearStops(g.work, s.want)
+		if !ok {
+			continue
+		}
+		g.ring = quadRing(g.work)
+		if len(g.ring) < 3 {
+			continue
+		}
+		cand := filledPath(g.ring, g.fill).WithLinearFill(grad)
+		pick, err := s.scoreCand(replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, s.paths, a.Name(), curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
+}
+
 // Grow expands an existing path over the leftover with a four-sided union.
 type Grow struct {
 	world   *world
@@ -429,7 +505,9 @@ func (s *world) operators(left leftover) []Operator {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	return []Operator{
+		&Absorb{world: s, left: left},
 		Rectangle{world: s, left: left},
+		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
 		Simplify{world: s, buckets: buckets},

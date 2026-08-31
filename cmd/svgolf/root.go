@@ -21,6 +21,7 @@ Commands:
   verify      compare in-process render to resvg
   vectorize   PNG to SVG (--search NAME)
   preview     run Search on testdata/eval → testdata/preview
+  server      watch Search from a --cache folder
 
 Register a Search in its package init. Import search/prelude so it Registers. Then:
   mise exec -- go run ./cmd/svgolf preview --search NAME
@@ -48,5 +49,6 @@ v1 ships Dumb via prelude. Run tests with: mise run test`,
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newVectorizeCmd())
 	cmd.AddCommand(newPreviewCmd())
+	cmd.AddCommand(newServerCmd())
 	return cmd
 }

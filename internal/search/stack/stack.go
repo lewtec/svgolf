@@ -24,8 +24,8 @@ const (
 )
 
 // Stack scores every applicable operator on the hottest leftover
-// (and join/drop) and keeps the best Score. Operators: rectangle,
-// grow, carve, simplify, wash, join, drop. Want stays native.
+// (and join/drop) and keeps the best Score. Operators: absorb,
+// rectangle, grow, carve, simplify, wash, join, drop. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -141,9 +141,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		}
 		s.candidateLog = candidateLog
 		started := time.Now()
-		emit := func(op string) bool {
+		emit := func(op string, blob []pix) bool {
 			ep := epochOf(s.doc, op)
 			ep.Elapsed = time.Since(started)
+			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob)
 			started = time.Now()
 			return yield(ep, nil)
 		}
@@ -170,12 +171,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			s.apply(pick)
 			yielded = true
-			if !emit(pick.op) {
+			if !emit(pick.op, left.island) {
 				return
 			}
 		}
 		if !yielded {
-			emit("")
+			emit("", nil)
 		}
 	}
 }
