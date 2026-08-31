@@ -66,15 +66,16 @@ type server struct {
 }
 
 type jobMeta struct {
-	ID       string  `json:"id"`
-	Status   string  `json:"status"`
-	Search   string  `json:"search"`
-	Epochs   int     `json:"epochs"`
-	Operator string  `json:"operator"`
-	Score    float64 `json:"score"`
-	Paths    int     `json:"paths"`
-	Elapsed  string  `json:"elapsed"`
-	Err      string  `json:"error,omitempty"`
+	ID       string    `json:"id"`
+	Status   string    `json:"status"`
+	Search   string    `json:"search"`
+	Epochs   int       `json:"epochs"`
+	Operator string    `json:"operator"`
+	Score    float64   `json:"score"`
+	Scores   []float64 `json:"scores,omitempty"`
+	Paths    int       `json:"paths"`
+	Elapsed  string    `json:"elapsed"`
+	Err      string    `json:"error,omitempty"`
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +195,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 		return
 	}
 	n := 0
+	var scores []float64
 	for ep, err := range searcher.Search(context.Background(), want) {
 		if err != nil {
 			s.fail(dir, id, err)
@@ -204,13 +206,16 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 			return
 		}
 		n++
+		sc := epScore(ep, want)
+		scores = append(scores, sc)
 		meta := jobMeta{
 			ID:       id,
 			Status:   "running",
 			Search:   s.algo,
 			Epochs:   n,
 			Operator: ep.Operator,
-			Score:    epScore(ep, want),
+			Score:    sc,
+			Scores:   scores,
 			Paths:    len(ep.Document.Children()),
 			Elapsed:  ep.Elapsed.String(),
 		}
@@ -329,11 +334,16 @@ func epochPayload(m jobMeta) map[string]any {
 	if n < 0 {
 		n = 0
 	}
+	scores := m.Scores
+	if scores == nil {
+		scores = []float64{}
+	}
 	return map[string]any{
 		"n":        n,
 		"status":   m.Status,
 		"operator": m.Operator,
 		"score":    fmt.Sprintf("%.3f", m.Score),
+		"scores":   scores,
 		"paths":    m.Paths,
 		"elapsed":  m.Elapsed,
 	}
@@ -411,14 +421,23 @@ func toViews(ms []jobMeta) []web.JobView {
 }
 
 func toView(m jobMeta) web.JobView {
+	scores := m.Scores
+	if scores == nil {
+		scores = []float64{}
+	}
+	b, err := json.Marshal(scores)
+	if err != nil {
+		b = []byte("[]")
+	}
 	return web.JobView{
-		ID:       m.ID,
-		Status:   m.Status,
-		Search:   m.Search,
-		Epochs:   m.Epochs,
-		Operator: m.Operator,
-		Score:    strconv.FormatFloat(m.Score, 'f', 3, 64),
-		Paths:    m.Paths,
-		Err:      m.Err,
+		ID:         m.ID,
+		Status:     m.Status,
+		Search:     m.Search,
+		Epochs:     m.Epochs,
+		Operator:   m.Operator,
+		Score:      strconv.FormatFloat(m.Score, 'f', 3, 64),
+		ScoresJSON: string(b),
+		Paths:      m.Paths,
+		Err:        m.Err,
 	}
 }

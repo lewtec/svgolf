@@ -1,14 +1,15 @@
 package web
 
 type JobView struct {
-	ID       string
-	Status   string
-	Search   string
-	Epochs   int
-	Operator string
-	Score    string
-	Paths    int
-	Err      string
+	ID         string
+	Status     string
+	Search     string
+	Epochs     int
+	Operator   string
+	Score      string
+	ScoresJSON string
+	Paths      int
+	Err        string
 }
 
 templ Layout(title string) {
@@ -79,12 +80,19 @@ templ JobPage(j JobView) {
 				<span id="meta" class="text-sm">{ j.Operator } · score { j.Score } · { j.Paths } paths</span>
 			</div>
 		</div>
-		<main class="p-4 grid gap-4" data-job={ j.ID }>
+		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON }>
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
 				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
 				@frameCard("HSV delta", "/jobs/" + j.ID + "/files/last-error.png")
 				@frameCard("hottest leftover", "/jobs/" + j.ID + "/files/last-island.png")
+			</div>
+			<div class="card bg-base-200">
+				<div class="card-body">
+					<h2 class="card-title">Loss</h2>
+					<p id="loss-scale" class="text-sm opacity-70">one point per epoch</p>
+					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss over epochs"></svg>
+				</div>
 			</div>
 			<div class="card bg-base-200">
 				<div class="card-body">
@@ -94,8 +102,11 @@ templ JobPage(j JobView) {
 			</div>
 		</main>
 		<script>
-			const id = document.querySelector("main").dataset.job;
+			const root = document.querySelector("main");
+			const id = root.dataset.job;
 			const box = document.getElementById("epochs");
+			let scores = [];
+			try { scores = JSON.parse(root.dataset.scores || "[]"); } catch (e) { scores = []; }
 			function show(n) {
 				const pad = String(n).padStart(3, "0");
 				for (const [sel, name] of [
@@ -112,6 +123,63 @@ templ JobPage(j JobView) {
 				a.textContent = pad;
 				box.appendChild(a);
 			}
+			function fmt(v) {
+				if (!Number.isFinite(v)) return "-";
+				if (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-2)) return v.toExponential(2);
+				return v.toFixed(2);
+			}
+			function drawLoss(vals) {
+				const svg = document.getElementById("loss");
+				const note = document.getElementById("loss-scale");
+				const w = 800, h = 200;
+				const pad = { l: 64, r: 16, t: 16, b: 28 };
+				while (svg.firstChild) svg.removeChild(svg.firstChild);
+				if (!vals.length) {
+					note.textContent = "waiting for the first epoch";
+					return;
+				}
+				let ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);
+				if (ymin === ymax) {
+					ymin = ymin * 0.9;
+					ymax = ymax * 1.1 || 1;
+				}
+				const log = ymin > 0 && ymax / ymin >= 10;
+				note.textContent = log ? "log10 score · one point per epoch" : "score · one point per epoch";
+				const yOf = (v) => {
+					const a = log ? Math.log10(v) : v;
+					const lo = log ? Math.log10(ymin) : ymin;
+					const hi = log ? Math.log10(ymax) : ymax;
+					return pad.t + (1 - (a - lo) / (hi - lo)) * (h - pad.t - pad.b);
+				};
+				const xOf = (i) => {
+					const n = Math.max(vals.length - 1, 1);
+					return pad.l + (i / n) * (w - pad.l - pad.r);
+				};
+				const ns = "http://www.w3.org/2000/svg";
+				const el = (name, attrs) => {
+					const n = document.createElementNS(ns, name);
+					for (const k in (attrs || {})) n.setAttribute(k, attrs[k]);
+					return n;
+				};
+				svg.appendChild(el("line", { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: "currentColor", "stroke-opacity": "0.35" }));
+				svg.appendChild(el("line", { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: "currentColor", "stroke-opacity": "0.35" }));
+				svg.appendChild(el("text", { x: 8, y: pad.t + 4, fill: "currentColor", "font-size": "11" })).textContent = fmt(ymax);
+				svg.appendChild(el("text", { x: 8, y: h - pad.b, fill: "currentColor", "font-size": "11" })).textContent = fmt(ymin);
+				svg.appendChild(el("text", { x: pad.l, y: h - 6, fill: "currentColor", "font-size": "11" })).textContent = "0";
+				svg.appendChild(el("text", { x: w - pad.r, y: h - 6, fill: "currentColor", "font-size": "11", "text-anchor": "end" })).textContent = String(vals.length - 1);
+				if (vals.length === 1) {
+					svg.appendChild(el("circle", { cx: xOf(0), cy: yOf(vals[0]), r: 4, fill: "currentColor" }));
+				} else {
+					const d = vals.map((v, i) => (i === 0 ? "M" : "L") + xOf(i) + " " + yOf(v)).join(" ");
+					svg.appendChild(el("path", { d: d, fill: "none", stroke: "currentColor", "stroke-width": "2" }));
+					for (let i = 0; i < vals.length; i++) {
+						const c = el("circle", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: "currentColor" });
+						c.appendChild(el("title")).textContent = "epoch " + i + " · " + fmt(vals[i]);
+						svg.appendChild(c);
+					}
+				}
+			}
+			drawLoss(scores);
 			let last = -1;
 			const es = new EventSource(`/jobs/${id}/events`);
 			es.addEventListener("epoch", (ev) => {
@@ -119,6 +187,9 @@ templ JobPage(j JobView) {
 				document.getElementById("status").textContent = d.status;
 				document.getElementById("meta").textContent =
 					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.elapsed}`;
+				if (Array.isArray(d.scores)) scores = d.scores;
+				else if (d.n >= scores.length) scores.push(parseFloat(d.score));
+				drawLoss(scores);
 				for (let i = last + 1; i <= d.n; i++) show(i);
 				last = d.n;
 			});
