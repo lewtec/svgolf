@@ -105,8 +105,10 @@ func TestFillPathSmallCircle(t *testing.T) {
 		t.Fatal("flatten")
 	}
 	pm := newPixmap(256, 256)
+	defer releasePixmap(pm)
 	fillPath(pm, p, true, color.NRGBA{A: 255}, 255)
 	img := pm.toNRGBA()
+	defer Release(img)
 	var nz int
 	for i := 3; i < len(img.Pix); i += 4 {
 		if img.Pix[i] != 0 {
@@ -155,6 +157,7 @@ func TestAlphaRunsAddPastWidthDoesNotHang(t *testing.T) {
 func TestBlitHPastBBoxDoesNotHang(t *testing.T) {
 	// walkEdges blits open winding to the canvas clip; runs are bbox-sized.
 	pm := newPixmap(64, 64)
+	defer releasePixmap(pm)
 	real := &solidBlitter{pm: pm, pr: 255, pa: 255}
 	sb := newSuperBlitter(20, 20, 40, 40, 64, 64, real)
 	if sb == nil {

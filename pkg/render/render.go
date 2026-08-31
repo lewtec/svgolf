@@ -10,6 +10,18 @@ import (
 )
 
 func Render(d svg.Document) (*image.NRGBA, error) {
+	img, err := Scratch(d)
+	if err != nil {
+		return nil, err
+	}
+	out := Keep(img)
+	Release(img)
+	return out, nil
+}
+
+// Scratch paints into a pooled image. Release it, or Keep first
+// if the pixels must outlive the next Scratch.
+func Scratch(d svg.Document) (*image.NRGBA, error) {
 	w, h := d.Width(), d.Height()
 	if err := checkCanvas(w, h); err != nil {
 		return nil, err
@@ -175,7 +187,7 @@ func fillPath(pm *pixmap, p path, nonzero bool, col color.NRGBA, a uint8) {
 }
 
 func (p *pixmap) toNRGBA() *image.NRGBA {
-	img := image.NewNRGBA(image.Rect(0, 0, p.w, p.h))
+	img := acquireImage(p.w, p.h)
 	for i := 0; i < p.w*p.h; i++ {
 		pr, pg, pb, pa := p.pix[i*4], p.pix[i*4+1], p.pix[i*4+2], p.pix[i*4+3]
 		off := i * 4

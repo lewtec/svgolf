@@ -8,6 +8,7 @@ import (
 	"io"
 	"iter"
 	"math/rand/v2"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -58,10 +59,27 @@ type world struct {
 
 var candidateLog io.Writer
 
-var scorePlanePool = sync.Pool{New: func() any { return &loss.Plane{} }}
+var (
+	planesOnce sync.Once
+	planes     chan *loss.Plane
+)
+
+func initPlanes() {
+	planesOnce.Do(func() {
+		n := runtime.GOMAXPROCS(0)
+		if n < 1 {
+			n = 1
+		}
+		planes = make(chan *loss.Plane, n)
+		for i := 0; i < n; i++ {
+			planes <- &loss.Plane{}
+		}
+	})
+}
 
 func acquirePlane(img *image.NRGBA) *loss.Plane {
-	p := scorePlanePool.Get().(*loss.Plane)
+	initPlanes()
+	p := <-planes
 	p.Reset(img)
 	return p
 }
@@ -71,7 +89,7 @@ func releasePlane(p *loss.Plane) {
 		return
 	}
 	p.Reset(nil)
-	scorePlanePool.Put(p)
+	planes <- p
 }
 
 // LogCandidates writes one tab-indented line per scored candidate.
@@ -509,10 +527,11 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 			}
 		}
 	}
-	ngot, err := render.Render(next)
+	ngot, err := render.Scratch(next)
 	if err != nil {
 		return nonePick(), err
 	}
+	defer render.Release(ngot)
 	gotP := acquirePlane(ngot)
 	defer releasePlane(gotP)
 	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
@@ -530,7 +549,7 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 	if a >= curA {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: true}, nil
+	return formPick{doc: next, got: render.Keep(ngot), errSum: nerr, a: a, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: true}, nil
 }
 
 // addLayer scores a new path on top and at one random existing
@@ -571,10 +590,11 @@ func (s *world) paintsIsland(node svg.Node, island []pix) bool {
 	}
 	d := svg.NewDocument(float64(s.w), float64(s.h)).WithViewBox(0, 0, float64(s.w), float64(s.h))
 	d = d.Append(whitePane(s.w, s.h).Node()).Append(node)
-	img, err := render.Render(d)
+	img, err := render.Scratch(d)
 	if err != nil {
 		return false
 	}
+	defer render.Release(img)
 	for _, p := range island {
 		if colorErr(img.NRGBAAt(p.x, p.y), paper) > minErr {
 			return true

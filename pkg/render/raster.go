@@ -2,7 +2,6 @@ package render
 
 import (
 	"math"
-	"sync"
 )
 
 const (
@@ -284,23 +283,8 @@ type pixmap struct {
 	pix  []uint8 // premul RGBA
 }
 
-var pixmapPool sync.Pool
-
 func newPixmap(w, h int) *pixmap {
-	if v := pixmapPool.Get(); v != nil {
-		p := v.(*pixmap)
-		if p.w == w && p.h == h && len(p.pix) == w*h*4 {
-			clear(p.pix)
-			return p
-		}
-	}
-	return &pixmap{w: w, h: h, pix: make([]uint8, w*h*4)}
-}
-
-func releasePixmap(p *pixmap) {
-	if p != nil {
-		pixmapPool.Put(p)
-	}
+	return acquirePixmap(w, h)
 }
 
 func (p *pixmap) blend(x, y int, sr, sg, sb, sa uint8) {

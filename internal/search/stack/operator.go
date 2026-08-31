@@ -571,10 +571,11 @@ func (d Delete) Applies() bool {
 func (d Delete) Run() (formPick, error) {
 	s := d.world
 	next := dropAt(s.doc, d.i+1)
-	ngot, err := render.Render(next)
+	ngot, err := render.Scratch(next)
 	if err != nil {
 		return nonePick(), err
 	}
+	defer render.Release(ngot)
 	wantP := s.wantP
 	if wantP == nil {
 		wantP = loss.NewPlane(s.want)
@@ -587,7 +588,7 @@ func (d Delete) Run() (formPick, error) {
 	if a >= curA || nerr > s.errSum {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
+	return formPick{doc: next, got: render.Keep(ngot), errSum: nerr, a: a, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
 }
 
 // Slide moves one vertex of a touching path toward the leftover outline.
@@ -821,10 +822,11 @@ func (sw Swap) Run() (formPick, error) {
 	if !ok {
 		return nonePick(), nil
 	}
-	ngot, err := render.Render(next)
+	ngot, err := render.Scratch(next)
 	if err != nil {
 		return nonePick(), err
 	}
+	defer render.Release(ngot)
 	wantP := s.wantP
 	if wantP == nil {
 		wantP = loss.NewPlane(s.want)
@@ -838,7 +840,7 @@ func (sw Swap) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	return formPick{
-		doc: next, got: ngot, errSum: nerr, a: a,
+		doc: next, got: render.Keep(ngot), errSum: nerr, a: a,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
 		op: sw.Name(), ok: true,
 		fills: fills, owner: owner,
