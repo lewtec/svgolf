@@ -465,23 +465,20 @@ func meanTwo(a, b color.NRGBA) color.NRGBA {
 	}
 }
 
-// Drop removes the smallest owned path if the pixmap does not get worse.
-type Drop struct {
+// Delete removes path i if Score improves.
+type Delete struct {
 	world *world
+	i     int
 }
 
-func (Drop) Name() string { return "drop" }
-func (d Drop) Applies() bool {
-	return d.world.paths >= 2
+func (Delete) Name() string { return "delete" }
+func (d Delete) Applies() bool {
+	return d.world.paths >= 2 && d.i >= 0 && d.i < d.world.paths
 }
 
-func (d Drop) Run() (formPick, error) {
+func (d Delete) Run() (formPick, error) {
 	s := d.world
-	idx, ok := smallestOwner(s.owner, s.paths)
-	if !ok {
-		return nonePick(), nil
-	}
-	next := dropAt(s.doc, idx+1)
+	next := dropAt(s.doc, d.i+1)
 	ngot, err := render.Render(next)
 	if err != nil {
 		return nonePick(), err
@@ -496,23 +493,23 @@ func (d Drop) Run() (formPick, error) {
 	if a >= curA || nerr > s.errSum {
 		return nonePick(), nil
 	}
-	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: idx, mergeJ: -1, op: d.Name(), ok: true}, nil
+	return formPick{doc: next, got: ngot, errSum: nerr, a: a, replace: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
 }
 
-// Restack sorts existing paths by drawn area: large under small.
-// Score judges the reorder; apply never shuffles after accept.
-type Restack struct {
+// Swap exchanges adjacent paths i and i+1. Score judges the painted order.
+type Swap struct {
 	world *world
+	i     int
 }
 
-func (Restack) Name() string { return "restack" }
-func (r Restack) Applies() bool {
-	return r.world.paths >= 2
+func (Swap) Name() string { return "swap" }
+func (sw Swap) Applies() bool {
+	return sw.i >= 0 && sw.i+1 < sw.world.paths
 }
 
-func (r Restack) Run() (formPick, error) {
-	s := r.world
-	next, fills, owner, ok := s.restackOrder()
+func (sw Swap) Run() (formPick, error) {
+	s := sw.world
+	next, fills, owner, ok := s.swapAdjacent(sw.i)
 	if !ok {
 		return nonePick(), nil
 	}
@@ -533,7 +530,7 @@ func (r Restack) Run() (formPick, error) {
 	return formPick{
 		doc: next, got: ngot, errSum: nerr, a: a,
 		replace: -1, dropIdx: -1, mergeJ: -1,
-		op: r.Name(), ok: true,
+		op: sw.Name(), ok: true,
 		fills: fills, owner: owner,
 	}, nil
 }
@@ -553,21 +550,26 @@ func (s *world) worldOps() []Operator {
 	if s.paths > 0 {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
-	return []Operator{
+	ops := []Operator{
 		Simplify{world: s, buckets: buckets},
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
-		Drop{world: s},
-		Restack{world: s},
 	}
+	for i := 0; i+1 < s.paths; i++ {
+		ops = append(ops, Swap{world: s, i: i})
+	}
+	for i := 0; i < s.paths; i++ {
+		ops = append(ops, Delete{world: s, i: i})
+	}
+	return ops
 }
 
 var operatorNames = []string{
 	"absorb", "rectangle", "ring", "grow", "carve",
-	"simplify", "wash", "join", "drop", "restack",
+	"simplify", "wash", "join", "swap", "delete",
 }
 
-func (s *world) choose(ctx context.Context, lefts []leftover) (formPick, error) {
+func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot) ([]formPick, error) {
 	type job struct {
 		op    Operator
 		left  leftover
@@ -592,7 +594,7 @@ func (s *world) choose(ctx context.Context, lefts []leftover) (formPick, error) 
 	}
 	bestByName := make(map[string]*named, len(operatorNames))
 	var mu sync.Mutex
-	best := nonePick()
+	var pool []formPick
 	g, _ := errgroup.WithContext(ctx)
 	for _, job := range jobs {
 		job := job
@@ -602,8 +604,11 @@ func (s *world) choose(ctx context.Context, lefts []leftover) (formPick, error) 
 			if err != nil {
 				return err
 			}
-			if p.ok && job.bound {
-				p.island = job.left.island
+			if p.ok {
+				p.parent = parent
+				if job.bound {
+					p.island = job.left.island
+				}
 			}
 			elapsed := time.Since(started)
 			mu.Lock()
@@ -619,19 +624,19 @@ func (s *world) choose(ctx context.Context, lefts []leftover) (formPick, error) 
 			if p.ok && (!st.pick.ok || p.a < st.pick.a) {
 				st.pick = p
 			}
-			if p.ok && (!best.ok || p.a < best.a) {
-				best = p
+			if p.ok {
+				pool = append(pool, p)
 			}
 			return nil
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nonePick(), err
+		return nil, err
 	}
 	for _, name := range operatorNames {
 		if st, ok := bestByName[name]; ok {
 			s.logCandidate(name, st.elapsed, st.pick)
 		}
 	}
-	return best, nil
+	return pool, nil
 }

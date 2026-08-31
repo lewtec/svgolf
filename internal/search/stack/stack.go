@@ -23,12 +23,11 @@ const (
 	minErr        = 8
 	polyFit       = 2
 	leftoverPicks = 3
+	survivorPicks = 3
 )
 
-// Stack scores every applicable operator on the three hottest
-// leftovers (and join/drop/restack) and keeps the best Score.
-// Operators: absorb, rectangle, ring, grow, carve, simplify, wash,
-// join, drop, restack. Want stays native.
+// Stack scores leftover ops plus elementary delete/swap on up to
+// three survivor documents and keeps the Y lowest Score. Want stays native.
 type Stack struct{}
 
 var _ search.Search = Stack{}
@@ -98,6 +97,17 @@ type formPick struct {
 	island   []pix
 	fills    []color.NRGBA
 	owner    []uint16
+	parent   snapshot
+}
+
+type snapshot struct {
+	doc    svg.Document
+	got    *image.NRGBA
+	fills  []color.NRGBA
+	owner  []uint16
+	skip   []byte
+	errSum float64
+	paths  int
 }
 
 func nonePick() formPick {
@@ -154,6 +164,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			started = time.Now()
 			return yield(ep, nil)
 		}
+		survivors := []snapshot{s.snap()}
 		yielded := false
 		for {
 			if err := ctx.Err(); err != nil {
@@ -162,29 +173,51 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 				return
 			}
-			lefts := s.leftovers()
-			pick, err := s.choose(ctx, lefts)
-			if err != nil {
-				yield(search.Epoch{}, err)
-				return
+			bestA := survivors[0].score()
+			for _, sv := range survivors[1:] {
+				if a := sv.score(); a < bestA {
+					bestA = a
+				}
 			}
-			if !pick.ok {
+			var pool []formPick
+			for _, sv := range survivors {
+				s.load(sv)
+				picks, err := s.choose(ctx, s.leftovers(), sv)
+				if err != nil {
+					yield(search.Epoch{}, err)
+					return
+				}
+				pool = append(pool, picks...)
+			}
+			kept := rankGeneration(pool, bestA, survivorPicks)
+			if len(kept) == 0 {
 				any := false
-				for _, left := range lefts {
-					if !left.big() {
-						continue
+				for i, sv := range survivors {
+					s.load(sv)
+					for _, left := range s.leftovers() {
+						if !left.big() {
+							continue
+						}
+						s.ignore(left)
+						any = true
 					}
-					s.ignore(left)
-					any = true
+					survivors[i] = s.snap()
 				}
 				if !any {
 					break
 				}
 				continue
 			}
-			s.apply(pick)
+			next := make([]snapshot, 0, len(kept))
+			for _, p := range kept {
+				s.load(p.parent)
+				s.apply(p)
+				next = append(next, s.snap())
+			}
+			s.load(next[0])
+			survivors = next
 			yielded = true
-			if !emit(pick.op, pick.island) {
+			if !emit(kept[0].op, kept[0].island) {
 				return
 			}
 		}
@@ -226,6 +259,52 @@ func (s *world) seedGrow(g grow) grow {
 
 func (s *world) currentScore() float64 {
 	return s.errSum + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(s.doc))
+}
+
+func (sn snapshot) score() float64 {
+	return sn.errSum + pathCost*float64(sn.paths) + cmdCost*float64(docCmdLen(sn.doc))
+}
+
+func (s *world) snap() snapshot {
+	return snapshot{
+		doc:    s.doc,
+		got:    s.got,
+		fills:  append([]color.NRGBA(nil), s.fills...),
+		owner:  append([]uint16(nil), s.owner...),
+		skip:   append([]byte(nil), s.skip...),
+		errSum: s.errSum,
+		paths:  s.paths,
+	}
+}
+
+func (s *world) load(sn snapshot) {
+	s.doc = sn.doc
+	s.got = sn.got
+	s.fills = append([]color.NRGBA(nil), sn.fills...)
+	s.owner = append([]uint16(nil), sn.owner...)
+	s.skip = append([]byte(nil), sn.skip...)
+	s.errSum = sn.errSum
+	s.paths = sn.paths
+	if s.gotP == nil {
+		s.gotP = loss.NewPlane(s.got)
+	} else {
+		s.gotP.Reset(s.got)
+	}
+	s.gotP.Ensure()
+}
+
+func rankGeneration(pool []formPick, bestA float64, y int) []formPick {
+	var out []formPick
+	for _, p := range pool {
+		if p.ok && p.a < bestA {
+			out = append(out, p)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].a < out[j].a })
+	if y > 0 && len(out) > y {
+		out = out[:y]
+	}
+	return out
 }
 
 func (s *world) ignore(left leftover) {
@@ -282,52 +361,36 @@ func (s *world) apply(pick formPick) {
 	s.gotP.Ensure()
 }
 
-// restackOrder is large drawn area under smaller details. Pane stays
-// first. The live document is unchanged; Restack scores the proposal.
-func (s *world) restackOrder() (svg.Document, []color.NRGBA, []uint16, bool) {
-	if s.paths < 2 {
+// swapAdjacent exchanges path i with i+1. Pane stays first.
+func (s *world) swapAdjacent(i int) (svg.Document, []color.NRGBA, []uint16, bool) {
+	if i < 0 || i+1 >= s.paths {
 		return svg.Document{}, nil, nil, false
 	}
 	kids := s.doc.Children()
-	type item struct {
-		node svg.Node
-		fill color.NRGBA
-		old  uint16
-		area float64
-	}
-	items := make([]item, s.paths)
-	for i := 0; i < s.paths; i++ {
-		items[i] = item{kids[i+1], s.fills[i], uint16(i + 1), pathArea(kids[i+1])}
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].area > items[j].area
-	})
-	changed := false
-	for i, it := range items {
-		if it.old != uint16(i+1) {
-			changed = true
-			break
-		}
-	}
-	if !changed {
-		return svg.Document{}, nil, nil, false
-	}
 	out := svg.NewDocument(s.doc.Width(), s.doc.Height())
 	if vb := s.doc.ViewBox(); vb.Set() {
 		out = out.WithViewBox(vb.MinX(), vb.MinY(), vb.Width(), vb.Height())
 	}
 	out = out.Append(kids[0])
-	fills := make([]color.NRGBA, s.paths)
-	toNew := make([]uint16, s.paths+2)
-	for i, it := range items {
-		out = out.Append(it.node)
-		toNew[it.old] = uint16(i + 1)
-		fills[i] = it.fill
+	for j := 0; j < s.paths; j++ {
+		src := j
+		if j == i {
+			src = i + 1
+		} else if j == i+1 {
+			src = i
+		}
+		out = out.Append(kids[src+1])
 	}
+	fills := append([]color.NRGBA(nil), s.fills...)
+	fills[i], fills[i+1] = fills[i+1], fills[i]
 	owner := append([]uint16(nil), s.owner...)
-	for i, v := range owner {
-		if v != 0 && int(v) < len(toNew) {
-			owner[i] = toNew[v]
+	idA, idB := uint16(i+1), uint16(i+2)
+	for k, v := range owner {
+		switch v {
+		case idA:
+			owner[k] = idB
+		case idB:
+			owner[k] = idA
 		}
 	}
 	return out, fills, owner, true
@@ -417,25 +480,6 @@ func fillBuckets(owner []uint16, w, n int, buckets [][]pix) [][]pix {
 		buckets[id] = append(buckets[id], pix{i % w, i / w})
 	}
 	return buckets
-}
-
-func smallestOwner(owner []uint16, n int) (int, bool) {
-	if n <= 0 {
-		return 0, false
-	}
-	cnt := make([]int, n+1)
-	for _, id := range owner {
-		if id > 0 && int(id) <= n {
-			cnt[id]++
-		}
-	}
-	best, bestN := 0, -1
-	for i := 1; i <= n; i++ {
-		if bestN < 0 || cnt[i] < bestN {
-			best, bestN = i-1, cnt[i]
-		}
-	}
-	return best, bestN >= 0
 }
 
 func dropOwner(owner []uint16, id uint16, n int) {

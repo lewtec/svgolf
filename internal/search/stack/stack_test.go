@@ -66,12 +66,12 @@ func TestTryDropRedundant(t *testing.T) {
 		h:      16,
 		errSum: Score(got, img, 0),
 	}
-	pick, err := (Drop{world: s}).Run()
+	pick, err := (Delete{world: s, i: 1}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("drop=false want drop the covered crumb")
+		t.Fatal("delete=false want drop the covered crumb")
 	}
 	s.apply(pick)
 	if s.paths != 1 {
@@ -150,6 +150,23 @@ func TestHottestNKeepsThree(t *testing.T) {
 	}
 	if !seen[64] || !seen[144] || !seen[400] {
 		t.Fatalf("islands=%v want 64, 144, 400", []int{len(top[0].island), len(top[1].island), len(top[2].island)})
+	}
+}
+
+func TestRankGenerationKeepsYBest(t *testing.T) {
+	pool := []formPick{
+		{ok: true, a: 30, op: "swap"},
+		{ok: true, a: 10, op: "delete"},
+		{ok: false, a: 1, op: "grow"},
+		{ok: true, a: 50, op: "worse"},
+		{ok: true, a: 20, op: "rectangle"},
+	}
+	got := rankGeneration(pool, 40, 3)
+	if len(got) != 3 {
+		t.Fatalf("kept=%d want 3", len(got))
+	}
+	if got[0].a != 10 || got[1].a != 20 || got[2].a != 30 {
+		t.Fatalf("order=%v", []float64{got[0].a, got[1].a, got[2].a})
 	}
 }
 
@@ -287,7 +304,7 @@ func TestStackLargePlateUnderSmall(t *testing.T) {
 	}
 }
 
-func TestRestackUncoversMark(t *testing.T) {
+func TestSwapUncoversMark(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	blue := color.NRGBA{B: 255, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
@@ -336,12 +353,12 @@ func TestRestackUncoversMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Restack{world: s}).Run()
+	pick, err := (Swap{world: s, i: 0}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("restack=false want large under small")
+		t.Fatal("swap=false want large under small")
 	}
 	s.apply(pick)
 	kids := s.doc.Children()
