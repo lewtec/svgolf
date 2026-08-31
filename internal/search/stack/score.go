@@ -37,12 +37,14 @@ func ScoreOn(got, want *loss.Plane, parts int) float64 {
 	}
 	got.Ensure()
 	want.Ensure()
-	b := want.Image().Rect
+	gp, wp := got.Slice(), want.Slice()
+	n := len(gp)
+	if len(wp) < n {
+		n = len(wp)
+	}
 	var sum float64
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			sum += errAtHSV(got.At(x, y), want.At(x, y))
-		}
+	for i := 0; i < n; i++ {
+		sum += errAtHSV(gp[i], wp[i])
 	}
 	if parts < 0 {
 		parts = 0
@@ -66,10 +68,14 @@ func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
 		return 0
 	}
 	got.EnsureRect(r)
+	b := want.Image().Rect
+	gp, wp := got.Slice(), want.Slice()
+	w := b.Dx()
 	var sum float64
 	for y := r.Min.Y; y < r.Max.Y; y++ {
-		for x := r.Min.X; x < r.Max.X; x++ {
-			sum += errAtHSV(got.At(x, y), want.At(x, y))
+		row := (y-b.Min.Y)*w + (r.Min.X - b.Min.X)
+		for x := 0; x < r.Dx(); x++ {
+			sum += errAtHSV(gp[row+x], wp[row+x])
 		}
 	}
 	return sum

@@ -55,6 +55,23 @@ func TestPlaneResetReusesBuffer(t *testing.T) {
 	}
 }
 
+func TestPlaneConvertMatchesNRGBAAt(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	img.SetNRGBA(2, 1, color.NRGBA{B: 200, G: 10, A: 255})
+	p := NewPlane(img)
+	p.Ensure()
+	for y := 0; y < 2; y++ {
+		for x := 0; x < 3; x++ {
+			want := HSVOf(img.NRGBAAt(x, y))
+			got := p.At(x, y)
+			if got != want {
+				t.Fatalf("(%d,%d) %+v want %+v", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestPlaneConvertsOnce(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
