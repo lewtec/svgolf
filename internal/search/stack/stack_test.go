@@ -1073,6 +1073,21 @@ func TestSmoothPullsStairInward(t *testing.T) {
 	}
 }
 
+func TestCoverRingKeepsConcaveL(t *testing.T) {
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			if x < 3 || y < 3 {
+				island = append(island, pix{x, y})
+			}
+		}
+	}
+	ring := coverRing(island, 6)
+	if pointInRing(ring, 5.5, 5.5) {
+		t.Fatalf("notch filled, still a hull? %v", ring)
+	}
+}
+
 func TestFitPolyKeepsConcaveL(t *testing.T) {
 	var island []pix
 	for y := 0; y < 8; y++ {

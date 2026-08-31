@@ -77,24 +77,22 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// quadRing is a four-sided polygon around work. Sides follow the
-// convex hull, so a diagonal leftover is a tilted quad, not an
-// axis-aligned box.
+// quadRing is coverRing with four sides.
 func quadRing(work []pix) [][2]float64 {
 	return coverRing(work, 4)
 }
 
-// coverRing is a low-edge polygon around the HSV leftover:
-// hull of the residual, collapsed to sides. Score picks the side count.
+// coverRing walks the residual outline, then collapses to sides.
+// Convex hull filled notches; the outline does not.
 func coverRing(work []pix, sides int) [][2]float64 {
 	if len(work) == 0 {
 		return nil
 	}
-	hull := convexHull(islandCorners(work))
-	if len(hull) < 3 {
+	ring := outline(work)
+	if len(ring) < 3 {
 		return bbox(work)
 	}
-	return collapseToSides(hull, sides)
+	return collapseToSides(ring, sides)
 }
 
 func collapseToSides(ring [][2]float64, sides int) [][2]float64 {
