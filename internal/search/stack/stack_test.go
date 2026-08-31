@@ -160,6 +160,55 @@ func TestTryDropRedundant(t *testing.T) {
 	}
 }
 
+func TestDeleteEmitsLosingScore(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	blue := color.NRGBA{B: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+		for x := 8; x < 16; x++ {
+			img.SetNRGBA(x, y, blue)
+		}
+	}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node())
+	doc = doc.Append(filledPath([][2]float64{{0, 0}, {8, 0}, {8, 16}, {0, 16}}, red).Node())
+	doc = doc.Append(filledPath([][2]float64{{8, 0}, {16, 0}, {16, 16}, {8, 16}}, blue).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		fills:  []color.NRGBA{red, blue},
+		paths:  2,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Delete{world: s, i: 0}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.scored {
+		t.Fatal("delete scored=false want the losing Score")
+	}
+	if pick.ok {
+		t.Fatal("delete=true; dropping a needed plate must lose")
+	}
+	if pick.a <= s.currentScore() {
+		t.Fatalf("a=%v cur=%v", pick.a, s.currentScore())
+	}
+}
+
 func TestModeFillPicksMajority(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	cyan := color.NRGBA{R: 0, G: 170, B: 220, A: 255}
@@ -373,6 +422,56 @@ func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
 	}
 	if heat[8*32+22] <= 0.5 {
 		t.Fatalf("black heat=%v want > 1/2", heat[8*32+22])
+	}
+}
+
+func TestStreakInflatesRepeatWinner(t *testing.T) {
+	s := &world{}
+	if s.streak(100, "cover") != 100 {
+		t.Fatalf("fresh streak=%v want 100", s.streak(100, "cover"))
+	}
+	s.noteWin("cover")
+	if s.winOp != "cover" || s.winN != 1 {
+		t.Fatalf("after one win op=%s n=%d", s.winOp, s.winN)
+	}
+	if s.streak(100, "cover") != 100 {
+		t.Fatalf("cover is leftover-op, stay raw")
+	}
+	if s.streak(100, "simplify") != 100 {
+		t.Fatalf("other op got streak")
+	}
+	s.noteWin("cover")
+	s.noteWin("simplify")
+	if s.winOp != "simplify" || s.winN != 1 {
+		t.Fatalf("reset op=%s n=%d", s.winOp, s.winN)
+	}
+	if g, w := s.streak(100, "simplify"), 100*math.Pow(streakRate, 1); g != w {
+		t.Fatalf("n=1 simplify=%v want %v", g, w)
+	}
+	if s.streak(100, "cover") != 100 {
+		t.Fatalf("cover still inflated after reset")
+	}
+}
+
+func TestRankGenerationPrefersFreshOperator(t *testing.T) {
+	pool := []formPick{
+		{scored: true, ok: true, a: 12, raw: 10, op: "simplify"},
+		{scored: true, ok: true, a: 11, raw: 11, op: "cover"},
+	}
+	got := rankGeneration(pool, 40, 1)
+	if len(got) != 1 || got[0].op != "cover" {
+		t.Fatalf("kept=%v want cover (simplify inflated)", got)
+	}
+}
+
+func TestStreakBlocksRepeatWorldOp(t *testing.T) {
+	s := &world{winOp: "simplify", winN: 2}
+	want := 100 * math.Pow(streakRate, 2)
+	if g := s.streak(100, "simplify"); g != want {
+		t.Fatalf("simplify=%v want %v", g, want)
+	}
+	if s.streak(100, "cover") != 100 {
+		t.Fatal("cover should stay raw")
 	}
 }
 
@@ -594,6 +693,62 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 	s.apply(pick)
 	if s.paths != 1 {
 		t.Fatalf("paths=%d want 1", s.paths)
+	}
+}
+
+func TestJoinEmitsLosingScore(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 170, B: 220, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if y < 8 || x < 8 {
+				img.SetNRGBA(x, y, cyan)
+			}
+		}
+	}
+	bar := filledPath([][2]float64{{0, 0}, {16, 0}, {16, 8}, {0, 8}}, cyan)
+	stem := filledPath([][2]float64{{0, 0}, {8, 0}, {8, 16}, {0, 16}}, cyan)
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(bar.Node()).Append(stem.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 16*16)
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 16; x++ {
+			owner[y*16+x] = 1
+		}
+	}
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 8; x++ {
+			owner[y*16+x] = 2
+		}
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{cyan, cyan},
+		paths:  2,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img, 0),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.scored {
+		t.Fatal("join scored=false want the losing Score")
+	}
+	if pick.ok {
+		t.Fatal("join=true; hull of an L must lose")
 	}
 }
 
@@ -1503,6 +1658,29 @@ func TestStackEpochRatesCover(t *testing.T) {
 		return
 	}
 	t.Fatal("no epoch")
+}
+
+func TestCollectRatedKeepsLosingScore(t *testing.T) {
+	a := 99.0
+	got := collectRated(map[string]*namedPick{
+		"delete": {pick: formPick{a: a, ok: false, scored: true}},
+		"join":   {pick: nonePick()},
+	})
+	var del, join *search.Rated
+	for i := range got {
+		switch got[i].Name {
+		case "delete":
+			del = &got[i]
+		case "join":
+			join = &got[i]
+		}
+	}
+	if del == nil || del.Ok || del.Score == nil || *del.Score != a {
+		t.Fatalf("delete=%v want scored loser", del)
+	}
+	if join == nil || join.Score != nil {
+		t.Fatalf("join=%v want no score when nothing valid", join)
+	}
 }
 
 func TestStackNilPixmap(t *testing.T) {

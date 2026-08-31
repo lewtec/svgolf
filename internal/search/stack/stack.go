@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"iter"
+	"math"
 	"math/rand/v2"
 	"runtime"
 	"sort"
@@ -26,6 +27,7 @@ const (
 	polyFit       = 2
 	leftoverPicks = 3
 	survivorPicks = 3
+	streakRate    = 1.1
 )
 
 // Stack crosses every pair of survivors: leftover of B on document A,
@@ -55,6 +57,8 @@ type world struct {
 	candidateLog io.Writer
 	logMu        sync.Mutex
 	snapID       int
+	winOp        string
+	winN         int
 }
 
 var candidateLog io.Writer
@@ -122,6 +126,7 @@ type formPick struct {
 	got      *image.NRGBA
 	errSum   float64
 	a        float64
+	raw      float64
 	replace  int
 	insert   int
 	work     []pix
@@ -131,6 +136,7 @@ type formPick struct {
 	mergeJ   int
 	op       string
 	ok       bool
+	scored   bool
 	island   []pix
 	fills    []color.NRGBA
 	owner    []uint16
@@ -146,10 +152,26 @@ type snapshot struct {
 	skip   []byte
 	errSum float64
 	paths  int
+	winOp  string
+	winN   int
 }
 
 func nonePick() formPick {
 	return formPick{replace: -1, insert: -1, dropIdx: -1, mergeJ: -1}
+}
+
+// betterPick is the lower Score. Accepts beat rejects. Unscored loses.
+func betterPick(n, old formPick) bool {
+	if !n.scored {
+		return false
+	}
+	if !old.scored {
+		return true
+	}
+	if n.ok != old.ok {
+		return n.ok
+	}
+	return n.a < old.a
 }
 
 func newWorld(target *image.NRGBA) (*world, error) {
@@ -268,6 +290,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			for _, p := range kept {
 				s.load(p.parent)
 				s.apply(p)
+				s.noteWin(p.op)
 				next = append(next, s.snap())
 			}
 			s.load(next[0])
@@ -327,6 +350,33 @@ func (s *world) currentScore() float64 {
 	return s.errSum + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(s.doc))
 }
 
+// streak inflates a repeat world-op: Score * streakRate^n.
+// Leftover ops stay raw so a second cover can still land.
+func (s *world) streak(a float64, op string) float64 {
+	if s == nil || s.winN <= 0 || op != s.winOp || !streakable(op) {
+		return a
+	}
+	return a * math.Pow(streakRate, float64(s.winN))
+}
+
+func streakable(op string) bool {
+	switch op {
+	case "simplify", "wash", "hull", "join", "subtract", "swap", "delete":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *world) noteWin(op string) {
+	if op == s.winOp {
+		s.winN++
+		return
+	}
+	s.winOp = op
+	s.winN = 1
+}
+
 func (sn snapshot) score() float64 {
 	return sn.errSum + pathCost*float64(sn.paths) + cmdCost*float64(docCmdLen(sn.doc))
 }
@@ -342,6 +392,8 @@ func (s *world) snap() snapshot {
 		skip:   append([]byte(nil), s.skip...),
 		errSum: s.errSum,
 		paths:  s.paths,
+		winOp:  s.winOp,
+		winN:   s.winN,
 	}
 }
 
@@ -353,6 +405,8 @@ func (s *world) load(sn snapshot) {
 	s.skip = append([]byte(nil), sn.skip...)
 	s.errSum = sn.errSum
 	s.paths = sn.paths
+	s.winOp = sn.winOp
+	s.winN = sn.winN
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
 	} else {
@@ -512,7 +566,7 @@ func (s *world) logCandidate(op string, elapsed time.Duration, p formPick) {
 	}
 	s.logMu.Lock()
 	defer s.logMu.Unlock()
-	if !p.ok {
+	if !p.scored {
 		fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=-\n", op, elapsed.Seconds())
 		return
 	}
@@ -534,22 +588,15 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, parts int, o
 	defer render.Release(ngot)
 	gotP := acquirePlane(ngot)
 	defer releasePlane(gotP)
-	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
-	old := g.oldErr
-	if dirty != g.dirty0.Inset(-2) {
-		old = ScoreRectOn(s.gotP, s.wantP, dirty)
-	}
-	nerrDirty := s.errSum + ScoreRectOn(gotP, s.wantP, dirty) - old
-	cmds := docCmdLen(next)
-	if nerrDirty+pathCost*float64(parts)+cmdCost*float64(cmds) >= curA {
-		return nonePick(), nil
-	}
 	nerr := ScoreOn(gotP, s.wantP, 0)
-	a := nerr + pathCost*float64(parts) + cmdCost*float64(cmds)
-	if a >= curA {
-		return nonePick(), nil
+	raw := nerr + pathCost*float64(parts) + cmdCost*float64(docCmdLen(next))
+	a := s.streak(raw, op)
+	ok := a < curA
+	var got *image.NRGBA
+	if ok {
+		got = render.Keep(ngot)
 	}
-	return formPick{doc: next, got: render.Keep(ngot), errSum: nerr, a: a, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: true}, nil
+	return formPick{doc: next, got: got, errSum: nerr, a: a, raw: raw, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: ok, scored: true}, nil
 }
 
 // addLayer scores a new path on top and at one random existing
@@ -577,7 +624,7 @@ func (s *world) addLayer(cand svg.Path, g grow, op string) (formPick, error) {
 		if pick.ok && at < s.paths {
 			pick.insert = at
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}

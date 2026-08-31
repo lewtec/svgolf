@@ -116,7 +116,7 @@ func (a *Absorb) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -154,7 +154,7 @@ func (g *Grow) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -208,9 +208,9 @@ func (c *Carve) Run() (formPick, error) {
 			return nonePick(), err
 		}
 		if pick.ok && pick.errSum >= s.errSum {
-			continue
+			pick.ok = false
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -274,7 +274,7 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 		return nonePick(), err
 	}
 	if pick.ok && pick.errSum >= s.errSum {
-		return nonePick(), nil
+		pick.ok = false
 	}
 	if pick.ok {
 		pick.reclaims = reclaims
@@ -354,13 +354,14 @@ func (s Simplify) Run() (formPick, error) {
 			if err != nil {
 				return err
 			}
-			if pick.ok && pick.errSum <= w.errSum {
-				mu.Lock()
-				if !best.ok || pick.a < best.a {
-					best = pick
-				}
-				mu.Unlock()
+			if pick.ok && pick.errSum > w.errSum {
+				pick.ok = false
 			}
+			mu.Lock()
+			if betterPick(pick, best) {
+				best = pick
+			}
+			mu.Unlock()
 			return nil
 		})
 	}
@@ -402,7 +403,7 @@ func (w *Wash) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -436,7 +437,7 @@ func (w *Wash) Run() (formPick, error) {
 			if pick.ok {
 				pick.mergeJ = j
 			}
-			if pick.ok && (!best.ok || pick.a < best.a) {
+			if betterPick(pick, best) {
 				best = pick
 			}
 		}
@@ -496,7 +497,7 @@ func (j *Join) Run() (formPick, error) {
 					pick.mergeJ = jn
 					pick.work = work
 				}
-				if pick.ok && (!best.ok || pick.a < best.a) {
+				if betterPick(pick, best) {
 					best = pick
 				}
 			}
@@ -549,7 +550,7 @@ func (s Subtract) Run() (formPick, error) {
 			if err != nil {
 				return nonePick(), err
 			}
-			if pick.ok && (!best.ok || pick.a < best.a) {
+			if betterPick(pick, best) {
 				best = pick
 			}
 		}
@@ -584,11 +585,14 @@ func (d Delete) Run() (formPick, error) {
 	nerr := ScoreOn(gotP, wantP, 0)
 	releasePlane(gotP)
 	curA := s.currentScore()
-	a := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
-	if a >= curA || nerr > s.errSum {
-		return nonePick(), nil
+	raw := nerr + pathCost*float64(s.paths-1) + cmdCost*float64(docCmdLen(next))
+	a := s.streak(raw, d.Name())
+	ok := a < curA && nerr <= s.errSum
+	var got *image.NRGBA
+	if ok {
+		got = render.Keep(ngot)
 	}
-	return formPick{doc: next, got: render.Keep(ngot), errSum: nerr, a: a, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: true}, nil
+	return formPick{doc: next, got: got, errSum: nerr, a: a, raw: raw, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: ok, scored: true}, nil
 }
 
 // Slide moves one vertex of a touching path toward the leftover outline.
@@ -654,7 +658,7 @@ func (sl Slide) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -726,7 +730,7 @@ func (b Bend) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -798,7 +802,7 @@ func (h HullPath) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && (!best.ok || pick.a < best.a) {
+		if betterPick(pick, best) {
 			best = pick
 		}
 	}
@@ -835,14 +839,17 @@ func (sw Swap) Run() (formPick, error) {
 	nerr := ScoreOn(gotP, wantP, 0)
 	releasePlane(gotP)
 	curA := s.currentScore()
-	a := nerr + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(next))
-	if a >= curA {
-		return nonePick(), nil
+	raw := nerr + pathCost*float64(s.paths) + cmdCost*float64(docCmdLen(next))
+	a := s.streak(raw, sw.Name())
+	ok = a < curA
+	var got *image.NRGBA
+	if ok {
+		got = render.Keep(ngot)
 	}
 	return formPick{
-		doc: next, got: render.Keep(ngot), errSum: nerr, a: a,
+		doc: next, got: got, errSum: nerr, a: a, raw: raw,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
-		op: sw.Name(), ok: true,
+		op: sw.Name(), ok: ok, scored: true,
 		fills: fills, owner: owner,
 	}, nil
 }
@@ -942,7 +949,7 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, w
 			if elapsed > st.elapsed {
 				st.elapsed = elapsed
 			}
-			if p.ok && (!st.pick.ok || p.a < st.pick.a) {
+			if betterPick(p, st.pick) {
 				st.pick = p
 			}
 			if p.ok {
@@ -970,7 +977,7 @@ func collectRated(bestByName map[string]*namedPick) []search.Rated {
 			continue
 		}
 		r := search.Rated{Name: name, Ok: st.pick.ok}
-		if st.pick.ok {
+		if st.pick.scored {
 			s := st.pick.a
 			r.Score = &s
 		}

@@ -170,7 +170,7 @@ templ JobPage(j JobView) {
 						td.className = "font-mono";
 						const r = scoreOf(rounds[i], name);
 						if (!r) td.textContent = "";
-						else if (!r.ok || r.score == null) td.textContent = "—";
+						else if (r.score == null) td.textContent = "—";
 						else {
 							td.textContent = fmt(r.score);
 							if (name === winner) td.classList.add("text-success", "font-bold");

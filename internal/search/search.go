@@ -23,9 +23,9 @@ type Epoch struct {
 	// Nil when the adapter does not publish debug frames.
 	Heat   *image.NRGBA
 	Island *image.NRGBA
-	// Rated is every operator that ran this epoch. Score is set
-	// when Score accepted the proposal; Ok is false when it ran
-	// and lost.
+	// Rated is every operator that ran this epoch. Score is the
+	// proposal's Score when it was valid. Ok is true when it beat
+	// the current document.
 	Rated []Rated
 }
 
