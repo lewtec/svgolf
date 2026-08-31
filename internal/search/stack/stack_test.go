@@ -255,6 +255,65 @@ func TestHottestNKeepsThree(t *testing.T) {
 	}
 }
 
+func TestHasInteriorRejectsOnePixelRim(t *testing.T) {
+	var rim []pix
+	for x := 4; x < 20; x++ {
+		rim = append(rim, pix{x, 4}, pix{x, 19})
+	}
+	for y := 5; y < 19; y++ {
+		rim = append(rim, pix{4, y}, pix{19, y})
+	}
+	if hasInterior(rim) {
+		t.Fatal("1px frame has no interior")
+	}
+	var plate []pix
+	for y := 4; y < 12; y++ {
+		for x := 4; x < 12; x++ {
+			plate = append(plate, pix{x, y})
+		}
+	}
+	if !hasInterior(plate) {
+		t.Fatal("8x8 plate should have interior")
+	}
+}
+
+func TestHottestSkipsRimForAreaStrip(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	red := color.NRGBA{R: 255, A: 255}
+	strip := color.NRGBA{R: 200, A: 255}
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for x := 4; x < 28; x++ {
+		want.SetNRGBA(x, 4, red)
+		want.SetNRGBA(x, 27, red)
+		got.SetNRGBA(x, 4, paper)
+		got.SetNRGBA(x, 27, paper)
+	}
+	for y := 5; y < 27; y++ {
+		want.SetNRGBA(4, y, red)
+		want.SetNRGBA(27, y, red)
+		got.SetNRGBA(4, y, paper)
+		got.SetNRGBA(27, y, paper)
+	}
+	for y := 16; y < 24; y++ {
+		for x := 8; x < 24; x++ {
+			want.SetNRGBA(x, y, strip)
+		}
+	}
+	col, island := (&world{got: got, want: want}).hottest()
+	if len(island) != 128 {
+		t.Fatalf("island=%d want 128 strip, fill=%+v", len(island), col)
+	}
+	if col.R < 180 {
+		t.Fatalf("fill=%+v want the strip, not the rim", col)
+	}
+}
+
 func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
@@ -1475,6 +1534,45 @@ func TestCoverRingKeepsConcaveL(t *testing.T) {
 	ring := coverRing(island)
 	if pointInRing(ring, 5.5, 5.5) {
 		t.Fatalf("notch filled, still a hull? %v", ring)
+	}
+}
+
+func TestCoverStartsWithHullNotSilhouette(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if x-y < 4 && y-x < 4 {
+				img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+			}
+		}
+	}
+	s, err := newWorld(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("cover=false")
+	}
+	p, ok := pick.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			n++
+		}
+	}
+	if n > 8 {
+		t.Fatalf("cover points=%d want a hull, not the silhouette", n)
 	}
 }
 

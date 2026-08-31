@@ -21,7 +21,8 @@ type Operator interface {
 	Run() (formPick, error)
 }
 
-// Cover places the leftover outline as a path. Mode fill.
+// Cover places a rough leftover hull. Slide and Bend walk
+// the leftover outline later.
 type Cover struct {
 	world *world
 	left  leftover
@@ -37,37 +38,12 @@ func (c Cover) Run() (formPick, error) {
 	if len(g.work) < minIsland {
 		return nonePick(), nil
 	}
-	ring := coverRing(g.work)
-	if len(ring) < 3 {
-		return nonePick(), nil
-	}
-	g.ring = ring
-	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
-}
-
-// Hull places the leftover convex hull as a path. Score picks
-// hull versus Cover outline.
-type Hull struct {
-	world *world
-	left  leftover
-}
-
-func (Hull) Name() string { return "hull" }
-func (h Hull) Applies() bool {
-	return h.left.big() && !h.left.paper && h.world.paths < maxPaths
-}
-
-func (h Hull) Run() (formPick, error) {
-	s, g := h.world, h.left.fresh
-	if len(g.work) < minIsland {
-		return nonePick(), nil
-	}
 	ring := hullRing(g.work)
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
 	g.ring = ring
-	return s.addLayer(filledPath(ring, g.fill), g, h.Name())
+	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -92,7 +68,7 @@ func (r Ring) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g := r.left.fresh
-	g.ring = coverRing(g.work)
+	g.ring = hullRing(g.work)
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
@@ -146,7 +122,7 @@ func (a *Absorb) Run() (formPick, error) {
 	return best, nil
 }
 
-// Grow expands an existing path over the leftover with a four-sided union.
+// Grow expands an existing path over the leftover with a hull union.
 type Grow struct {
 	world   *world
 	left    leftover
@@ -167,7 +143,7 @@ func (g *Grow) Run() (formPick, error) {
 	curA := s.currentScore()
 	best := nonePick()
 	for _, work := range works {
-		ring := coverRing(work.work)
+		ring := hullRing(work.work)
 		if len(ring) < 3 {
 			continue
 		}
@@ -201,7 +177,7 @@ func (c *Carve) Run() (formPick, error) {
 	c.scratch.ensure(s.w * s.h)
 	hole := c.left.fresh.ring
 	if len(hole) < 3 {
-		hole = coverRing(c.left.island)
+		hole = hullRing(c.left.island)
 	}
 	if len(hole) < 3 {
 		return nonePick(), nil
@@ -401,7 +377,7 @@ func (w *Wash) Run() (formPick, error) {
 				continue
 			}
 			work := append([]pix{}, w.scratch.work...)
-			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: coverRing(work)})
+			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: hullRing(work)})
 			if len(g.ring) < 3 {
 				continue
 			}
@@ -423,7 +399,7 @@ func (w *Wash) Run() (formPick, error) {
 	return best, nil
 }
 
-// Join merges two same-family paths into one leftover outline.
+// Join merges two same-family paths into one hull.
 type Join struct {
 	world   *world
 	buckets [][]pix
@@ -463,7 +439,7 @@ func (j *Join) Run() (formPick, error) {
 			if fills[0] == fills[1] {
 				fills = fills[:1]
 			}
-			ring := coverRing(work)
+			ring := hullRing(work)
 			if len(ring) < 3 {
 				continue
 			}
@@ -777,7 +753,6 @@ func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
 		&Absorb{world: s, left: left},
 		Cover{world: s, left: left},
-		Hull{world: s, left: left},
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
@@ -813,7 +788,7 @@ var operatorNames = []string{
 	"slide", "bend", "simplify", "wash", "join", "swap", "delete",
 }
 
-func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot) ([]formPick, error) {
+func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, world bool) ([]formPick, error) {
 	type job struct {
 		op    Operator
 		left  leftover
@@ -827,9 +802,11 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot) (
 			}
 		}
 	}
-	for _, op := range s.worldOps() {
-		if op.Applies() {
-			jobs = append(jobs, job{op: op})
+	if world {
+		for _, op := range s.worldOps() {
+			if op.Applies() {
+				jobs = append(jobs, job{op: op})
+			}
 		}
 	}
 	type named struct {

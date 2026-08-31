@@ -190,9 +190,16 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			var pool []formPick
 			for _, a := range survivors {
+				s.load(a)
+				world, err := s.choose(ctx, nil, a, true)
+				if err != nil {
+					yield(search.Epoch{}, err)
+					return
+				}
+				pool = append(pool, world...)
 				for j := range survivors {
 					s.load(a)
-					picks, err := s.choose(ctx, s.bindLeftovers(miss[j]), a)
+					picks, err := s.choose(ctx, s.bindLeftovers(miss[j]), a, false)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
@@ -640,7 +647,7 @@ func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2
 		if !holePainted(got, want, h) {
 			continue
 		}
-		r := coverRing(h)
+		r := hullRing(h)
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}

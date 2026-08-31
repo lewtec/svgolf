@@ -252,6 +252,9 @@ func (s *world) hottestN(k int) []leftoverBlob {
 					pending = append(pending, pix{nx, ny})
 				}
 			}
+			if !hasInterior(cur) {
+				continue
+			}
 			best = rankBlob(best, k, leftoverBlob{
 				col:    modeFill(want, cur),
 				island: append([]pix{}, cur...),
@@ -282,6 +285,22 @@ func rankBlob(best []leftoverBlob, k int, b leftoverBlob) []leftoverBlob {
 	copy(best[pos+1:], best[pos:])
 	best[pos] = b
 	return best
+}
+
+// hasInterior is true when some pixel has all four neighbors in the
+// island. A one-pixel AA rim has a huge bbox but no interior; Cover
+// bikesheds those and hides area leftovers (a folder strip, a frame).
+func hasInterior(island []pix) bool {
+	if len(island) < 5 {
+		return false
+	}
+	set := pixSet(island)
+	for _, p := range island {
+		if set[pix{p.x - 1, p.y}] && set[pix{p.x + 1, p.y}] && set[pix{p.x, p.y - 1}] && set[pix{p.x, p.y + 1}] {
+			return true
+		}
+	}
+	return false
 }
 
 func despeckle(mark []byte, w, h int) {
