@@ -63,7 +63,7 @@ func LogCandidates(w io.Writer) {
 }
 
 // leftover is the hottest residual blob and the paths that already
-// touch it. paper leftovers carve; others may rectangle or grow.
+// touch it. paper leftovers carve; others may cover or grow.
 // fresh is the new-plate grow (work=island, i=-1).
 type leftover struct {
 	island []pix

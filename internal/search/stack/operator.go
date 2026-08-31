@@ -21,25 +21,41 @@ type Operator interface {
 	Run() (formPick, error)
 }
 
-// Rectangle places a four-sided leftover cover.
-type Rectangle struct {
+// Cover maps a low-edge polygon onto an HSV leftover island.
+// Sides 3–6 are scored; Score keeps the cheapest.
+type Cover struct {
 	world *world
 	left  leftover
 }
 
-func (r Rectangle) Name() string { return "rectangle" }
-func (r Rectangle) Applies() bool {
-	return r.left.big() && !r.left.paper && r.world.paths < maxPaths
+func (Cover) Name() string { return "cover" }
+func (c Cover) Applies() bool {
+	return c.left.big() && !c.left.paper && c.world.paths < maxPaths
 }
 
-func (r Rectangle) Run() (formPick, error) {
-	s, g := r.world, r.left.fresh
-	if len(g.work) < minIsland {
+func (c Cover) Run() (formPick, error) {
+	s, g0 := c.world, c.left.fresh
+	if len(g0.work) < minIsland {
 		return nonePick(), nil
 	}
-	g.ring = quadRing(g.work)
-	cand := filledPath(g.ring, g.fill)
-	return s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, r.Name(), s.currentScore())
+	curA := s.currentScore()
+	best := nonePick()
+	for sides := 3; sides <= 6; sides++ {
+		g := g0
+		g.ring = coverRing(g.work, sides)
+		if len(g.ring) < 3 {
+			continue
+		}
+		cand := filledPath(g.ring, g.fill)
+		pick, err := s.scoreCand(s.doc.Append(cand.Node()), cand.Node(), g, s.paths+1, c.Name(), curA)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok && (!best.ok || pick.a < best.a) {
+			best = pick
+		}
+	}
+	return best, nil
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -537,7 +553,7 @@ func (sw Swap) Run() (formPick, error) {
 func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
 		&Absorb{world: s, left: left},
-		Rectangle{world: s, left: left},
+		Cover{world: s, left: left},
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
@@ -564,7 +580,7 @@ func (s *world) worldOps() []Operator {
 }
 
 var operatorNames = []string{
-	"absorb", "rectangle", "ring", "grow", "carve",
+	"absorb", "cover", "ring", "grow", "carve",
 	"simplify", "wash", "join", "swap", "delete",
 }
 

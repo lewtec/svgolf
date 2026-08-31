@@ -81,6 +81,12 @@ func convexHull(pts [][2]float64) [][2]float64 {
 // convex hull, so a diagonal leftover is a tilted quad, not an
 // axis-aligned box.
 func quadRing(work []pix) [][2]float64 {
+	return coverRing(work, 4)
+}
+
+// coverRing is a low-edge polygon around the HSV leftover:
+// hull of the residual, collapsed to sides. Score picks the side count.
+func coverRing(work []pix, sides int) [][2]float64 {
 	if len(work) == 0 {
 		return nil
 	}
@@ -88,7 +94,7 @@ func quadRing(work []pix) [][2]float64 {
 	if len(hull) < 3 {
 		return bbox(work)
 	}
-	return collapseToSides(hull, 4)
+	return collapseToSides(hull, sides)
 }
 
 func collapseToSides(ring [][2]float64, sides int) [][2]float64 {

@@ -237,8 +237,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "rectangle" {
-			t.Fatalf("operator=%s want rectangle", ep.Operator)
+		if ep.Operator != "cover" {
+			t.Fatalf("operator=%s want cover", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -250,8 +250,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 				n++
 			}
 		}
-		if n != 4 {
-			t.Fatalf("points=%d want 4 (rectangle as path)", n)
+		if n < 3 || n > 6 {
+			t.Fatalf("points=%d want 3-6 (cover on leftover)", n)
 		}
 		return
 	}
@@ -438,12 +438,12 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
-	pick, err := (Rectangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Cover{world: s, left: lefts[0]}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("rectangle=false want sibling leftover on this parent")
+		t.Fatal("cover=false want sibling leftover on this parent")
 	}
 }
 
@@ -850,7 +850,7 @@ func TestCandidateLogLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "\trectangle elapsed=") || !strings.Contains(got, "score=") {
+	if !strings.Contains(got, "\tcover elapsed=") || !strings.Contains(got, "score=") {
 		t.Fatalf("candidate log=%q", got)
 	}
 }
@@ -883,8 +883,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || ops[0] != "rectangle" {
-		t.Fatalf("operators=%v want rectangle first", ops)
+	if len(ops) == 0 || ops[0] != "cover" {
+		t.Fatalf("operators=%v want cover first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
@@ -917,19 +917,19 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != "rectangle" && ep.Operator != "grow" {
+		if ep.Operator != "cover" && ep.Operator != "grow" {
 			continue
 		}
 		for _, n := range forms(ep.Document) {
 			if _, ok := n.LinearFill(); ok {
-				t.Fatal("rectangle/grow fitted a linear; leftover stairs are wash")
+				t.Fatal("cover/grow fitted a linear; leftover stairs are wash")
 			}
 		}
 	}
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), "rectangle").Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), "cover").Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
@@ -1479,8 +1479,8 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "rectangle" {
-			t.Fatalf("operator=%s want rectangle", ep.Operator)
+		if ep.Operator != "cover" {
+			t.Fatalf("operator=%s want cover", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -1502,11 +1502,11 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 			last = pt
 			n++
 		}
-		if n != 4 {
-			t.Fatalf("points=%d want 4", n)
+		if n < 3 || n > 6 {
+			t.Fatalf("points=%d want 3-6", n)
 		}
-		if axis == 4 {
-			t.Fatal("rectangle stayed axis-aligned on a diagonal leftover")
+		if n == 4 && axis == 4 {
+			t.Fatal("cover stayed axis-aligned on a diagonal leftover")
 		}
 		return
 	}
