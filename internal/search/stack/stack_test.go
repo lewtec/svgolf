@@ -804,9 +804,9 @@ func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 		{Name: "cover", Score: &c},
 		{Name: "wash", Score: &w},
 		{Name: "join", Score: &j},
-		{Name: "rect", Score: &r},
+		{Name: "triangle", Score: &r},
 	}
-	kept := []formPick{{op: "wash"}, {op: "join"}, {op: "rect"}}
+	kept := []formPick{{op: "wash"}, {op: "join"}, {op: "triangle"}}
 	markKept(rated, kept)
 	if !rated[1].Best || !rated[1].Chosen {
 		t.Fatalf("wash=%+v want best+chosen", rated[1])
@@ -815,7 +815,7 @@ func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 		t.Fatalf("join=%+v want best only", rated[2])
 	}
 	if !rated[3].Best || rated[3].Chosen {
-		t.Fatalf("rect=%+v want best only", rated[3])
+		t.Fatalf("triangle=%+v want best only", rated[3])
 	}
 	if rated[0].Best || rated[0].Chosen {
 		t.Fatalf("cover=%+v want neither (4th)", rated[0])
@@ -865,7 +865,7 @@ func TestStackRampOnePathNative(t *testing.T) {
 	}
 }
 
-func TestStackGapGetsRectangle(t *testing.T) {
+func TestStackGapGetsTriangle(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	for y := 8; y < 24; y++ {
 		for x := 0; x < 32; x++ {
@@ -880,8 +880,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" && ep.Operator != "hull" && ep.Operator != "rect" {
-			t.Fatalf("operator=%s want cover, hull, or rect", ep.Operator)
+		if ep.Operator != "cover" && ep.Operator != "hull" && ep.Operator != "triangle" {
+			t.Fatalf("operator=%s want cover, hull, or triangle", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -901,23 +901,31 @@ func TestStackGapGetsRectangle(t *testing.T) {
 	t.Fatal("no form")
 }
 
-func TestLargestRectFillsSolidPlate(t *testing.T) {
+func TestLargestTriangleFillsSolidPlate(t *testing.T) {
 	var island []pix
 	for y := 2; y < 10; y++ {
 		for x := 3; x < 11; x++ {
 			island = append(island, pix{x, y})
 		}
 	}
-	ring := largestRect(island)
-	if len(ring) != 4 {
-		t.Fatalf("ring=%v want 4 corners", ring)
+	ring := largestTriangle(island)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%v want 3 corners", ring)
 	}
-	if ring[0] != [2]float64{3, 2} || ring[2] != [2]float64{11, 10} {
-		t.Fatalf("ring=%v want (3,2)-(11,10)", ring)
+	got := trianglePix(ring)
+	if len(got) < 32 {
+		t.Fatalf("pixels=%d want at least half of the 8x8 plate", len(got))
+	}
+	in := pixSet(island)
+	defer releaseBits(in)
+	for _, p := range got {
+		if !in.has(p) {
+			t.Fatalf("triangle left the plate at %v", p)
+		}
 	}
 }
 
-func TestLargestRectStaysInsideL(t *testing.T) {
+func TestLargestTriangleStaysInsideL(t *testing.T) {
 	var island []pix
 	for y := 0; y < 8; y++ {
 		for x := 0; x < 16; x++ {
@@ -929,17 +937,22 @@ func TestLargestRectStaysInsideL(t *testing.T) {
 			island = append(island, pix{x, y})
 		}
 	}
-	ring := largestRect(island)
-	if len(ring) != 4 {
+	ring := largestTriangle(island)
+	if len(ring) != 3 {
 		t.Fatalf("ring=%v", ring)
 	}
-	area := (ring[2][0] - ring[0][0]) * (ring[2][1] - ring[0][1])
-	if area != 16*8 {
-		t.Fatalf("area=%v want 128 (the bar, not the L bbox)", area)
+	got := trianglePix(ring)
+	if len(got) < 64 {
+		t.Fatalf("pixels=%d want at least half the bar", len(got))
+	}
+	for _, p := range got {
+		if p.x >= 4 && p.y >= 8 {
+			t.Fatalf("triangle filled the L notch at %v", p)
+		}
 	}
 }
 
-func TestRectPlacesInscribedPlate(t *testing.T) {
+func TestTrianglePlacesInscribedPlate(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 2; y < 10; y++ {
@@ -955,12 +968,12 @@ func TestRectPlacesInscribedPlate(t *testing.T) {
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Rect{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("rect=false want inscribed plate")
+		t.Fatal("triangle=false want inscribed plate")
 	}
 	p, ok := pick.doc.Children()[len(pick.doc.Children())-1].Path()
 	if !ok {
@@ -972,8 +985,8 @@ func TestRectPlacesInscribedPlate(t *testing.T) {
 			n++
 		}
 	}
-	if n != 4 {
-		t.Fatalf("cmds=%d want 4", n)
+	if n != 3 {
+		t.Fatalf("cmds=%d want 3", n)
 	}
 }
 
@@ -2130,8 +2143,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull" && ops[0] != "rect") {
-		t.Fatalf("operators=%v want cover, hull, or rect first", ops)
+	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull" && ops[0] != "triangle") {
+		t.Fatalf("operators=%v want cover, hull, or triangle first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {

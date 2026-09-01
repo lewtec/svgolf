@@ -27,7 +27,7 @@ type Op int
 const (
 	OpAbsorb Op = iota
 	OpCover
-	OpRect
+	OpTriangle
 	OpRing
 	OpGrow
 	OpCarve
@@ -46,7 +46,7 @@ const (
 var operatorNames = [opCount]string{
 	OpAbsorb:   "absorb",
 	OpCover:    "cover",
-	OpRect:     "rect",
+	OpTriangle: "triangle",
 	OpRing:     "ring",
 	OpGrow:     "grow",
 	OpCarve:    "carve",
@@ -84,8 +84,8 @@ func (o op) impl() Operator {
 		return &Absorb{world: o.world, left: o.left}
 	case OpCover:
 		return Cover{world: o.world, left: o.left}
-	case OpRect:
-		return Rect{world: o.world, left: o.left}
+	case OpTriangle:
+		return Triangle{world: o.world, left: o.left}
 	case OpRing:
 		return Ring{world: o.world, left: o.left}
 	case OpGrow:
@@ -156,34 +156,34 @@ func (c Cover) Run() (formPick, error) {
 	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
 }
 
-// Rect places the biggest axis-aligned rectangle inside the leftover.
-type Rect struct {
+// Triangle places the biggest leftover triangle that stays inside the mask.
+type Triangle struct {
 	world *world
 	left  leftover
 }
 
-func (Rect) Name() string { return "rect" }
-func (r Rect) Applies() bool {
-	return r.left.big() && !r.left.paper && r.world.paths < maxPaths
+func (Triangle) Name() string { return "triangle" }
+func (tr Triangle) Applies() bool {
+	return tr.left.big() && !tr.left.paper && tr.world.paths < maxPaths
 }
 
-func (r Rect) Run() (formPick, error) {
-	s, g := r.world, r.left.fresh
+func (tr Triangle) Run() (formPick, error) {
+	s, g := tr.world, tr.left.fresh
 	if len(g.work) < minIsland {
 		return nonePick(), nil
 	}
-	ring := largestRect(g.work)
-	if len(ring) < 4 {
+	ring := largestTriangle(g.work)
+	if len(ring) < 3 {
 		return nonePick(), nil
 	}
-	work := rectPix(ring)
+	work := trianglePix(ring)
 	if len(work) < minIsland {
 		return nonePick(), nil
 	}
 	g.work = work
 	g.ring = ring
 	g = s.seedGrow(g)
-	return s.addLayer(filledPath(ring, g.fill), g, r.Name())
+	return s.addLayer(filledPath(ring, g.fill), g, tr.Name())
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -991,7 +991,7 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 	case 3:
 		return []Operator{
 			op{id: OpCover, world: s, left: left},
-			op{id: OpRect, world: s, left: left},
+			op{id: OpTriangle, world: s, left: left},
 			op{id: OpRing, world: s, left: left},
 		}
 	case 4:
@@ -1002,7 +1002,7 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 			op{id: OpGrow, world: s, left: left},
 			op{id: OpCarve, world: s, left: left},
 			op{id: OpCover, world: s, left: left},
-			op{id: OpRect, world: s, left: left},
+			op{id: OpTriangle, world: s, left: left},
 			op{id: OpRing, world: s, left: left},
 		}
 	default:

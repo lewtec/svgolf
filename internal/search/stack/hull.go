@@ -78,81 +78,169 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// largestRect is the biggest axis-aligned rectangle inside the mask.
-func largestRect(island []pix) [][2]float64 {
-	if len(island) == 0 {
+// largestTriangle is the leftover triangle with the most island pixels
+// whose interior stays inside the mask. Hull triples first; if those
+// cut a concavity, reflex outline corners join the search.
+func largestTriangle(island []pix) [][2]float64 {
+	if len(island) < 3 {
 		return nil
 	}
-	box := islandRect(island)
-	w, h := box.Dx(), box.Dy()
-	on := make([]bool, w*h)
-	for _, p := range island {
-		on[(p.y-box.Min.Y)*w+(p.x-box.Min.X)] = true
+	set := pixSet(island)
+	defer releaseBits(set)
+	if ring := bestInscribedTriangle(convexHull(islandCorners(island)), set); len(ring) == 3 {
+		return ring
 	}
-	ht := make([]int, w)
-	best, left, right, top, bot := 0, 0, 0, 0, 0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if on[y*w+x] {
-				ht[x]++
-			} else {
-				ht[x] = 0
-			}
-		}
-		l, r, hh := largestHist(ht)
-		if a := (r - l) * hh; a > best {
-			best, left, right = a, l, r
-			bot = y + 1
-			top = bot - hh
-		}
-	}
-	if best == 0 {
-		return nil
-	}
-	x0 := float64(box.Min.X + left)
-	y0 := float64(box.Min.Y + top)
-	x1 := float64(box.Min.X + right)
-	y1 := float64(box.Min.Y + bot)
-	return [][2]float64{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}
+	return bestInscribedTriangle(triangleCandidates(island), set)
 }
 
-func largestHist(ht []int) (left, right, height int) {
-	stack := []int{-1}
-	best := 0
-	for i := 0; i <= len(ht); i++ {
-		cur := 0
-		if i < len(ht) {
-			cur = ht[i]
+func triangleCandidates(island []pix) [][2]float64 {
+	out := convexHull(islandCorners(island))
+	ring := coverRing(island)
+	n := len(ring)
+	for i := 0; i < n; i++ {
+		a, b, c := ring[(i-1+n)%n], ring[i], ring[(i+1)%n]
+		if (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]) < 0 {
+			out = append(out, b)
 		}
-		for len(stack) > 1 && ht[stack[len(stack)-1]] > cur {
-			hh := ht[stack[len(stack)-1]]
-			stack = stack[:len(stack)-1]
-			l := stack[len(stack)-1] + 1
-			if a := hh * (i - l); a > best {
-				best, left, right, height = a, l, i, hh
-			}
-		}
-		stack = append(stack, i)
 	}
-	return left, right, height
+	return uniquePoints(out)
 }
 
-func rectPix(ring [][2]float64) []pix {
-	if len(ring) < 4 {
+func uniquePoints(pts [][2]float64) [][2]float64 {
+	if len(pts) < 2 {
+		return pts
+	}
+	sort.Slice(pts, func(i, j int) bool {
+		if pts[i][0] != pts[j][0] {
+			return pts[i][0] < pts[j][0]
+		}
+		return pts[i][1] < pts[j][1]
+	})
+	out := pts[:1]
+	for _, p := range pts[1:] {
+		last := out[len(out)-1]
+		if p[0] == last[0] && p[1] == last[1] {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
+	n := len(pts)
+	if n < 3 {
 		return nil
 	}
-	x0, y0 := int(ring[0][0]), int(ring[0][1])
-	x1, y1 := int(ring[2][0]), int(ring[2][1])
-	if x1 < x0 {
-		x0, x1 = x1, x0
+	bestN := 0
+	var best [][2]float64
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			for k := j + 1; k < n; k++ {
+				got := triangleInsideCount(set, pts[i], pts[j], pts[k])
+				if got > bestN {
+					bestN = got
+					best = [][2]float64{pts[i], pts[j], pts[k]}
+				}
+			}
+		}
 	}
-	if y1 < y0 {
-		y0, y1 = y1, y0
+	if bestN < minIsland || len(best) < 3 {
+		return nil
 	}
-	out := make([]pix, 0, (x1-x0)*(y1-y0))
+	return uncross(best)
+}
+
+func triangleArea2(a, b, c [2]float64) float64 {
+	v := (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func pointInTriangle(p, a, b, c [2]float64) bool {
+	v0x, v0y := c[0]-a[0], c[1]-a[1]
+	v1x, v1y := b[0]-a[0], b[1]-a[1]
+	v2x, v2y := p[0]-a[0], p[1]-a[1]
+	den := v0x*v1y - v1x*v0y
+	if den == 0 {
+		return false
+	}
+	u := (v2x*v1y - v1x*v2y) / den
+	v := (v0x*v2y - v2x*v0y) / den
+	return u >= 0 && v >= 0 && u+v <= 1
+}
+
+func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
+	if triangleArea2(a, b, c) == 0 {
+		return 0
+	}
+	minX, maxX := a[0], a[0]
+	minY, maxY := a[1], a[1]
+	for _, p := range [][2]float64{b, c} {
+		if p[0] < minX {
+			minX = p[0]
+		}
+		if p[0] > maxX {
+			maxX = p[0]
+		}
+		if p[1] < minY {
+			minY = p[1]
+		}
+		if p[1] > maxY {
+			maxY = p[1]
+		}
+	}
+	x0, x1 := int(minX), int(maxX)
+	y0, y1 := int(minY), int(maxY)
+	n := 0
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
-			out = append(out, pix{x, y})
+			if !pointInTriangle([2]float64{float64(x) + 0.5, float64(y) + 0.5}, a, b, c) {
+				continue
+			}
+			if !set.has(pix{x, y}) {
+				return 0
+			}
+			n++
+		}
+	}
+	return n
+}
+
+func trianglePix(ring [][2]float64) []pix {
+	if len(ring) < 3 {
+		return nil
+	}
+	a, b, c := ring[0], ring[1], ring[2]
+	if triangleArea2(a, b, c) == 0 {
+		return nil
+	}
+	minX, maxX := a[0], a[0]
+	minY, maxY := a[1], a[1]
+	for _, p := range [][2]float64{b, c} {
+		if p[0] < minX {
+			minX = p[0]
+		}
+		if p[0] > maxX {
+			maxX = p[0]
+		}
+		if p[1] < minY {
+			minY = p[1]
+		}
+		if p[1] > maxY {
+			maxY = p[1]
+		}
+	}
+	x0, x1 := int(minX), int(maxX)
+	y0, y1 := int(minY), int(maxY)
+	var out []pix
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if pointInTriangle([2]float64{float64(x) + 0.5, float64(y) + 0.5}, a, b, c) {
+				out = append(out, pix{x, y})
+			}
 		}
 	}
 	return out
