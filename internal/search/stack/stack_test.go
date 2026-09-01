@@ -769,8 +769,8 @@ func TestHottestFullMatchIsEmpty(t *testing.T) {
 func TestHottestDilatesThinCoreIntoHalo(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	black := color.NRGBA{A: 255}
-	halo := color.NRGBA{R: 220, G: 220, B: 220, A: 255}
+	hot := color.NRGBA{R: 255, A: 255}
+	halo := color.NRGBA{R: 200, G: 20, B: 20, A: 255}
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
 			got.SetNRGBA(x, y, paper)
@@ -778,13 +778,13 @@ func TestHottestDilatesThinCoreIntoHalo(t *testing.T) {
 		}
 	}
 	for x := 4; x < 13; x++ {
-		want.SetNRGBA(x, 8, black)
+		want.SetNRGBA(x, 8, hot)
 		want.SetNRGBA(x, 7, halo)
 		want.SetNRGBA(x, 9, halo)
 	}
 	_, island := (&world{got: got, want: want}).hottest()
 	if !hasInterior(island) || len(island) <= 9 {
-		t.Fatalf("island=%d want the 1px line dilated into its halo", len(island))
+		t.Fatalf("island=%d want the 1px line plus its close-tint halo", len(island))
 	}
 }
 
@@ -869,7 +869,7 @@ func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
 	}
 }
 
-func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
+func TestHottestKeepsCloseTintNextToFullMiss(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 32, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
 	pale := color.NRGBA{R: 242, G: 242, B: 242, A: 255}
@@ -888,15 +888,43 @@ func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
 			want.SetNRGBA(x, y, black)
 		}
 	}
-	gotP, wantP := loss.NewPlane(got), loss.NewPlane(want)
-	gotP.Ensure()
-	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, 32, 16)
-	if heat[8*32+6] > 0.5 {
-		t.Fatalf("pale heat=%v want ≤ 1/2 next to a full miss", heat[8*32+6])
+	top := (&world{got: got, want: want}).hottestN(2)
+	if len(top) != 2 {
+		t.Fatalf("hottestN=%d want both the pale plate and the full miss", len(top))
 	}
-	if heat[8*32+22] <= 0.5 {
-		t.Fatalf("black heat=%v want > 1/2", heat[8*32+22])
+	seen := map[int]bool{}
+	for _, b := range top {
+		seen[len(b.island)] = true
+	}
+	if !seen[64] {
+		t.Fatalf("islands=%v want the 8x8 pale leftover kept next to the full miss", []int{len(top[0].island), len(top[1].island)})
+	}
+}
+
+func TestHottestIncludesCloseTintHalo(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	want := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	hot := color.NRGBA{R: 255, A: 255}
+	tint := color.NRGBA{R: 200, G: 20, B: 20, A: 255}
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 16; y++ {
+		for x := 4; x < 16; x++ {
+			want.SetNRGBA(x, y, tint)
+		}
+	}
+	for y := 6; y < 14; y++ {
+		for x := 6; x < 14; x++ {
+			want.SetNRGBA(x, y, hot)
+		}
+	}
+	_, island := (&world{got: got, want: want}).hottest()
+	if len(island) <= 64 {
+		t.Fatalf("island=%d want the close-tint halo with the full miss", len(island))
 	}
 }
 

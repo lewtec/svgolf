@@ -217,9 +217,8 @@ func residual(got, want *image.NRGBA, x, y, w int) bool {
 }
 
 // leftoverHeat is HSV error scaled to the current max, 0–1.
-// hottest leftover and debug heat keep pixels > 1/2 so a close
-// tint still outlines when it is the remaining miss. Score still
-// uses raw errAtHSV.
+// The leftover mark is every pixel with heat > 0 (any miss).
+// Score still uses raw errAtHSV.
 func leftoverHeat(got, want *loss.Plane, w, h int) []float64 {
 	field := make([]float64, w*h)
 	var maxE float64
@@ -288,52 +287,15 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	if maxH <= 0 {
 		return nil
 	}
-	var thin []leftoverBlob
-	for cut := 0.5; ; cut /= 2 {
-		s.stampHeat(heat, w, h, b, cut)
-		despeckle(s.scratch.mark, w, h)
-		if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
-			return cores
-		} else if len(rest) > 0 {
-			thin = rest
-		}
-		saved := append([]byte(nil), s.scratch.mark...)
-		if s.erodeMark(w, h) {
-			if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
-				return cores
-			} else if len(rest) > 0 {
-				thin = rest
-			}
-			copy(s.scratch.mark, saved)
-		}
-		for step := 0; ; step++ {
-			if step >= w+h || !s.dilateIntoHeat(heat, w, h) {
-				break
-			}
-			grown := append([]byte(nil), s.scratch.mark...)
-			if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
-				return cores
-			} else if len(rest) > 0 {
-				thin = rest
-			}
-			copy(s.scratch.mark, grown)
-			if s.erodeMark(w, h) {
-				if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
-					return cores
-				} else if len(rest) > 0 {
-					thin = rest
-				}
-				copy(s.scratch.mark, grown)
-			}
-		}
-		if cut < 1.0/64 {
-			break
-		}
-	}
-	if len(thin) > 0 {
-		return thin
-	}
 	s.stampHeat(heat, w, h, b, 0)
+	despeckle(s.scratch.mark, w, h)
+	cores, rest := s.coresFromMark(w, h, gotP, wantP, k)
+	if len(cores) > 0 {
+		return cores
+	}
+	if len(rest) > 0 {
+		return rest
+	}
 	return s.floodBlobs(w, h, gotP, wantP, k, false, 1)
 }
 
@@ -377,82 +339,6 @@ func (s *world) unfloodMark() {
 			s.scratch.mark[i] = 1
 		}
 	}
-}
-
-// dilateIntoHeat grows the mask into residual heat (AA halo),
-// not into a full match.
-func (s *world) dilateIntoHeat(heat []float64, w, h int) bool {
-	mark, seen, family := s.scratch.mark, s.scratch.seen, s.scratch.family
-	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
-	grew := false
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if mark[y*w+x] == 0 {
-				continue
-			}
-			for _, d := range dirs {
-				nx, ny := x+d.x, y+d.y
-				if nx < 0 || ny < 0 || nx >= w || ny >= h {
-					continue
-				}
-				i := ny*w + nx
-				if mark[i] != 0 || seen[i] != 0 || heat[i] <= 0 {
-					continue
-				}
-				seen[i] = 1
-				family[i] = family[y*w+x]
-				grew = true
-			}
-		}
-	}
-	if !grew {
-		return false
-	}
-	for i, v := range seen {
-		if v == 0 {
-			continue
-		}
-		seen[i] = 0
-		mark[i] = 1
-	}
-	return true
-}
-
-func (s *world) erodeMark(w, h int) bool {
-	mark, seen := s.scratch.mark, s.scratch.seen
-	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
-	kept := false
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			if mark[y*w+x] == 0 {
-				continue
-			}
-			ok := true
-			for _, d := range dirs {
-				nx, ny := x+d.x, y+d.y
-				if nx < 0 || ny < 0 || nx >= w || ny >= h || mark[ny*w+nx] == 0 {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				seen[y*w+x] = 1
-				kept = true
-			}
-		}
-	}
-	if !kept {
-		return false
-	}
-	clear(mark)
-	for i, v := range seen {
-		if v == 0 {
-			continue
-		}
-		seen[i] = 0
-		mark[i] = 1
-	}
-	return true
 }
 
 func (s *world) floodBlobs(w, h int, gotP, wantP *loss.Plane, k int, interior bool, min int) []leftoverBlob {
