@@ -47,6 +47,36 @@ func (c Cover) Run() (formPick, error) {
 	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
 }
 
+// Rect places the biggest axis-aligned rectangle inside the leftover.
+type Rect struct {
+	world *world
+	left  leftover
+}
+
+func (Rect) Name() string { return "rect" }
+func (r Rect) Applies() bool {
+	return r.left.big() && !r.left.paper && r.world.paths < maxPaths
+}
+
+func (r Rect) Run() (formPick, error) {
+	s, g := r.world, r.left.fresh
+	if len(g.work) < minIsland {
+		return nonePick(), nil
+	}
+	ring := largestRect(g.work)
+	if len(ring) < 4 {
+		return nonePick(), nil
+	}
+	work := rectPix(ring)
+	if len(work) < minIsland {
+		return nonePick(), nil
+	}
+	g.work = work
+	g.ring = ring
+	g = s.seedGrow(g)
+	return s.addLayer(filledPath(ring, g.fill), g, r.Name())
+}
+
 // Ring is a leftover with a painted interior: evenodd outer plus holes
 // so a visor does not fill the face.
 type Ring struct {
@@ -858,6 +888,7 @@ func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
 		&Absorb{world: s, left: left},
 		Cover{world: s, left: left},
+		Rect{world: s, left: left},
 		Ring{world: s, left: left},
 		&Grow{world: s, left: left},
 		&Carve{world: s, left: left},
@@ -895,7 +926,7 @@ type namedPick struct {
 }
 
 var operatorNames = []string{
-	"absorb", "cover", "hull", "ring", "grow", "carve",
+	"absorb", "cover", "rect", "hull", "ring", "grow", "carve",
 	"slide", "bend", "simplify", "wash", "join", "subtract", "swap", "delete",
 }
 

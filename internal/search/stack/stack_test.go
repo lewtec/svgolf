@@ -559,8 +559,8 @@ func TestStackGapGetsRectangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" && ep.Operator != "hull" {
-			t.Fatalf("operator=%s want cover or hull", ep.Operator)
+		if ep.Operator != "cover" && ep.Operator != "hull" && ep.Operator != "rect" {
+			t.Fatalf("operator=%s want cover, hull, or rect", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -578,6 +578,82 @@ func TestStackGapGetsRectangle(t *testing.T) {
 		return
 	}
 	t.Fatal("no form")
+}
+
+func TestLargestRectFillsSolidPlate(t *testing.T) {
+	var island []pix
+	for y := 2; y < 10; y++ {
+		for x := 3; x < 11; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	ring := largestRect(island)
+	if len(ring) != 4 {
+		t.Fatalf("ring=%v want 4 corners", ring)
+	}
+	if ring[0] != [2]float64{3, 2} || ring[2] != [2]float64{11, 10} {
+		t.Fatalf("ring=%v want (3,2)-(11,10)", ring)
+	}
+}
+
+func TestLargestRectStaysInsideL(t *testing.T) {
+	var island []pix
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 16; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 0; x < 4; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	ring := largestRect(island)
+	if len(ring) != 4 {
+		t.Fatalf("ring=%v", ring)
+	}
+	area := (ring[2][0] - ring[0][0]) * (ring[2][1] - ring[0][1])
+	if area != 16*8 {
+		t.Fatalf("area=%v want 128 (the bar, not the L bbox)", area)
+	}
+}
+
+func TestRectPlacesInscribedPlate(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 2; y < 10; y++ {
+		for x := 2; x < 14; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	s, err := newWorld(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Rect{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("rect=false want inscribed plate")
+	}
+	p, ok := pick.doc.Children()[len(pick.doc.Children())-1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	n := 0
+	for _, c := range p.Commands() {
+		if c.Kind != svg.CmdClose {
+			n++
+		}
+	}
+	if n != 4 {
+		t.Fatalf("cmds=%d want 4", n)
+	}
 }
 
 func TestStackSolid(t *testing.T) {

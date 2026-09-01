@@ -77,6 +77,86 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
+// largestRect is the biggest axis-aligned rectangle inside the mask.
+func largestRect(island []pix) [][2]float64 {
+	if len(island) == 0 {
+		return nil
+	}
+	box := islandRect(island)
+	w, h := box.Dx(), box.Dy()
+	on := make([]bool, w*h)
+	for _, p := range island {
+		on[(p.y-box.Min.Y)*w+(p.x-box.Min.X)] = true
+	}
+	ht := make([]int, w)
+	best, left, right, top, bot := 0, 0, 0, 0, 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if on[y*w+x] {
+				ht[x]++
+			} else {
+				ht[x] = 0
+			}
+		}
+		l, r, hh := largestHist(ht)
+		if a := (r - l) * hh; a > best {
+			best, left, right = a, l, r
+			bot = y + 1
+			top = bot - hh
+		}
+	}
+	if best == 0 {
+		return nil
+	}
+	x0 := float64(box.Min.X + left)
+	y0 := float64(box.Min.Y + top)
+	x1 := float64(box.Min.X + right)
+	y1 := float64(box.Min.Y + bot)
+	return [][2]float64{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}
+}
+
+func largestHist(ht []int) (left, right, height int) {
+	stack := []int{-1}
+	best := 0
+	for i := 0; i <= len(ht); i++ {
+		cur := 0
+		if i < len(ht) {
+			cur = ht[i]
+		}
+		for len(stack) > 1 && ht[stack[len(stack)-1]] > cur {
+			hh := ht[stack[len(stack)-1]]
+			stack = stack[:len(stack)-1]
+			l := stack[len(stack)-1] + 1
+			if a := hh * (i - l); a > best {
+				best, left, right, height = a, l, i, hh
+			}
+		}
+		stack = append(stack, i)
+	}
+	return left, right, height
+}
+
+func rectPix(ring [][2]float64) []pix {
+	if len(ring) < 4 {
+		return nil
+	}
+	x0, y0 := int(ring[0][0]), int(ring[0][1])
+	x1, y1 := int(ring[2][0]), int(ring[2][1])
+	if x1 < x0 {
+		x0, x1 = x1, x0
+	}
+	if y1 < y0 {
+		y0, y1 = y1, y0
+	}
+	out := make([]pix, 0, (x1-x0)*(y1-y0))
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			out = append(out, pix{x, y})
+		}
+	}
+	return out
+}
+
 func hullRing(work []pix) [][2]float64 {
 	if len(work) == 0 {
 		return nil
