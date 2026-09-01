@@ -903,7 +903,7 @@ func (s *world) worldOps() []Operator {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	ops := []Operator{
-		Simplify{world: s, buckets: buckets},
+		// Simplify{world: s, buckets: buckets},
 		HullPath{world: s, buckets: buckets},
 		&Wash{world: s, buckets: buckets},
 		&Join{world: s, buckets: buckets},
