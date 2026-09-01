@@ -438,7 +438,12 @@ func TestScoreCandStoresFullError(t *testing.T) {
 	if !pick.ok {
 		t.Fatal("triangle=false")
 	}
-	full := ScoreOn(loss.NewPlane(pick.got), s.wantP)
+	got, err := render.Scratch(pick.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer render.Release(got)
+	full := ScoreOn(loss.NewPlane(got), s.wantP)
 	if pick.errSum != full {
 		t.Fatalf("errSum=%v full=%v (dirty rect lied)", pick.errSum, full)
 	}

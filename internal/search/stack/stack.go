@@ -537,7 +537,15 @@ func markKept(rated []search.Rated, kept []formPick) {
 }
 
 func (s *world) apply(pick formPick) {
-	s.doc, s.got, s.errSum = pick.doc, pick.got, pick.errSum
+	got := pick.got
+	if got == nil {
+		img, err := render.Scratch(pick.doc)
+		if err == nil {
+			got = render.Keep(img)
+			render.Release(img)
+		}
+	}
+	s.doc, s.got, s.errSum = pick.doc, got, pick.errSum
 	if pick.owner != nil {
 		s.owner = pick.owner
 		s.fills = pick.fills
@@ -677,15 +685,25 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (form
 	defer render.Release(ngot)
 	gotP := acquirePlane(ngot)
 	defer releasePlane(gotP)
-	nerr := ScoreOn(gotP, s.wantP)
+	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
+	nerr := s.scoreAfter(gotP, dirty)
 	npaths := docPaths(next)
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
-	var got *image.NRGBA
-	if ok {
-		got = render.Keep(ngot)
+	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
+}
+
+// scoreAfter is ScoreOn of a candidate whose paint only changed
+// inside dirty: parent sum minus the old rect plus the new rect.
+func (s *world) scoreAfter(gotP *loss.Plane, dirty image.Rectangle) float64 {
+	if s.want == nil {
+		return ScoreOn(gotP, s.wantP)
 	}
-	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
+	dirty = dirty.Intersect(s.want.Bounds())
+	if dirty.Empty() {
+		return ScoreOn(gotP, s.wantP)
+	}
+	return s.errSum - ScoreRectOn(s.gotP, s.wantP, dirty) + ScoreRectOn(gotP, s.wantP, dirty)
 }
 
 // addLayer scores a new path on top and at one random existing

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -584,6 +583,7 @@ func (j *Join) Run() (formPick, error) {
 			}
 			for _, fill := range fills {
 				g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: ring})
+				g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[jn+1]))
 				cand := filledPath(ring, fill)
 				next := replaceAt(s.doc, i+1, cand.Node())
 				next = dropAt(next, jn+1)
@@ -674,21 +674,14 @@ func (d Delete) Run() (formPick, error) {
 		return nonePick(), err
 	}
 	defer render.Release(ngot)
-	wantP := s.wantP
-	if wantP == nil {
-		wantP = loss.NewPlane(s.want)
-	}
 	gotP := acquirePlane(ngot)
-	nerr := ScoreOn(gotP, wantP)
+	dirty := nodeRect(s.doc.Children()[d.i+1]).Inset(-2)
+	nerr := s.scoreAfter(gotP, dirty)
 	releasePlane(gotP)
 	npaths := s.paths - 1
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc)) && nerr <= s.errSum
-	var got *image.NRGBA
-	if ok {
-		got = render.Keep(ngot)
-	}
-	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
+	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
 }
 
 // Slide moves one vertex of a touching path toward the leftover outline.
@@ -854,22 +847,15 @@ func (sw Swap) Run() (formPick, error) {
 		return nonePick(), err
 	}
 	defer render.Release(ngot)
-	wantP := s.wantP
-	if wantP == nil {
-		wantP = loss.NewPlane(s.want)
-	}
 	gotP := acquirePlane(ngot)
-	nerr := ScoreOn(gotP, wantP)
+	dirty := nodeRect(s.doc.Children()[sw.i+1]).Union(nodeRect(s.doc.Children()[sw.j+1])).Inset(-2)
+	nerr := s.scoreAfter(gotP, dirty)
 	releasePlane(gotP)
 	npaths := s.paths
 	ncmds := docCmdLen(next)
 	ok = acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
-	var got *image.NRGBA
-	if ok {
-		got = render.Keep(ngot)
-	}
 	return formPick{
-		doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds,
+		doc: next, errSum: nerr, paths: npaths, commands: ncmds,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
 		op: OpSwap, ok: ok, scored: true,
 		fills: fills, owner: owner,
