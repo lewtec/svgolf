@@ -79,15 +79,17 @@ func convexHull(pts [][2]float64) [][2]float64 {
 }
 
 // largestTriangle is the leftover triangle with the most island pixels
-// whose interior stays inside the mask. Hull triples first; if those
-// cut a concavity, reflex outline corners join the search.
+// whose interior stays inside the mask. The max-area hull triple is
+// tried first (one raster). Only if that cuts a hole do reflex corners
+// and hole hulls join the search.
 func largestTriangle(island []pix) [][2]float64 {
 	if len(island) < 3 {
 		return nil
 	}
 	set := pixSet(island)
 	defer releaseBits(set)
-	if ring := bestInscribedTriangle(convexHull(islandCorners(island)), set); len(ring) == 3 {
+	hull := convexHull(islandCorners(island))
+	if ring := maxAreaIfInside(hull, set); len(ring) == 3 {
 		return ring
 	}
 	return bestInscribedTriangle(triangleCandidates(island), set)
@@ -104,7 +106,7 @@ func triangleCandidates(island []pix) [][2]float64 {
 		}
 	}
 	for _, hole := range voids(island) {
-		out = append(out, coverRing(hole)...)
+		out = append(out, convexHull(islandCorners(hole))...)
 	}
 	return uniquePoints(out)
 }
@@ -130,6 +132,36 @@ func uniquePoints(pts [][2]float64) [][2]float64 {
 	return out
 }
 
+func maxAreaTriple(pts [][2]float64) (a, b, c [2]float64, area float64) {
+	n := len(pts)
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			for k := j + 1; k < n; k++ {
+				ar := triangleArea2(pts[i], pts[j], pts[k])
+				if ar > area {
+					area = ar
+					a, b, c = pts[i], pts[j], pts[k]
+				}
+			}
+		}
+	}
+	return a, b, c, area
+}
+
+func maxAreaIfInside(pts [][2]float64, set *pixBits) [][2]float64 {
+	if len(pts) < 3 {
+		return nil
+	}
+	a, b, c, area := maxAreaTriple(pts)
+	if area == 0 {
+		return nil
+	}
+	if triangleInsideCount(set, a, b, c) < minIsland {
+		return nil
+	}
+	return uncross([][2]float64{a, b, c})
+}
+
 func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
 	n := len(pts)
 	if n < 3 {
@@ -137,9 +169,15 @@ func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
 	}
 	bestN := 0
 	var best [][2]float64
+	if seed := maxAreaIfInside(pts, set); len(seed) == 3 {
+		return seed
+	}
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			for k := j + 1; k < n; k++ {
+				if triangleArea2(pts[i], pts[j], pts[k])/2 <= float64(bestN) {
+					continue
+				}
 				got := triangleInsideCount(set, pts[i], pts[j], pts[k])
 				if got > bestN {
 					bestN = got
@@ -177,6 +215,11 @@ func pointInTriangle(p, a, b, c [2]float64) bool {
 
 func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
 	if triangleArea2(a, b, c) == 0 {
+		return 0
+	}
+	cx := (a[0] + b[0] + c[0]) / 3
+	cy := (a[1] + b[1] + c[1]) / 3
+	if pointInTriangle([2]float64{cx, cy}, a, b, c) && !set.has(pix{int(cx), int(cy)}) {
 		return 0
 	}
 	minX, maxX := a[0], a[0]
