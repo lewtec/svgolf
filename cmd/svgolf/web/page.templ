@@ -133,6 +133,13 @@ templ JobPage(j JobView) {
 				}
 				return undefined;
 			}
+			function bestNames(round) {
+				if (!Array.isArray(round)) return [];
+				const scored = round.filter((r) => r && r.score != null);
+				const flagged = scored.filter((r) => r.best).map((r) => r.name);
+				if (flagged.length >= 2) return flagged;
+				return scored.slice().sort((a, b) => a.score - b.score).slice(0, 3).map((r) => r.name);
+			}
 			function paintHead() {
 				head.replaceChildren();
 				const cols = ["epoch", "win", ...names];
@@ -157,14 +164,20 @@ templ JobPage(j JobView) {
 					tr.appendChild(ep);
 					const win = document.createElement("td");
 					const last = rounds[i];
-					let winner = "";
+					let chosen = "";
 					if (last) {
 						for (const r of last) {
-							if (r && r.ok && r.score != null && (winner === "" || r.score < scoreOf(last, winner).score)) winner = r.name;
+							if (r && r.chosen) chosen = r.name;
+						}
+						if (!chosen) {
+							for (const r of last) {
+								if (r && r.ok && r.score != null && (chosen === "" || r.score < scoreOf(last, chosen).score)) chosen = r.name;
+							}
 						}
 					}
-					win.textContent = winner || "—";
+					win.textContent = chosen || "—";
 					tr.appendChild(win);
+					const tops = bestNames(last);
 					for (const name of names) {
 						const td = document.createElement("td");
 						td.className = "font-mono";
@@ -173,7 +186,8 @@ templ JobPage(j JobView) {
 						else if (r.score == null) td.textContent = "—";
 						else {
 							td.textContent = fmt(r.score);
-							if (name === winner) td.classList.add("text-success", "font-bold");
+							if (r.best || tops.includes(name)) td.classList.add("underline");
+							if (name === chosen) td.classList.add("font-bold");
 						}
 						tr.appendChild(td);
 					}

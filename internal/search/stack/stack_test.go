@@ -558,6 +558,30 @@ func TestStreakBlocksRepeatWorldOp(t *testing.T) {
 	}
 }
 
+func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
+	c, w, j, r := 40.0, 10.0, 20.0, 30.0
+	rated := []search.Rated{
+		{Name: "cover", Score: &c},
+		{Name: "wash", Score: &w},
+		{Name: "join", Score: &j},
+		{Name: "rect", Score: &r},
+	}
+	kept := []formPick{{op: "wash"}, {op: "join"}, {op: "rect"}}
+	markKept(rated, kept)
+	if !rated[1].Best || !rated[1].Chosen {
+		t.Fatalf("wash=%+v want best+chosen", rated[1])
+	}
+	if !rated[2].Best || rated[2].Chosen {
+		t.Fatalf("join=%+v want best only", rated[2])
+	}
+	if !rated[3].Best || rated[3].Chosen {
+		t.Fatalf("rect=%+v want best only", rated[3])
+	}
+	if rated[0].Best || rated[0].Chosen {
+		t.Fatalf("cover=%+v want neither (4th)", rated[0])
+	}
+}
+
 func TestRankGenerationKeepsYBest(t *testing.T) {
 	pool := []formPick{
 		{ok: true, a: 30, op: "swap"},
@@ -570,24 +594,32 @@ func TestRankGenerationKeepsYBest(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("kept=%d want 3", len(got))
 	}
-	if got[0].a != 10 || got[1].a != 20 || got[2].a != 30 {
-		t.Fatalf("order=%v", []float64{got[0].a, got[1].a, got[2].a})
+	seen := map[float64]bool{}
+	for _, p := range got {
+		seen[p.a] = true
+	}
+	if !seen[10] || !seen[20] || !seen[30] {
+		t.Fatalf("kept=%v want 10,20,30 in any order", []float64{got[0].a, got[1].a, got[2].a})
 	}
 }
 
-func TestRankGenerationOnePerParent(t *testing.T) {
+func TestRankGenerationPicksAmongThreeBest(t *testing.T) {
 	pool := []formPick{
-		{ok: true, a: 10, parent: snapshot{id: 1}},
-		{ok: true, a: 11, parent: snapshot{id: 1}},
-		{ok: true, a: 20, parent: snapshot{id: 2}},
-		{ok: true, a: 30, parent: snapshot{id: 3}},
+		{ok: true, a: 10, op: "a"},
+		{ok: true, a: 11, op: "b"},
+		{ok: true, a: 20, op: "c"},
+		{ok: true, a: 30, op: "d"},
 	}
 	got := rankGeneration(pool, 40, 3)
 	if len(got) != 3 {
 		t.Fatalf("kept=%d want 3", len(got))
 	}
-	if got[0].a != 10 || got[1].a != 20 || got[2].a != 30 {
-		t.Fatalf("order=%v want 10,20,30 (one per parent)", []float64{got[0].a, got[1].a, got[2].a})
+	seen := map[float64]int{}
+	for _, p := range got {
+		seen[p.a]++
+	}
+	if seen[10] != 1 || seen[11] != 1 || seen[20] != 1 || seen[30] != 0 {
+		t.Fatalf("kept=%v want 10,11,20", []float64{got[0].a, got[1].a, got[2].a})
 	}
 }
 

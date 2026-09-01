@@ -31,9 +31,11 @@ type Epoch struct {
 
 // Rated is one operator's best proposal in an epoch.
 type Rated struct {
-	Name  string   `json:"name"`
-	Score *float64 `json:"score"`
-	Ok    bool     `json:"ok"`
+	Name   string   `json:"name"`
+	Score  *float64 `json:"score"`
+	Ok     bool     `json:"ok"`
+	Best   bool     `json:"best,omitempty"`
+	Chosen bool     `json:"chosen,omitempty"`
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.

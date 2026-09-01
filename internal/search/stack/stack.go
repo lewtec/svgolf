@@ -296,6 +296,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			s.load(next[0])
 			survivors = next
 			yielded = true
+			markKept(rated, kept)
 			if !emit(kept[0].op, kept[0].island, rated) {
 				return
 			}
@@ -423,21 +424,41 @@ func rankGeneration(pool []formPick, bestA float64, y int) []formPick {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].a < out[j].a })
-	var kept []formPick
-	seen := map[int]bool{}
-	for _, p := range out {
-		if p.parent.id != 0 && seen[p.parent.id] {
-			continue
-		}
-		if p.parent.id != 0 {
-			seen[p.parent.id] = true
-		}
-		kept = append(kept, p)
-		if y > 0 && len(kept) == y {
-			break
+	if y > 0 && len(out) > y {
+		out = out[:y]
+	}
+	rand.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+	return out
+}
+
+func markKept(rated []search.Rated, kept []formPick) {
+	chosen := ""
+	if len(kept) > 0 {
+		chosen = kept[0].op
+	}
+	type row struct {
+		i int
+		a float64
+	}
+	var ranked []row
+	for i, r := range rated {
+		if r.Score != nil {
+			ranked = append(ranked, row{i, *r.Score})
 		}
 	}
-	return kept
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].a < ranked[j].a })
+	n := survivorPicks
+	if n > len(ranked) {
+		n = len(ranked)
+	}
+	for k := 0; k < n; k++ {
+		rated[ranked[k].i].Best = true
+	}
+	for i := range rated {
+		if rated[i].Name == chosen {
+			rated[i].Chosen = true
+		}
+	}
 }
 
 func (s *world) ignore(left leftover) {
