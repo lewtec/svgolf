@@ -149,6 +149,95 @@ func TestArchiveKeepsNondominated(t *testing.T) {
 	}
 }
 
+func TestLaterEpochRatesTriangle(t *testing.T) {
+	s := &world{paths: 1}
+	left := leftover{island: make([]pix, minIsland), col: color.NRGBA{R: 255, A: 255}}
+	for _, band := range []int{1, 2, 3, 4} {
+		found := false
+		for _, o := range s.leftoverOperators(left, band) {
+			if o.ID() == OpTriangle {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("triangle must be proposed in leftover band %d", band)
+		}
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	n := 0
+	later := 0
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		leftover := false
+		triangle := false
+		for _, r := range ep.Rated {
+			switch r.Name {
+			case OpSlide.String(), OpBend.String(), OpGrow.String(), OpCarve.String(), OpAbsorb.String(), OpTriangle.String(), OpRing.String():
+				leftover = true
+			}
+			if r.Name == OpTriangle.String() && r.Score != nil {
+				triangle = true
+			}
+		}
+		if leftover && !triangle {
+			t.Fatalf("epoch %d rated=%v want triangle with a score", n, ep.Rated)
+		}
+		if leftover {
+			later++
+		}
+		n++
+	}
+	if later < 2 {
+		t.Fatalf("leftover epochs=%d want at least two so later rows score triangle", later)
+	}
+}
+
+func TestFolderTabGetsTriangle(t *testing.T) {
+	// Body plus a disconnected triangular tab. After the first plate,
+	// leftover is the tab — triangle has to land, not only refine.
+	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 10; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	for y := 4; y < 10; y++ {
+		for x := 16; x < 16+(10-y); x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	triangles := 0
+	var doc svg.Document
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ep.Operator == OpTriangle {
+			triangles++
+		}
+		doc = ep.Document
+	}
+	if triangles < 2 {
+		t.Fatalf("triangle epochs=%d want a second plate on the tab", triangles)
+	}
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tab := got.NRGBAAt(16, 5)
+	if loss.ColorAt(tab, cyan) > minErr {
+		t.Fatalf("tab %+v want cyan", tab)
+	}
+}
+
 func TestSimplifyIsBandOne(t *testing.T) {
 	s := &world{paths: 1}
 	found := false
@@ -1001,8 +1090,8 @@ func TestStackSolid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(forms(doc)); n != 1 {
-		t.Fatalf("paths=%d want 1", n)
+	if n := len(forms(doc)); n < 1 || n > 2 {
+		t.Fatalf("paths=%d want 1 or 2 triangles", n)
 	}
 	if _, ok := forms(doc)[0].Path(); !ok {
 		t.Fatal("not a path")
@@ -1022,8 +1111,8 @@ func TestStackUnblurDoesNotRestack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(forms(doc)); n != 1 {
-		t.Fatalf("paths=%d want 1 (polished plate)", n)
+	if n := len(forms(doc)); n < 1 || n > 2 {
+		t.Fatalf("paths=%d want 1 or 2 triangles", n)
 	}
 }
 

@@ -25,7 +25,8 @@ const (
 	minIsland     = 8
 	minErr        = 8
 	polyFit       = 2
-	leftoverPicks = 3
+	// leftoverPicks = 3
+	leftoverPicks = 1
 	survivorPicks = 3
 )
 
@@ -359,7 +360,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					}
 				}
 			}
-			next, improved := s.archiveUpdate(archive, pool)
+			next, improved := s.archiveUpdate(archive, pool, band)
 			if improved {
 				archive = next
 				s.load(archive[0])
@@ -368,7 +369,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if !emit(archive[0].operator, islandOf(archive[0], pool), rated) {
 					return
 				}
-				band = 1
+				// A new plate just landed. Try wash/join before
+				// another leftover add, or a ramp stacks flats forever.
+				if leftoverAdd(archive[0].operator) {
+					band = 2
+				} else {
+					band = 1
+				}
 				continue
 			}
 			if band < 3 {
@@ -456,10 +463,20 @@ func (s *world) load(sn snapshot) {
 	s.gotP.Ensure()
 }
 
-func (s *world) archiveUpdate(archive []snapshot, pool []formPick) ([]snapshot, bool) {
+func leftoverAdd(id Op) bool {
+	return id == OpTriangle || id == OpRing
+}
+
+func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]snapshot, bool) {
 	var cands []snapshot
 	for _, p := range pool {
 		if !p.ok || !p.scored {
+			continue
+		}
+		// Score leftover add every leftover band. Skip accept on
+		// the wash band so a ramp can land a linear instead of
+		// stacking another flat.
+		if leftoverAdd(p.op) && band == 2 {
 			continue
 		}
 		s.load(p.parent)

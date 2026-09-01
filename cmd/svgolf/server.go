@@ -208,12 +208,13 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 			s.fail(dir, id, err)
 			return
 		}
-		if err := writeEpoch(dir, n, ep, want); err != nil {
+		got, err := writeEpoch(dir, n, ep, want)
+		if err != nil {
 			s.fail(dir, id, err)
 			return
 		}
 		n++
-		sc := epScore(ep, want)
+		sc := stack.Score(got, want)
 		scores = append(scores, sc)
 		rounds = append(rounds, ep.Rated)
 		paths := documentPaths(ep.Document)
@@ -244,46 +245,41 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 	s.publish(id, "done", meta)
 }
 
-func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) error {
+func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.NRGBA, error) {
 	pad := fmt.Sprintf("%03d", n)
 	if err := NewSVGFile(filepath.Join(dir, pad+".svg")).Render(ep.Document); err != nil {
-		return err
+		return nil, err
 	}
 	if err := NewSVGFile(filepath.Join(dir, "last.svg")).Render(ep.Document); err != nil {
-		return err
+		return nil, err
 	}
 	got, err := render.Render(ep.Document)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := writePNG(filepath.Join(dir, pad+".png"), got); err != nil {
-		return err
+		return nil, err
 	}
 	if err := writePNG(filepath.Join(dir, "last.png"), got); err != nil {
-		return err
+		return nil, err
 	}
 	heat, island := ep.Heat, ep.Island
 	if heat == nil || island == nil {
 		heat, island = stack.DebugFrames(got, want, nil)
 	}
 	if err := writePNG(filepath.Join(dir, pad+"-error.png"), heat); err != nil {
-		return err
+		return nil, err
 	}
 	if err := writePNG(filepath.Join(dir, "last-error.png"), heat); err != nil {
-		return err
+		return nil, err
 	}
 	if err := writePNG(filepath.Join(dir, pad+"-island.png"), island); err != nil {
-		return err
+		return nil, err
 	}
-	return writePNG(filepath.Join(dir, "last-island.png"), island)
-}
-
-func epScore(ep search.Epoch, want *image.NRGBA) float64 {
-	got, err := render.Render(ep.Document)
-	if err != nil {
-		return 0
+	if err := writePNG(filepath.Join(dir, "last-island.png"), island); err != nil {
+		return nil, err
 	}
-	return stack.Score(got, want)
+	return got, nil
 }
 
 func (s *server) fail(dir, id string, err error) {

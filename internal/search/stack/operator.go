@@ -876,34 +876,37 @@ func (sw Swap) Run() (formPick, error) {
 	}, nil
 }
 
+func leftoverAddOperators(s *world, left leftover) []Operator {
+	return []Operator{
+		op{id: OpTriangle, world: s, left: left},
+		op{id: OpRing, world: s, left: left},
+	}
+}
+
 func (s *world) leftoverOperators(left leftover, band int) []Operator {
+	add := leftoverAddOperators(s, left)
 	switch band {
 	case 1:
-		return []Operator{
+		return append(add,
 			op{id: OpSlide, world: s, left: left},
 			op{id: OpBend, world: s, left: left},
-		}
+		)
 	case 2:
-		return []Operator{
+		return append(add,
 			op{id: OpAbsorb, world: s, left: left},
 			op{id: OpGrow, world: s, left: left},
 			op{id: OpCarve, world: s, left: left},
-		}
+		)
 	case 3:
-		return []Operator{
-			op{id: OpTriangle, world: s, left: left},
-			op{id: OpRing, world: s, left: left},
-		}
+		return add
 	case 4:
-		return []Operator{
+		return append(add,
 			op{id: OpSlide, world: s, left: left},
 			op{id: OpBend, world: s, left: left},
 			op{id: OpAbsorb, world: s, left: left},
 			op{id: OpGrow, world: s, left: left},
 			op{id: OpCarve, world: s, left: left},
-			op{id: OpTriangle, world: s, left: left},
-			op{id: OpRing, world: s, left: left},
-		}
+		)
 	default:
 		return nil
 	}

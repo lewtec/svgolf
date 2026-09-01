@@ -79,32 +79,21 @@ func convexHull(pts [][2]float64) [][2]float64 {
 }
 
 // largestTriangle is the leftover triangle with the most island pixels
-// whose interior stays inside the mask. The max-area hull triple is
-// tried first (one raster). Only if that cuts a hole do reflex corners
-// and hole hulls join the search.
+// whose interior stays inside the mask. Candidates are the leftover
+// hull plus hole hulls. Triples are tried largest-area first; the first
+// that stays inside is the answer. Rasterizing every triple is how the
+// first epoch used to stall on a full-mark leftover.
 func largestTriangle(island []pix) [][2]float64 {
 	if len(island) < 3 {
 		return nil
 	}
 	set := pixSet(island)
 	defer releaseBits(set)
-	hull := convexHull(islandCorners(island))
-	if ring := maxAreaIfInside(hull, set); len(ring) == 3 {
-		return ring
-	}
 	return bestInscribedTriangle(triangleCandidates(island), set)
 }
 
 func triangleCandidates(island []pix) [][2]float64 {
 	out := convexHull(islandCorners(island))
-	ring := coverRing(island)
-	n := len(ring)
-	for i := 0; i < n; i++ {
-		a, b, c := ring[(i-1+n)%n], ring[i], ring[(i+1)%n]
-		if (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]) < 0 {
-			out = append(out, b)
-		}
-	}
 	for _, hole := range voids(island) {
 		out = append(out, convexHull(islandCorners(hole))...)
 	}
@@ -132,34 +121,9 @@ func uniquePoints(pts [][2]float64) [][2]float64 {
 	return out
 }
 
-func maxAreaTriple(pts [][2]float64) (a, b, c [2]float64, area float64) {
-	n := len(pts)
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			for k := j + 1; k < n; k++ {
-				ar := triangleArea2(pts[i], pts[j], pts[k])
-				if ar > area {
-					area = ar
-					a, b, c = pts[i], pts[j], pts[k]
-				}
-			}
-		}
-	}
-	return a, b, c, area
-}
-
-func maxAreaIfInside(pts [][2]float64, set *pixBits) [][2]float64 {
-	if len(pts) < 3 {
-		return nil
-	}
-	a, b, c, area := maxAreaTriple(pts)
-	if area == 0 {
-		return nil
-	}
-	if triangleInsideCount(set, a, b, c) < minIsland {
-		return nil
-	}
-	return uncross([][2]float64{a, b, c})
+type areaTriple struct {
+	a, b, c [2]float64
+	area    float64
 }
 
 func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
@@ -167,29 +131,25 @@ func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
 	if n < 3 {
 		return nil
 	}
-	bestN := 0
-	var best [][2]float64
-	if seed := maxAreaIfInside(pts, set); len(seed) == 3 {
-		return seed
-	}
+	triples := make([]areaTriple, 0, n*(n-1)*(n-2)/6)
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			for k := j + 1; k < n; k++ {
-				if triangleArea2(pts[i], pts[j], pts[k])/2 <= float64(bestN) {
+				ar := triangleArea2(pts[i], pts[j], pts[k])
+				if ar == 0 {
 					continue
 				}
-				got := triangleInsideCount(set, pts[i], pts[j], pts[k])
-				if got > bestN {
-					bestN = got
-					best = [][2]float64{pts[i], pts[j], pts[k]}
-				}
+				triples = append(triples, areaTriple{pts[i], pts[j], pts[k], ar})
 			}
 		}
 	}
-	if bestN < minIsland || len(best) < 3 {
-		return nil
+	sort.Slice(triples, func(i, j int) bool { return triples[i].area > triples[j].area })
+	for _, t := range triples {
+		if triangleInsideCount(set, t.a, t.b, t.c) >= minIsland {
+			return uncross([][2]float64{t.a, t.b, t.c})
+		}
 	}
-	return uncross(best)
+	return nil
 }
 
 func triangleArea2(a, b, c [2]float64) float64 {
