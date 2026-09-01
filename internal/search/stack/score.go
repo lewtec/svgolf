@@ -8,30 +8,21 @@ import (
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
-// pathCost is the error-sum one extra path must buy. Two minIsland
-// full misses: stacking a plate was cheaper than refitting the one
-// already there (gradient / cubics).
-const pathCost = 180 * 180 * minIsland * 2
-
-// cmdCost is one extra path command. A straight edge costs two
-// (see pathCommandWeight) so a spline that replaces many lines wins.
-const cmdCost = 180 * 180
-
 // paper is the empty pane. Source holes (want.A==0) must look like paper.
 // got.A==0 is always a full miss — no transparent holes.
 var paper = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 
 var paperHSV = loss.HSVOf(paper)
 
-// Score is the sum of per-pixel error plus pathCost·parts. Opaque pixels
-// use ColorAt². A hole (want.A==0) must match paper. Transparent got is
-// 180². Mean would hide letters on a large canvas; sum does not.
-func Score(got, want *image.NRGBA, parts int) float64 {
-	return ScoreOn(loss.NewPlane(got), loss.NewPlane(want), parts)
+// Score is the sum of per-pixel HSV error. Opaque pixels use ColorAt².
+// A hole (want.A==0) must match paper. Transparent got is 180².
+// Mean would hide letters on a large canvas; sum does not.
+func Score(got, want *image.NRGBA) float64 {
+	return ScoreOn(loss.NewPlane(got), loss.NewPlane(want))
 }
 
 // ScoreOn is Score on HSV planes (want converted once, got after Render).
-func ScoreOn(got, want *loss.Plane, parts int) float64 {
+func ScoreOn(got, want *loss.Plane) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
@@ -46,13 +37,10 @@ func ScoreOn(got, want *loss.Plane, parts int) float64 {
 	for i := 0; i < n; i++ {
 		sum += errAtHSV(gp[i], wp[i])
 	}
-	if parts < 0 {
-		parts = 0
-	}
-	return sum + pathCost*float64(parts)
+	return sum
 }
 
-// ScoreRect is the errAt sum on r (no path tax). r is clipped to want.
+// ScoreRect is the errAt sum on r. r is clipped to want.
 func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
 	return ScoreRectOn(loss.NewPlane(got), loss.NewPlane(want), r)
 }

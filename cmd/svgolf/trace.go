@@ -54,7 +54,7 @@ func (t *Trace) Record(ep search.Epoch) error {
 			op = "-"
 		}
 		fmt.Fprintf(t.log, "epoch %d operator=%s scale=%d elapsed=%.3fs paths=%d score=%.3f -> %s\n",
-			t.n, op, scale, ep.Elapsed.Seconds(), len(doc.Children()), stack.Score(got, t.want, len(doc.Children())), svgPath)
+			t.n, op, scale, ep.Elapsed.Seconds(), len(doc.Children()), stack.Score(got, t.want), svgPath)
 	}
 	t.n++
 	return nil

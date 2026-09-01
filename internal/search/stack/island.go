@@ -210,10 +210,7 @@ func ownedMinus(owner []uint16, drop []pix, w int, id uint16, seen []byte) []pix
 	return out
 }
 
-func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
-	if skip != nil && skip[y*w+x] != 0 {
-		return false
-	}
+func residual(got, want *image.NRGBA, x, y, w int) bool {
 	q := want.NRGBAAt(want.Rect.Min.X+x, want.Rect.Min.Y+y)
 	g := got.NRGBAAt(got.Rect.Min.X+x, got.Rect.Min.Y+y)
 	return colorErr(g, q) > minErr
@@ -223,14 +220,11 @@ func residual(got, want *image.NRGBA, skip []byte, x, y, w int) bool {
 // hottest leftover and debug heat keep pixels > 1/2 so a close
 // tint still outlines when it is the remaining miss. Score still
 // uses raw errAtHSV.
-func leftoverHeat(got, want *loss.Plane, skip []byte, w, h int) []float64 {
+func leftoverHeat(got, want *loss.Plane, w, h int) []float64 {
 	field := make([]float64, w*h)
 	var maxE float64
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			if skip != nil && skip[y*w+x] != 0 {
-				continue
-			}
 			e := colorErrHSV(got.At(x, y), want.At(x, y))
 			field[y*w+x] = e
 			if e > maxE {
@@ -284,7 +278,7 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	}
 	gotP.Ensure()
 	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, s.skip, w, h)
+	heat := leftoverHeat(gotP, wantP, w, h)
 	var maxH float64
 	for _, v := range heat {
 		if v > maxH {

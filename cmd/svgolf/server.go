@@ -271,7 +271,7 @@ func epScore(ep search.Epoch, want *image.NRGBA) float64 {
 	if err != nil {
 		return 0
 	}
-	return stack.Score(got, want, len(ep.Document.Children()))
+	return stack.Score(got, want)
 }
 
 func (s *server) fail(dir, id string, err error) {

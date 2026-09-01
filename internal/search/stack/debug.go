@@ -9,7 +9,7 @@ import (
 
 // DebugFrames is the leftover view hottest() uses: heat is leftoverHeat
 // 0-1 (black match, red miss). blob is the leftover this step used;
-// if nil, hottest() is computed without skip (debug-only).
+// if nil, hottest() is computed from the residual (debug-only).
 func DebugFrames(got, want *image.NRGBA, blob []pix) (heat, island *image.NRGBA) {
 	if want == nil {
 		return nil, nil
@@ -37,7 +37,7 @@ func DebugFrames(got, want *image.NRGBA, blob []pix) (heat, island *image.NRGBA)
 			mark[p.y*w+p.x] = 1
 		}
 	}
-	field := leftoverHeat(gotP, wantP, nil, w, h)
+	field := leftoverHeat(gotP, wantP, w, h)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			v := uint8(field[y*w+x] * 255)

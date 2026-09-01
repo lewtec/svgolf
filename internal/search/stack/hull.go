@@ -459,29 +459,42 @@ func leftoverIsHole(owned, leftover []pix) bool {
 // shrinkOuter pulls one covering edge onto the leftover outline
 // so a hull overshoot becomes a dent, not an evenodd white hole.
 func shrinkOuter(outer [][2]float64, leftover []pix) [][2]float64 {
+	return shrinkOuterRing(polylineRing(outer), leftover).points()
+}
+
+func shrinkOuterRing(outer pathRing, leftover []pix) pathRing {
+	pts := outer.points()
 	bite := coverRing(leftover)
-	if len(outer) < 3 || len(bite) < 2 {
-		return nil
+	if len(pts) < 3 || len(bite) < 2 || len(outer.edges) != len(pts) {
+		return pathRing{}
 	}
 	ctr := leftoverCenter(leftover)
-	n := len(outer)
+	n := len(pts)
 	ei, bestD := 0, -1.0
 	for e := 0; e < n; e++ {
-		a, c := outer[e], outer[(e+1)%n]
+		a, c := pts[e], pts[(e+1)%n]
 		mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
 		d := (mid[0]-ctr[0])*(mid[0]-ctr[0]) + (mid[1]-ctr[1])*(mid[1]-ctr[1])
 		if bestD < 0 || d < bestD {
 			ei, bestD = e, d
 		}
 	}
-	chain := longerBite(bite, outer[ei], outer[(ei+1)%n])
+	chain := longerBite(bite, pts[ei], pts[(ei+1)%n])
 	if len(chain) < 1 {
-		return nil
+		return pathRing{}
 	}
-	out := append([][2]float64{}, outer[:ei+1]...)
-	out = append(out, chain...)
-	out = append(out, outer[ei+1:]...)
-	return uncross(collapseColinear(out))
+	out := outer.spliceAfter(ei, chain).collapseColinearLines()
+	if len(out.verts) < 3 {
+		return pathRing{}
+	}
+	if !ringCrosses(out.points()) {
+		return out
+	}
+	simple := uncross(out.points())
+	if len(simple) < 3 {
+		return pathRing{}
+	}
+	return polylineRing(simple)
 }
 
 func longerBite(bite [][2]float64, a, b [2]float64) [][2]float64 {

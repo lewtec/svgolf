@@ -60,7 +60,7 @@ func TestSimplifyDropsUselessHole(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img, 0),
+		errSum: Score(got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -75,6 +75,207 @@ func TestSimplifyDropsUselessHole(t *testing.T) {
 	p, ok := s.doc.Children()[1].Path()
 	if !ok || p.FillRule() == svg.FillEvenOdd {
 		t.Fatal("hole still punched")
+	}
+}
+
+func TestAcceptLexicographicEqualErrorFewerCommands(t *testing.T) {
+	if !acceptLexicographic(100, 2, 8, 100, 2, 10) {
+		t.Fatal("equal error and fewer commands must be accepted")
+	}
+	if acceptLexicographic(120, 1, 4, 100, 2, 10) {
+		t.Fatal("higher error and fewer paths must be rejected")
+	}
+	if !acceptLexicographic(90, 3, 20, 100, 2, 10) {
+		t.Fatal("lower error must be accepted even with more paths")
+	}
+	if acceptLexicographic(100, 2, 10, 100, 2, 10) {
+		t.Fatal("equal error and equal complexity is a no-op")
+	}
+}
+
+func TestArchiveKeepsNondominated(t *testing.T) {
+	accurate := snapshot{id: 1, errSum: 10, paths: 3, commands: 20}
+	simple := snapshot{id: 2, errSum: 50, paths: 1, commands: 8}
+	got := mergeArchive([]snapshot{accurate}, []snapshot{simple})
+	if len(got) != 2 {
+		t.Fatalf("archive=%d want both nondominated points", len(got))
+	}
+	if got[0].id != accurate.id || got[1].id != simple.id {
+		t.Fatalf("lex order=%v,%v want accurate then simple", got[0].id, got[1].id)
+	}
+	winner := snapshot{id: 3, errSum: 10, paths: 1, commands: 8}
+	got = mergeArchive(got, []snapshot{winner})
+	if len(got) != 1 || got[0].id != winner.id {
+		t.Fatalf("archive=%v want only the dominating point", got)
+	}
+}
+
+func TestSimplifyIsBandOne(t *testing.T) {
+	s := &world{paths: 1}
+	found := false
+	for _, o := range s.worldOperators(1) {
+		if o.Name() == "simplify" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("simplify not scheduled in band 1")
+	}
+	for _, o := range s.worldOperators(2) {
+		if o.Name() == "simplify" {
+			t.Fatal("simplify scheduled in band 2")
+		}
+	}
+}
+
+func TestDrySearchStopsOnFullMatch(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, paper)
+		}
+	}
+	n := 0
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+		if ep.Operator != "" {
+			t.Fatalf("operator=%q want empty on a full match", ep.Operator)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("epochs=%d want 1 (white pane)", n)
+	}
+}
+
+func TestSimplifyKeepsUntouchedCubic(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	cmds := []svg.PathCmd{
+		{Kind: svg.CmdMove, X: 0, Y: 0},
+		{Kind: svg.CmdLine, X: 8, Y: 0},
+		{Kind: svg.CmdLine, X: 16, Y: 0},
+		{Kind: svg.CmdCubic, X1: 16, Y1: 4, X2: 16, Y2: 12, X: 16, Y: 16},
+		{Kind: svg.CmdLine, X: 0, Y: 16},
+		{Kind: svg.CmdClose},
+	}
+	plate, err := svg.NewPath().WithCommands(cmds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plate = plate.WithFill(red)
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 16*16)
+	for i := range owner {
+		owner[i] = 1
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("simplify=false want drop the colinear vertex")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if cubics(p.Node()) == 0 {
+		t.Fatal("simplify erased the untouched cubic")
+	}
+	if n := pathPts(p.Node()); n != 4 {
+		t.Fatalf("verts=%d want 4 after dropping the colinear point", n)
+	}
+}
+
+func TestSlideKeepsUntouchedCubic(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 32; x++ {
+			want.SetNRGBA(x, y, red)
+		}
+	}
+	// Cubic sits on the right edge. Leftover is the left half, so slide
+	// pulls a left vertex and must keep the untouched cubic.
+	cmds := []svg.PathCmd{
+		{Kind: svg.CmdMove, X: 16, Y: 0},
+		{Kind: svg.CmdLine, X: 32, Y: 0},
+		{Kind: svg.CmdCubic, X1: 32, Y1: 4, X2: 32, Y2: 12, X: 32, Y: 16},
+		{Kind: svg.CmdLine, X: 16, Y: 16},
+		{Kind: svg.CmdClose},
+	}
+	plate, err := svg.NewPath().WithCommands(cmds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plate = plate.WithFill(red)
+	doc := svg.NewDocument(32, 16).WithViewBox(0, 0, 32, 16)
+	doc = doc.Append(whitePane(32, 16).Node()).Append(plate.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 32*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      32,
+		h:      16,
+		errSum: Score(got, want),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	pick, err := (Slide{world: s, left: lefts[0]}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("slide=false want pull toward leftover")
+	}
+	p, ok := pick.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if cubics(p.Node()) == 0 {
+		t.Fatal("slide erased the untouched cubic")
 	}
 }
 
@@ -101,7 +302,7 @@ func TestScoreCandStoresFullError(t *testing.T) {
 	if !pick.ok {
 		t.Fatal("cover=false")
 	}
-	full := ScoreOn(loss.NewPlane(pick.got), s.wantP, 0)
+	full := ScoreOn(loss.NewPlane(pick.got), s.wantP)
 	if pick.errSum != full {
 		t.Fatalf("errSum=%v full=%v (dirty rect lied)", pick.errSum, full)
 	}
@@ -146,7 +347,7 @@ func TestTryDropRedundant(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img, 0),
+		errSum: Score(got, img),
 	}
 	pick, err := (Delete{world: s, i: 1}).Run()
 	if err != nil {
@@ -191,7 +392,7 @@ func TestDeleteEmitsLosingScore(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img, 0),
+		errSum: Score(got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -205,8 +406,8 @@ func TestDeleteEmitsLosingScore(t *testing.T) {
 	if pick.ok {
 		t.Fatal("delete=true; dropping a needed plate must lose")
 	}
-	if pick.a <= s.currentScore() {
-		t.Fatalf("a=%v cur=%v", pick.a, s.currentScore())
+	if pick.errSum <= s.errSum {
+		t.Fatalf("errSum=%v cur=%v; dropping a needed plate must raise error", pick.errSum, s.errSum)
 	}
 }
 
@@ -514,7 +715,7 @@ func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
 	gotP, wantP := loss.NewPlane(got), loss.NewPlane(want)
 	gotP.Ensure()
 	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, nil, 16, 16)
+	heat := leftoverHeat(gotP, wantP, 16, 16)
 	if heat[8*16+8] <= 0.5 {
 		t.Fatalf("close tint heat=%v want > 1/2 when it is the leftover", heat[8*16+8])
 	}
@@ -549,62 +750,12 @@ func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
 	gotP, wantP := loss.NewPlane(got), loss.NewPlane(want)
 	gotP.Ensure()
 	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, nil, 32, 16)
+	heat := leftoverHeat(gotP, wantP, 32, 16)
 	if heat[8*32+6] > 0.5 {
 		t.Fatalf("pale heat=%v want ≤ 1/2 next to a full miss", heat[8*32+6])
 	}
 	if heat[8*32+22] <= 0.5 {
 		t.Fatalf("black heat=%v want > 1/2", heat[8*32+22])
-	}
-}
-
-func TestStreakInflatesRepeatWinner(t *testing.T) {
-	s := &world{}
-	if s.streak(100, "cover") != 100 {
-		t.Fatalf("fresh streak=%v want 100", s.streak(100, "cover"))
-	}
-	s.noteWin("cover")
-	if s.winOp != "cover" || s.winN != 1 {
-		t.Fatalf("after one win op=%s n=%d", s.winOp, s.winN)
-	}
-	if s.streak(100, "cover") != 100 {
-		t.Fatalf("cover is leftover-op, stay raw")
-	}
-	if s.streak(100, "simplify") != 100 {
-		t.Fatalf("other op got streak")
-	}
-	s.noteWin("cover")
-	s.noteWin("simplify")
-	if s.winOp != "simplify" || s.winN != 1 {
-		t.Fatalf("reset op=%s n=%d", s.winOp, s.winN)
-	}
-	if g, w := s.streak(100, "simplify"), 100*math.Pow(streakRate, 1); g != w {
-		t.Fatalf("n=1 simplify=%v want %v", g, w)
-	}
-	if s.streak(100, "cover") != 100 {
-		t.Fatalf("cover still inflated after reset")
-	}
-}
-
-func TestRankGenerationPrefersFreshOperator(t *testing.T) {
-	pool := []formPick{
-		{scored: true, ok: true, a: 12, raw: 10, op: "simplify"},
-		{scored: true, ok: true, a: 11, raw: 11, op: "cover"},
-	}
-	got := rankGeneration(pool, 40, 1)
-	if len(got) != 1 || got[0].op != "cover" {
-		t.Fatalf("kept=%v want cover (simplify inflated)", got)
-	}
-}
-
-func TestStreakBlocksRepeatWorldOp(t *testing.T) {
-	s := &world{winOp: "simplify", winN: 2}
-	want := 100 * math.Pow(streakRate, 2)
-	if g := s.streak(100, "simplify"); g != want {
-		t.Fatalf("simplify=%v want %v", g, want)
-	}
-	if s.streak(100, "cover") != 100 {
-		t.Fatal("cover should stay raw")
 	}
 }
 
@@ -632,50 +783,9 @@ func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 	}
 }
 
-func TestRankGenerationKeepsYBest(t *testing.T) {
-	pool := []formPick{
-		{ok: true, a: 30, op: "swap"},
-		{ok: true, a: 10, op: "delete"},
-		{ok: false, a: 1, op: "grow"},
-		{ok: true, a: 50, op: "worse"},
-		{ok: true, a: 20, op: "rectangle"},
-	}
-	got := rankGeneration(pool, 40, 3)
-	if len(got) != 3 {
-		t.Fatalf("kept=%d want 3", len(got))
-	}
-	seen := map[float64]bool{}
-	for _, p := range got {
-		seen[p.a] = true
-	}
-	if !seen[10] || !seen[20] || !seen[30] {
-		t.Fatalf("kept=%v want 10,20,30 in any order", []float64{got[0].a, got[1].a, got[2].a})
-	}
-}
-
-func TestRankGenerationPicksAmongThreeBest(t *testing.T) {
-	pool := []formPick{
-		{ok: true, a: 10, op: "a"},
-		{ok: true, a: 11, op: "b"},
-		{ok: true, a: 20, op: "c"},
-		{ok: true, a: 30, op: "d"},
-	}
-	got := rankGeneration(pool, 40, 3)
-	if len(got) != 3 {
-		t.Fatalf("kept=%d want 3", len(got))
-	}
-	seen := map[float64]int{}
-	for _, p := range got {
-		seen[p.a]++
-	}
-	if seen[10] != 1 || seen[11] != 1 || seen[20] != 1 || seen[30] != 0 {
-		t.Fatalf("kept=%v want 10,11,20", []float64{got[0].a, got[1].a, got[2].a})
-	}
-}
-
 func TestStackRampOnePathNative(t *testing.T) {
-	// coarse() splits this ramp. Score must still keep one linear
-	// instead of a second flat for the light band.
+	// coarse() splits this ramp. Wash must still land a linear; a
+	// leftover band may add a plate now that error is primary.
 	a := color.NRGBA{R: 40, G: 80, B: 200, A: 255}
 	b := color.NRGBA{R: 180, G: 220, B: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 48, 48))
@@ -701,11 +811,18 @@ func TestStackRampOnePathNative(t *testing.T) {
 		doc = ep.Document
 	}
 	fs := forms(doc)
-	if len(fs) != 1 {
-		t.Fatalf("paths=%d want 1 gradient ops=%v", len(fs), ops)
+	if len(fs) == 0 {
+		t.Fatalf("no path ops=%v", ops)
 	}
-	if _, ok := fs[0].LinearFill(); !ok {
-		t.Fatal("ramp stayed stacked flats")
+	hasLinear := false
+	for _, n := range fs {
+		if _, ok := n.LinearFill(); ok {
+			hasLinear = true
+			break
+		}
+	}
+	if !hasLinear {
+		t.Fatalf("ramp stayed stacked flats ops=%v", ops)
 	}
 }
 
@@ -919,7 +1036,7 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 		paths:  2,
 		w:      24,
 		h:      16,
-		errSum: Score(got, img, 0),
+		errSum: Score(got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -977,7 +1094,7 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img, 0),
+		errSum: Score(got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1071,7 +1188,7 @@ func TestSubtractPunchesOverlap(t *testing.T) {
 		paths:  2,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1146,7 +1263,7 @@ func TestSwapUncoversMark(t *testing.T) {
 		paths:  2,
 		w:      32,
 		h:      32,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1205,7 +1322,7 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      32,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1292,7 +1409,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1355,7 +1472,7 @@ func TestSlidePullsTowardLeftover(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1398,7 +1515,7 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want, 0),
+		errSum: Score(got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1429,6 +1546,8 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 }
 
 func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
+	// Shake applies leftover of B onto document A. Cover is the add-plate
+	// operator that uses that bound leftover.
 	red := color.NRGBA{R: 255, A: 255}
 	blue := color.NRGBA{B: 255, A: 255}
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
@@ -1455,13 +1574,12 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 		wantP:  loss.NewPlane(want),
 		gotP:   loss.NewPlane(bgot),
 		doc:    bdoc,
-		skip:   make([]byte, 32*32),
 		owner:  make([]uint16, 32*32),
 		fills:  []color.NRGBA{red},
 		paths:  1,
 		w:      32,
 		h:      32,
-		errSum: Score(bgot, want, 0),
+		errSum: Score(bgot, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1476,7 +1594,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.doc, s.got, s.fills, s.owner, s.paths = adoc, agot, nil, make([]uint16, 32*32), 0
-	s.errSum = Score(agot, want, 0)
+	s.errSum = Score(agot, want)
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
@@ -1534,7 +1652,7 @@ func TestStackMarkAfterPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if Score(got, img, len(forms(doc))) >= Score(empty, img, 0) {
+	if Score(got, img) >= Score(empty, img) {
 		t.Fatalf("final score not better than empty")
 	}
 }
@@ -1925,7 +2043,7 @@ func TestStackEpochRatesCover(t *testing.T) {
 func TestCollectRatedKeepsLosingScore(t *testing.T) {
 	a := 99.0
 	got := collectRated(map[string]*namedPick{
-		"delete": {pick: formPick{a: a, ok: false, scored: true}},
+		"delete": {pick: formPick{errSum: a, ok: false, scored: true}},
 		"join":   {pick: nonePick()},
 	})
 	var del, join *search.Rated
@@ -2470,10 +2588,17 @@ func TestStackRampUsesLinear(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := forms(doc)
-	if len(fs) != 1 {
-		t.Fatalf("paths=%d want 1 gradient", len(fs))
+	if len(fs) == 0 {
+		t.Fatal("no path")
 	}
-	if _, ok := fs[0].LinearFill(); !ok {
+	hasLinear := false
+	for _, n := range fs {
+		if _, ok := n.LinearFill(); ok {
+			hasLinear = true
+			break
+		}
+	}
+	if !hasLinear {
 		t.Fatal("ramp stayed a solid fill")
 	}
 }
