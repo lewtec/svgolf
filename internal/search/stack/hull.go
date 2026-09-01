@@ -249,7 +249,43 @@ func minVertDist2(a, b [][2]float64) float64 {
 	return best
 }
 
-// ringsNear is overlap, or a vertex of one sits on/next to the other.
+func pointSegDist2(p, a, b [2]float64) float64 {
+	vx, vy := b[0]-a[0], b[1]-a[1]
+	wx, wy := p[0]-a[0], p[1]-a[1]
+	len2 := vx*vx + vy*vy
+	if len2 == 0 {
+		return wx*wx + wy*wy
+	}
+	t := (wx*vx + wy*vy) / len2
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	dx := p[0] - (a[0] + t*vx)
+	dy := p[1] - (a[1] + t*vy)
+	return dx*dx + dy*dy
+}
+
+func minVertEdgeDist2(verts, ring [][2]float64) float64 {
+	if len(ring) < 2 {
+		return minVertDist2(verts, ring)
+	}
+	best := -1.0
+	n := len(ring)
+	for _, p := range verts {
+		for i := 0; i < n; i++ {
+			d := pointSegDist2(p, ring[i], ring[(i+1)%n])
+			if best < 0 || d < best {
+				best = d
+			}
+		}
+	}
+	return best
+}
+
+// ringsNear is overlap, or a vertex of one sits on/next to
+// a vertex or edge of the other.
 func ringsNear(a, b [][2]float64) bool {
 	if ringsOverlap(a, b) {
 		return true
@@ -257,7 +293,11 @@ func ringsNear(a, b [][2]float64) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return false
 	}
-	return minVertDist2(a, b) <= 2
+	d := minVertEdgeDist2(a, b)
+	if e := minVertEdgeDist2(b, a); e >= 0 && (d < 0 || e < d) {
+		d = e
+	}
+	return d >= 0 && d <= 2
 }
 
 func oneBlob(work []pix) bool {

@@ -924,6 +924,14 @@ func TestRingsNearCloseVertices(t *testing.T) {
 	}
 }
 
+func TestRingsNearVertexToEdge(t *testing.T) {
+	plate := [][2]float64{{0, 0}, {20, 0}, {20, 8}, {0, 8}}
+	tab := [][2]float64{{9, 9}, {11, 9}, {11, 12}, {9, 12}}
+	if !ringsNear(plate, tab) {
+		t.Fatal("vertex 1px from mid-edge")
+	}
+}
+
 func TestRingsOverlapDetectsShareAndMiss(t *testing.T) {
 	a := [][2]float64{{0, 0}, {10, 0}, {10, 10}, {0, 10}}
 	b := [][2]float64{{5, 5}, {15, 5}, {15, 15}, {5, 15}}

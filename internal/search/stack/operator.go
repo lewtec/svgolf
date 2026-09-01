@@ -476,8 +476,8 @@ func (w *Wash) Run() (formPick, error) {
 }
 
 // Join unifies two same-family paths that overlap or have
-// close vertices. A single blob keeps the union outline;
-// a gap uses the hull and Score decides.
+// a vertex next to the other's vertex or edge. A single
+// blob keeps the union outline; a gap uses the hull.
 type Join struct {
 	world   *world
 	buckets [][]pix
