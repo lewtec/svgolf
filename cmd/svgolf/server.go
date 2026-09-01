@@ -66,17 +66,20 @@ type server struct {
 }
 
 type jobMeta struct {
-	ID       string           `json:"id"`
-	Status   string           `json:"status"`
-	Search   string           `json:"search"`
-	Epochs   int              `json:"epochs"`
-	Operator string           `json:"operator"`
-	Score    float64          `json:"score"`
-	Scores   []float64        `json:"scores,omitempty"`
-	Rounds   [][]search.Rated `json:"rounds,omitempty"`
-	Paths    int              `json:"paths"`
-	Elapsed  string           `json:"elapsed"`
-	Err      string           `json:"error,omitempty"`
+	ID           string           `json:"id"`
+	Status       string           `json:"status"`
+	Search       string           `json:"search"`
+	Epochs       int              `json:"epochs"`
+	Operator     string           `json:"operator"`
+	Score        float64          `json:"score"`
+	Scores       []float64        `json:"scores,omitempty"`
+	Rounds       [][]search.Rated `json:"rounds,omitempty"`
+	Paths        int              `json:"paths"`
+	Vertices     int              `json:"vertices"`
+	PathCounts   []int            `json:"pathCounts,omitempty"`
+	VertexCounts []int            `json:"vertexCounts,omitempty"`
+	Elapsed      string           `json:"elapsed"`
+	Err          string           `json:"error,omitempty"`
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +201,8 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 	n := 0
 	var scores []float64
 	var rounds [][]search.Rated
+	var pathCounts []int
+	var vertexCounts []int
 	for ep, err := range searcher.Search(context.Background(), want) {
 		if err != nil {
 			s.fail(dir, id, err)
@@ -211,17 +216,24 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 		sc := epScore(ep, want)
 		scores = append(scores, sc)
 		rounds = append(rounds, ep.Rated)
+		paths := documentPaths(ep.Document)
+		vertices := documentVertices(ep.Document)
+		pathCounts = append(pathCounts, paths)
+		vertexCounts = append(vertexCounts, vertices)
 		meta := jobMeta{
-			ID:       id,
-			Status:   "running",
-			Search:   s.algo,
-			Epochs:   n,
-			Operator: ep.Operator,
-			Score:    sc,
-			Scores:   scores,
-			Rounds:   rounds,
-			Paths:    len(ep.Document.Children()),
-			Elapsed:  ep.Elapsed.String(),
+			ID:           id,
+			Status:       "running",
+			Search:       s.algo,
+			Epochs:       n,
+			Operator:     ep.Operator,
+			Score:        sc,
+			Scores:       scores,
+			Rounds:       rounds,
+			Paths:        paths,
+			Vertices:     vertices,
+			PathCounts:   pathCounts,
+			VertexCounts: vertexCounts,
+			Elapsed:      ep.Elapsed.String(),
 		}
 		_ = writeMeta(dir, meta)
 		s.publish(id, "epoch", meta)
@@ -346,15 +358,26 @@ func epochPayload(m jobMeta) map[string]any {
 	if rounds == nil {
 		rounds = [][]search.Rated{}
 	}
+	pathCounts := m.PathCounts
+	if pathCounts == nil {
+		pathCounts = []int{}
+	}
+	vertexCounts := m.VertexCounts
+	if vertexCounts == nil {
+		vertexCounts = []int{}
+	}
 	return map[string]any{
-		"n":        n,
-		"status":   m.Status,
-		"operator": m.Operator,
-		"score":    fmt.Sprintf("%.3f", m.Score),
-		"scores":   scores,
-		"rounds":   rounds,
-		"paths":    m.Paths,
-		"elapsed":  m.Elapsed,
+		"n":            n,
+		"status":       m.Status,
+		"operator":     m.Operator,
+		"score":        fmt.Sprintf("%.3f", m.Score),
+		"scores":       scores,
+		"rounds":       rounds,
+		"paths":        m.Paths,
+		"vertices":     m.Vertices,
+		"pathCounts":   pathCounts,
+		"vertexCounts": vertexCounts,
+		"elapsed":      m.Elapsed,
 	}
 }
 
@@ -446,16 +469,35 @@ func toView(m jobMeta) web.JobView {
 	if err != nil {
 		rb = []byte("[]")
 	}
+	pathCounts := m.PathCounts
+	if pathCounts == nil {
+		pathCounts = []int{}
+	}
+	pb, err := json.Marshal(pathCounts)
+	if err != nil {
+		pb = []byte("[]")
+	}
+	vertexCounts := m.VertexCounts
+	if vertexCounts == nil {
+		vertexCounts = []int{}
+	}
+	vb, err := json.Marshal(vertexCounts)
+	if err != nil {
+		vb = []byte("[]")
+	}
 	return web.JobView{
-		ID:         m.ID,
-		Status:     m.Status,
-		Search:     m.Search,
-		Epochs:     m.Epochs,
-		Operator:   m.Operator,
-		Score:      strconv.FormatFloat(m.Score, 'f', 3, 64),
-		ScoresJSON: string(b),
-		RoundsJSON: string(rb),
-		Paths:      m.Paths,
-		Err:        m.Err,
+		ID:               m.ID,
+		Status:           m.Status,
+		Search:           m.Search,
+		Epochs:           m.Epochs,
+		Operator:         m.Operator,
+		Score:            strconv.FormatFloat(m.Score, 'f', 3, 64),
+		ScoresJSON:       string(b),
+		RoundsJSON:       string(rb),
+		PathCountsJSON:   string(pb),
+		VertexCountsJSON: string(vb),
+		Paths:            m.Paths,
+		Vertices:         m.Vertices,
+		Err:              m.Err,
 	}
 }

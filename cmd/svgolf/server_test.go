@@ -32,7 +32,7 @@ func TestServerJobFromCache(t *testing.T) {
 	if err := os.MkdirAll(job, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	meta := jobMeta{ID: id, Status: "done", Search: "stack", Epochs: 2, Operator: "rectangle", Score: 12.5, Scores: []float64{20, 12.5}}
+	meta := jobMeta{ID: id, Status: "done", Search: "stack", Epochs: 2, Operator: "rectangle", Score: 12.5, Scores: []float64{20, 12.5}, Paths: 3, Vertices: 12, PathCounts: []int{2, 3}, VertexCounts: []int{8, 12}}
 	b, _ := json.Marshal(meta)
 	if err := os.WriteFile(filepath.Join(job, "job.json"), b, 0o644); err != nil {
 		t.Fatal(err)
@@ -58,6 +58,12 @@ func TestServerJobFromCache(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `id="epochs"`) || !strings.Contains(rec.Body.String(), "<table") {
 		t.Fatalf("missing epochs table: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "3 paths") || !strings.Contains(rec.Body.String(), "12 vertices") {
+		t.Fatalf("missing path and vertex counts: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "[2,3]") || !strings.Contains(rec.Body.String(), "[8,12]") {
+		t.Fatalf("missing per-epoch path and vertex series: %s", rec.Body.String())
+	}
 	if err := os.WriteFile(filepath.Join(job, "want.png"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +75,7 @@ func TestServerJobFromCache(t *testing.T) {
 }
 
 func TestEpochPayloadScores(t *testing.T) {
-	p := epochPayload(jobMeta{Epochs: 2, Score: 12.5, Scores: []float64{20, 12.5}, Operator: "rectangle"})
+	p := epochPayload(jobMeta{Epochs: 2, Score: 12.5, Scores: []float64{20, 12.5}, Operator: "rectangle", Paths: 3, Vertices: 12, PathCounts: []int{2, 3}, VertexCounts: []int{8, 12}})
 	got, ok := p["scores"].([]float64)
 	if !ok || len(got) != 2 || got[0] != 20 || got[1] != 12.5 {
 		t.Fatalf("scores=%v", p["scores"])
@@ -79,6 +85,17 @@ func TestEpochPayloadScores(t *testing.T) {
 	}
 	if _, ok := p["rounds"]; !ok {
 		t.Fatal("missing rounds")
+	}
+	if p["paths"] != 3 || p["vertices"] != 12 {
+		t.Fatalf("paths=%v vertices=%v", p["paths"], p["vertices"])
+	}
+	pc, ok := p["pathCounts"].([]int)
+	if !ok || len(pc) != 2 || pc[0] != 2 || pc[1] != 3 {
+		t.Fatalf("pathCounts=%v", p["pathCounts"])
+	}
+	vc, ok := p["vertexCounts"].([]int)
+	if !ok || len(vc) != 2 || vc[0] != 8 || vc[1] != 12 {
+		t.Fatalf("vertexCounts=%v", p["vertexCounts"])
 	}
 }
 

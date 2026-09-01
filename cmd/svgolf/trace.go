@@ -53,8 +53,8 @@ func (t *Trace) Record(ep search.Epoch) error {
 		if op == "" {
 			op = "-"
 		}
-		fmt.Fprintf(t.log, "epoch %d operator=%s scale=%d elapsed=%.3fs paths=%d score=%.3f -> %s\n",
-			t.n, op, scale, ep.Elapsed.Seconds(), len(doc.Children()), stack.Score(got, t.want), svgPath)
+		fmt.Fprintf(t.log, "epoch %d operator=%s scale=%d elapsed=%.3fs paths=%d vertices=%d score=%.3f -> %s\n",
+			t.n, op, scale, ep.Elapsed.Seconds(), documentPaths(doc), documentVertices(doc), stack.Score(got, t.want), svgPath)
 	}
 	t.n++
 	return nil

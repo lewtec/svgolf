@@ -7,10 +7,13 @@ type JobView struct {
 	Epochs     int
 	Operator   string
 	Score      string
-	ScoresJSON string
-	RoundsJSON string
-	Paths      int
-	Err        string
+	ScoresJSON       string
+	RoundsJSON       string
+	PathCountsJSON   string
+	VertexCountsJSON string
+	Paths            int
+	Vertices         int
+	Err              string
 }
 
 templ Layout(title string) {
@@ -78,10 +81,10 @@ templ JobPage(j JobView) {
 			</div>
 			<div class="flex-none px-4 gap-2">
 				<span id="status" class="badge">{ j.Status }</span>
-				<span id="meta" class="text-sm">{ j.Operator } · score { j.Score } · { j.Paths } paths</span>
+				<span id="meta" class="text-sm">{ j.Operator } · score { j.Score } · { j.Paths } paths · { j.Vertices } vertices</span>
 			</div>
 		</div>
-		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON }>
+		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON } data-paths={ j.PathCountsJSON } data-vertices={ j.VertexCountsJSON }>
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
 				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
@@ -116,8 +119,12 @@ templ JobPage(j JobView) {
 			const head = document.getElementById("epoch-head");
 			let scores = [];
 			let rounds = [];
+			let pathCounts = [];
+			let vertexCounts = [];
 			try { scores = JSON.parse(root.dataset.scores || "[]"); } catch (e) { scores = []; }
 			try { rounds = JSON.parse(root.dataset.rounds || "[]"); } catch (e) { rounds = []; }
+			try { pathCounts = JSON.parse(root.dataset.paths || "[]"); } catch (e) { pathCounts = []; }
+			try { vertexCounts = JSON.parse(root.dataset.vertices || "[]"); } catch (e) { vertexCounts = []; }
 			const names = [];
 			function remember(round) {
 				if (!Array.isArray(round)) return;
@@ -142,7 +149,7 @@ templ JobPage(j JobView) {
 			}
 			function paintHead() {
 				head.replaceChildren();
-				const cols = ["epoch", "win", ...names];
+				const cols = ["epoch", "win", "paths", "vertices", ...names];
 				for (const name of cols) {
 					const th = document.createElement("th");
 					th.textContent = name;
@@ -177,6 +184,14 @@ templ JobPage(j JobView) {
 					}
 					win.textContent = chosen || "—";
 					tr.appendChild(win);
+					const pathsCell = document.createElement("td");
+					pathsCell.className = "font-mono";
+					pathsCell.textContent = i < pathCounts.length ? String(pathCounts[i]) : "—";
+					tr.appendChild(pathsCell);
+					const verticesCell = document.createElement("td");
+					verticesCell.className = "font-mono";
+					verticesCell.textContent = i < vertexCounts.length ? String(vertexCounts[i]) : "—";
+					tr.appendChild(verticesCell);
 					const tops = bestNames(last);
 					for (const name of names) {
 						const td = document.createElement("td");
@@ -268,13 +283,15 @@ templ JobPage(j JobView) {
 				const d = JSON.parse(ev.data);
 				document.getElementById("status").textContent = d.status;
 				document.getElementById("meta").textContent =
-					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.elapsed}`;
+					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.vertices} vertices · ${d.elapsed}`;
 				if (Array.isArray(d.scores)) scores = d.scores;
 				else if (d.n >= scores.length) scores.push(parseFloat(d.score));
 				if (Array.isArray(d.rounds)) {
 					rounds = d.rounds;
 					for (const round of rounds) remember(round);
 				}
+				if (Array.isArray(d.pathCounts)) pathCounts = d.pathCounts;
+				if (Array.isArray(d.vertexCounts)) vertexCounts = d.vertexCounts;
 				drawLoss(scores);
 				show(d.n);
 			});

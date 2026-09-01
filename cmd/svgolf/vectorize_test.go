@@ -38,6 +38,9 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if !strings.Contains(log.String(), "elapsed=1.000s") {
 		t.Fatalf("missing elapsed in log: %s", log.String())
 	}
+	if !strings.Contains(log.String(), "paths=") || !strings.Contains(log.String(), "vertices=") {
+		t.Fatalf("missing path and vertex counts in log: %s", log.String())
+	}
 	sameFile(t, filepath.Join(dir, "001.svg"), filepath.Join(dir, "last.svg"))
 	sameFile(t, filepath.Join(dir, "001.png"), filepath.Join(dir, "last.png"))
 	b0, err := os.ReadFile(filepath.Join(dir, "000.svg"))
