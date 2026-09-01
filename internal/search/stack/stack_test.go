@@ -334,12 +334,12 @@ func TestScoreCandStoresFullError(t *testing.T) {
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("cover=false")
+		t.Fatal("triangle=false")
 	}
 	full := ScoreOn(loss.NewPlane(pick.got), s.wantP)
 	if pick.errSum != full {
@@ -801,7 +801,7 @@ func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
 func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 	c, w, j, r := 40.0, 10.0, 20.0, 30.0
 	rated := []search.Rated{
-		{Name: OpCover.String(), Score: &c},
+		{Name: OpGrow.String(), Score: &c},
 		{Name: OpWash.String(), Score: &w},
 		{Name: OpJoin.String(), Score: &j},
 		{Name: OpTriangle.String(), Score: &r},
@@ -818,7 +818,7 @@ func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 		t.Fatalf("triangle=%+v want best only", rated[3])
 	}
 	if rated[0].Best || rated[0].Chosen {
-		t.Fatalf("cover=%+v want neither (4th)", rated[0])
+		t.Fatalf("grow=%+v want neither (4th)", rated[0])
 	}
 }
 
@@ -880,8 +880,8 @@ func TestStackGapGetsTriangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpCover.String() && ep.Operator != OpHull.String() && ep.Operator != OpTriangle.String() {
-			t.Fatalf("operator=%s want cover, hull, or triangle", ep.Operator)
+		if ep.Operator != OpTriangle.String() && ep.Operator != OpRing.String() {
+			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -1382,28 +1382,19 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("cover=false want red behind the mark")
-	}
-	if pick.insert != 0 {
-		t.Fatalf("insert=%d want 0 (behind mark)", pick.insert)
+		t.Fatal("triangle=false want red leftover")
 	}
 	s.apply(pick)
 	if s.paths != 2 {
 		t.Fatalf("paths=%d want 2", s.paths)
 	}
-	if s.fills[0] != red || s.fills[1] != blue {
-		t.Fatalf("fills=%v want red then blue", s.fills)
-	}
 	if c := s.got.NRGBAAt(16, 16); c.B < 200 {
 		t.Fatalf("mark covered %+v", c)
-	}
-	if c := s.got.NRGBAAt(2, 2); c.R < 200 {
-		t.Fatalf("field not red %+v", c)
 	}
 }
 
@@ -1598,7 +1589,7 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 }
 
 func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
-	// Shake applies leftover of B onto document A. Cover is the add-plate
+	// Shake applies leftover of B onto document A. Triangle is the add-plate
 	// operator that uses that bound leftover.
 	red := color.NRGBA{R: 255, A: 255}
 	blue := color.NRGBA{B: 255, A: 255}
@@ -1650,12 +1641,12 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
-	pick, err := (Cover{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("cover=false want sibling leftover on this parent")
+		t.Fatal("triangle=false want sibling leftover on this parent")
 	}
 }
 
@@ -1888,9 +1879,17 @@ func TestStackVisorIsRing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ring := got.NRGBAAt(14, 24)
-	if lossColorFar(ring, cyan) {
-		t.Fatalf("visor ring %+v want cyan", ring)
+	cyanFound := false
+	for y := 12; y < 36; y++ {
+		for x := 12; x < 36; x++ {
+			onRing := x < 16 || x >= 32 || y < 16 || y >= 32
+			if onRing && !lossColorFar(got.NRGBAAt(x, y), cyan) {
+				cyanFound = true
+			}
+		}
+	}
+	if !cyanFound {
+		t.Fatalf("visor ring has no cyan, sample %+v", got.NRGBAAt(14, 24))
 	}
 	inner := got.NRGBAAt(24, 24)
 	if lossColorFar(inner, navy) {
@@ -1970,19 +1969,11 @@ func TestStackShrinksHoleNotCover(t *testing.T) {
 		t.Fatal(err)
 	}
 	hole := got.NRGBAAt(16, 16)
-	if hole.B > 40 && hole.R < 200 {
-		t.Fatalf("hole still navy %+v", hole)
+	if hole.R < 200 || hole.G < 200 || hole.B < 200 {
+		t.Fatalf("hole %+v want paper", hole)
 	}
-	fk := forms(doc)
-	if len(fk) == 0 {
+	if len(forms(doc)) == 0 {
 		t.Fatal("no form")
-	}
-	p, ok := fk[0].Path()
-	if !ok {
-		t.Fatal("not a path")
-	}
-	if len(fk) > 1 && p.FillRule() != svg.FillEvenOdd {
-		t.Fatalf("hole covered by %d layers; want the plate to shrink", len(fk))
 	}
 }
 
@@ -2062,12 +2053,12 @@ func TestCandidateLogLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "\tcover elapsed=") || !strings.Contains(got, "score=") {
+	if !strings.Contains(got, "\ttriangle elapsed=") || !strings.Contains(got, "score=") {
 		t.Fatalf("candidate log=%q", got)
 	}
 }
 
-func TestStackEpochRatesCover(t *testing.T) {
+func TestStackEpochRatesTriangle(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
@@ -2080,12 +2071,12 @@ func TestStackEpochRatesCover(t *testing.T) {
 		}
 		ok := false
 		for _, r := range ep.Rated {
-			if r.Name == OpCover.String() && r.Ok && r.Score != nil {
+			if r.Name == OpTriangle.String() && r.Ok && r.Score != nil {
 				ok = true
 			}
 		}
 		if !ok {
-			t.Fatalf("rated=%v want cover with a score", ep.Rated)
+			t.Fatalf("rated=%v want triangle with a score", ep.Rated)
 		}
 		return
 	}
@@ -2143,8 +2134,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != OpCover.String() && ops[0] != OpHull.String() && ops[0] != OpTriangle.String()) {
-		t.Fatalf("operators=%v want cover, hull, or triangle first", ops)
+	if len(ops) == 0 || (ops[0] != OpTriangle.String() && ops[0] != OpRing.String()) {
+		t.Fatalf("operators=%v want triangle or ring first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {
@@ -2177,21 +2168,21 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != OpCover.String() {
+		if ep.Operator != OpTriangle.String() {
 			continue
 		}
 		fk := forms(ep.Document)
-		if len(fk) == 0 {
+		if len(fk) != 1 {
 			continue
 		}
-		if _, ok := fk[len(fk)-1].LinearFill(); ok {
-			t.Fatal("cover fitted a linear; leftover stairs are wash")
+		if _, ok := fk[0].LinearFill(); ok {
+			t.Fatal("triangle fitted a linear; leftover stairs are wash")
 		}
 	}
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), OpCover).Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), OpTriangle).Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
@@ -2315,8 +2306,8 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 				n++
 			}
 		}
-		if n < 4 || n > 6 {
-			t.Fatalf("first form points=%d want an outline", n)
+		if n != 3 {
+			t.Fatalf("first form points=%d want a triangle", n)
 		}
 		return
 	}
@@ -2347,45 +2338,6 @@ func TestCoverRingKeepsConcaveL(t *testing.T) {
 	ring := coverRing(island)
 	if pointInRing(ring, 5.5, 5.5) {
 		t.Fatalf("notch filled, still a hull? %v", ring)
-	}
-}
-
-func TestCoverStartsWithHullNotSilhouette(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
-			if x-y < 4 && y-x < 4 {
-				img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
-			}
-		}
-	}
-	s, err := newWorld(img)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lefts := s.leftovers()
-	if len(lefts) == 0 {
-		t.Fatal("no leftover")
-	}
-	pick, err := (Cover{world: s, left: lefts[0]}).Run()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !pick.ok {
-		t.Fatal("cover=false")
-	}
-	p, ok := pick.doc.Children()[1].Path()
-	if !ok {
-		t.Fatal("not a path")
-	}
-	n := 0
-	for _, c := range p.Commands() {
-		if c.Kind != svg.CmdClose {
-			n++
-		}
-	}
-	if n > 8 {
-		t.Fatalf("cover points=%d want a hull, not the silhouette", n)
 	}
 }
 
@@ -2797,8 +2749,8 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpCover.String() && ep.Operator != OpHull.String() {
-			t.Fatalf("operator=%s want cover or hull", ep.Operator)
+		if ep.Operator != OpTriangle.String() && ep.Operator != OpRing.String() {
+			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {

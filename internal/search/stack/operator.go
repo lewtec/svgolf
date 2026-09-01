@@ -27,7 +27,6 @@ type Op int
 const (
 	OpNone Op = iota
 	OpAbsorb
-	OpCover
 	OpTriangle
 	OpRing
 	OpGrow
@@ -35,7 +34,6 @@ const (
 	OpSlide
 	OpBend
 	OpSimplify
-	OpHull
 	OpWash
 	OpJoin
 	OpSubtract
@@ -47,7 +45,6 @@ const (
 var operatorNames = [opCount]string{
 	OpNone:     "",
 	OpAbsorb:   "absorb",
-	OpCover:    "cover",
 	OpTriangle: "triangle",
 	OpRing:     "ring",
 	OpGrow:     "grow",
@@ -55,7 +52,6 @@ var operatorNames = [opCount]string{
 	OpSlide:    "slide",
 	OpBend:     "bend",
 	OpSimplify: "simplify",
-	OpHull:     "hull",
 	OpWash:     "wash",
 	OpJoin:     "join",
 	OpSubtract: "subtract",
@@ -84,8 +80,6 @@ func (o op) impl() Operator {
 	switch o.id {
 	case OpAbsorb:
 		return &Absorb{world: o.world, left: o.left}
-	case OpCover:
-		return Cover{world: o.world, left: o.left}
 	case OpTriangle:
 		return Triangle{world: o.world, left: o.left}
 	case OpRing:
@@ -100,8 +94,6 @@ func (o op) impl() Operator {
 		return Bend{world: o.world, left: o.left}
 	case OpSimplify:
 		return Simplify{world: o.world, buckets: o.buckets}
-	case OpHull:
-		return HullPath{world: o.world, buckets: o.buckets}
 	case OpWash:
 		return &Wash{world: o.world, buckets: o.buckets}
 	case OpJoin:
@@ -133,31 +125,6 @@ func (o op) Run() (formPick, error) {
 	return im.Run()
 }
 
-// Cover places a rough leftover hull. Slide and Bend walk
-// the leftover outline later.
-type Cover struct {
-	world *world
-	left  leftover
-}
-
-func (Cover) ID() Op { return OpCover }
-func (c Cover) Applies() bool {
-	return c.left.big() && !c.left.paper && c.world.paths < maxPaths
-}
-
-func (c Cover) Run() (formPick, error) {
-	s, g := c.world, c.left.fresh
-	if len(g.work) < minIsland {
-		return nonePick(), nil
-	}
-	ring := hullRing(g.work)
-	if len(ring) < 3 {
-		return nonePick(), nil
-	}
-	g.ring = ring
-	return s.addLayer(filledPath(ring, g.fill), g, OpCover)
-}
-
 // Triangle places the biggest leftover triangle that stays inside the mask.
 type Triangle struct {
 	world *world
@@ -184,6 +151,7 @@ func (tr Triangle) Run() (formPick, error) {
 	}
 	g.work = work
 	g.ring = ring
+	g.fill = modeFill(s.want, work)
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
 }
@@ -888,51 +856,6 @@ func (b Bend) Run() (formPick, error) {
 	return best, nil
 }
 
-// HullPath replaces one path's outer ring with the convex hull of
-// its owned pixels. Score keeps it only when that is cheaper.
-type HullPath struct {
-	world   *world
-	buckets [][]pix
-}
-
-func (HullPath) ID() Op { return OpHull }
-func (h HullPath) Applies() bool {
-	return h.world.paths > 0
-}
-
-func (h HullPath) Run() (formPick, error) {
-	s := h.world
-	best := nonePick()
-	for i := 0; i < s.paths; i++ {
-		if len(h.buckets[i]) < 3 {
-			continue
-		}
-		ring := hullRing(h.buckets[i])
-		if len(ring) < 3 {
-			continue
-		}
-		node := s.doc.Children()[i+1]
-		p, ok := node.Path()
-		if !ok {
-			continue
-		}
-		rings := parsePathRings(p)
-		cand := filledRings(polylineRing(ring), rings[1:], s.fills[i])
-		if lin, ok := node.LinearFill(); ok {
-			cand = cand.WithLinearFill(lin)
-		}
-		g := s.seedGrow(grow{i: i, work: h.buckets[i], fill: s.fills[i], ring: ring})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpHull)
-		if err != nil {
-			return nonePick(), err
-		}
-		if betterPick(pick, best) {
-			best = pick
-		}
-	}
-	return best, nil
-}
-
 // Swap exchanges paths i and j. Score judges the painted order.
 type Swap struct {
 	world *world
@@ -992,7 +915,6 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 		}
 	case 3:
 		return []Operator{
-			op{id: OpCover, world: s, left: left},
 			op{id: OpTriangle, world: s, left: left},
 			op{id: OpRing, world: s, left: left},
 		}
@@ -1003,7 +925,6 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 			op{id: OpAbsorb, world: s, left: left},
 			op{id: OpGrow, world: s, left: left},
 			op{id: OpCarve, world: s, left: left},
-			op{id: OpCover, world: s, left: left},
 			op{id: OpTriangle, world: s, left: left},
 			op{id: OpRing, world: s, left: left},
 		}
@@ -1023,7 +944,6 @@ func (s *world) worldOperators(band int) []Operator {
 	if band == 1 {
 		return []Operator{
 			op{id: OpSimplify, world: s, buckets: buckets},
-			op{id: OpHull, world: s, buckets: buckets},
 		}
 	}
 	ops := []Operator{

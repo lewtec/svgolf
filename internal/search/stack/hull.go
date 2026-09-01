@@ -103,6 +103,9 @@ func triangleCandidates(island []pix) [][2]float64 {
 			out = append(out, b)
 		}
 	}
+	for _, hole := range voids(island) {
+		out = append(out, coverRing(hole)...)
+	}
 	return uniquePoints(out)
 }
 
