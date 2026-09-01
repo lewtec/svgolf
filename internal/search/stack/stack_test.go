@@ -363,6 +363,43 @@ func TestHottestSkipsRimForAreaStrip(t *testing.T) {
 	}
 }
 
+func TestHottestFindsRimWhenNothingElse(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	want := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	red := color.NRGBA{R: 255, A: 255}
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 24; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for x := 4; x < 20; x++ {
+		want.SetNRGBA(x, 4, red)
+		want.SetNRGBA(x, 19, red)
+	}
+	for y := 5; y < 19; y++ {
+		want.SetNRGBA(4, y, red)
+		want.SetNRGBA(19, y, red)
+	}
+	_, island := (&world{got: got, want: want}).hottest()
+	if len(island) == 0 {
+		t.Fatal("rim leftover vanished; want a hottest leftover")
+	}
+}
+
+func TestHottestFullMatchIsEmpty(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, paper)
+		}
+	}
+	_, island := (&world{got: img, want: img}).hottest()
+	if island != nil {
+		t.Fatalf("full match leftover=%d", len(island))
+	}
+}
+
 func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))

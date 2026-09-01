@@ -194,12 +194,9 @@ func (s *world) hottestN(k int) []leftoverBlob {
 		return nil
 	}
 	got, want := s.got, s.want
-	skip := s.skip
 	b := want.Bounds()
 	w, h := b.Dx(), b.Dy()
-	sc := &s.scratch
-	sc.ensure(w * h)
-	mark, family := sc.mark, sc.family
+	s.scratch.ensure(w * h)
 	gotP, wantP := s.gotP, s.wantP
 	if gotP == nil {
 		gotP = loss.NewPlane(got)
@@ -211,17 +208,44 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	}
 	gotP.Ensure()
 	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, skip, w, h)
+	heat := leftoverHeat(gotP, wantP, s.skip, w, h)
+	var maxH float64
+	for _, v := range heat {
+		if v > maxH {
+			maxH = v
+		}
+	}
+	if maxH <= 0 {
+		return nil
+	}
+	for cut := 0.5; ; cut /= 2 {
+		blobs := s.collectBlobs(heat, w, h, b, gotP, wantP, k, cut, true, minIsland)
+		if len(blobs) > 0 {
+			return blobs
+		}
+		if cut < 1.0/64 {
+			break
+		}
+	}
+	return s.collectBlobs(heat, w, h, b, gotP, wantP, k, 0, false, 1)
+}
+
+func (s *world) collectBlobs(heat []float64, w, h int, b image.Rectangle, gotP, wantP *loss.Plane, k int, cut float64, interior bool, min int) []leftoverBlob {
+	want := s.want
+	mark, family := s.scratch.mark, s.scratch.family
+	clear(mark)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			if heat[y*w+x] <= 0.5 {
+			if heat[y*w+x] <= cut {
 				continue
 			}
 			mark[y*w+x] = 1
 			family[y*w+x] = coarse(want.NRGBAAt(b.Min.X+x, b.Min.Y+y))
 		}
 	}
-	despeckle(mark, w, h)
+	if interior {
+		despeckle(mark, w, h)
+	}
 	best := make([]leftoverBlob, 0, k)
 	var cur []pix
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
@@ -252,21 +276,21 @@ func (s *world) hottestN(k int) []leftoverBlob {
 					pending = append(pending, pix{nx, ny})
 				}
 			}
-			if !hasInterior(cur) {
+			if interior && !hasInterior(cur) {
 				continue
 			}
 			best = rankBlob(best, k, leftoverBlob{
 				col:    modeFill(want, cur),
 				island: append([]pix{}, cur...),
 				errSum: errSum,
-			})
+			}, min)
 		}
 	}
 	return best
 }
 
-func rankBlob(best []leftoverBlob, k int, b leftoverBlob) []leftoverBlob {
-	if len(b.island) < minIsland {
+func rankBlob(best []leftoverBlob, k int, b leftoverBlob, min int) []leftoverBlob {
+	if len(b.island) < min {
 		return best
 	}
 	pos := len(best)
