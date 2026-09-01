@@ -8,8 +8,9 @@ import (
 )
 
 // DebugFrames is the leftover view. Heat is leftoverHeat 0-1
-// (black match, red miss). Island is every pixel where got and
-// want differ (white) and the inscribed triangle (orange).
+// (black match, red miss). Island is every Score miss (white)
+// and the inscribed triangle (orange). Raw got!=want is not
+// the mask: raster rounding on a matching fill is not leftover.
 func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *image.NRGBA) {
 	if want == nil {
 		return nil, nil
@@ -31,7 +32,7 @@ func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *imag
 			v := uint8(field[y*w+x] * 255)
 			heat.SetNRGBA(b.Min.X+x, b.Min.Y+y, color.NRGBA{R: v, B: 255 - v, A: 255})
 			c := color.NRGBA{A: 255}
-			if got.NRGBAAt(b.Min.X+x, b.Min.Y+y) != want.NRGBAAt(b.Min.X+x, b.Min.Y+y) {
+			if colorErrHSV(gotP.At(x, y), wantP.At(x, y)) > minErr {
 				c = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 			}
 			island.SetNRGBA(b.Min.X+x, b.Min.Y+y, c)

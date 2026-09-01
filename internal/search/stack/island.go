@@ -277,17 +277,9 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	}
 	gotP.Ensure()
 	wantP.Ensure()
-	heat := leftoverHeat(gotP, wantP, w, h)
-	var maxH float64
-	for _, v := range heat {
-		if v > maxH {
-			maxH = v
-		}
-	}
-	if maxH <= 0 {
+	if !s.stampResidual(gotP, wantP, w, h, b) {
 		return nil
 	}
-	s.stampHeat(heat, w, h, b, 0)
 	despeckle(s.scratch.mark, w, h)
 	cores, rest := s.coresFromMark(w, h, gotP, wantP, k)
 	if len(cores) > 0 {
@@ -318,19 +310,25 @@ func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int) (cores, 
 	return cores, rest
 }
 
-func (s *world) stampHeat(heat []float64, w, h int, b image.Rectangle, cut float64) {
+// stampResidual marks every pixel Score treats as a miss
+// (colorErr > minErr). Raw got!=want includes raster rounding
+// on a matching fill and turns the whole plate into leftover.
+func (s *world) stampResidual(gotP, wantP *loss.Plane, w, h int, b image.Rectangle) bool {
 	want := s.want
 	mark, family := s.scratch.mark, s.scratch.family
 	clear(mark)
+	any := false
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			if heat[y*w+x] <= cut {
+			if colorErrHSV(gotP.At(x, y), wantP.At(x, y)) <= minErr {
 				continue
 			}
 			mark[y*w+x] = 1
 			family[y*w+x] = coarse(want.NRGBAAt(b.Min.X+x, b.Min.Y+y))
+			any = true
 		}
 	}
+	return any
 }
 
 func (s *world) unfloodMark() {

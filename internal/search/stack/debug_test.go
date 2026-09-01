@@ -72,6 +72,12 @@ func TestDebugFramesMarksEveryDifference(t *testing.T) {
 func TestDebugFramesPaintsFittedTriangle(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	got := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
 	for _, p := range []pix{{1, 1}, {2, 1}, {3, 1}, {1, 2}, {2, 2}, {3, 2}} {
 		want.SetNRGBA(p.x, p.y, color.NRGBA{B: 255, A: 255})
 	}
