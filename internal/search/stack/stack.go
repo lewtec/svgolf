@@ -685,8 +685,11 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (form
 	defer render.Release(ngot)
 	gotP := acquirePlane(ngot)
 	defer releasePlane(gotP)
-	dirty := g.dirty0.Union(nodeRect(cand)).Inset(-2)
-	nerr := s.scoreAfter(gotP, dirty)
+	dirty := g.dirty0
+	if dirty.Empty() {
+		dirty = nodeRect(cand)
+	}
+	nerr := s.scoreAfter(gotP, dirty.Inset(-2))
 	npaths := docPaths(next)
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
@@ -1240,6 +1243,19 @@ func appendRing(p svg.Path, ring [][2]float64) svg.Path {
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
 	return appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
+}
+
+func pointsRect(pts [][2]float64) image.Rectangle {
+	var r image.Rectangle
+	for _, p := range pts {
+		q := image.Rect(int(p[0])-1, int(p[1])-1, int(p[0])+2, int(p[1])+2)
+		if r.Empty() {
+			r = q
+		} else {
+			r = r.Union(q)
+		}
+	}
+	return r
 }
 
 func islandRect(island []pix) image.Rectangle {

@@ -401,27 +401,32 @@ func (s Simplify) Run() (formPick, error) {
 			}
 			return cand
 		}
-		propose := func(outer pathRing, holes []pathRing) {
+		propose := func(outer pathRing, holes []pathRing, dirty image.Rectangle) {
 			if len(outer.verts) < 3 || ringCrosses(outer.points()) {
 				return
 			}
 			cand := paint(outer, holes)
-			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
+			lg := g
+			if !dirty.Empty() {
+				lg.dirty0 = dirty
+			}
+			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: lg})
 		}
 		outer := rings[0]
 		work := outer.collapseColinearLines()
 		if len(work.verts) < len(outer.verts) {
-			propose(work, rings[1:])
+			propose(work, rings[1:], g.dirty0)
 		}
 		if len(work.verts) >= 4 {
 			n := len(work.verts)
 			for v := 0; v < n; v++ {
 				prev := (v - 1 + n) % n
 				next := (v + 1) % n
-				if !regionWorthTrying([][2]float64{work.verts[prev], work.verts[v], work.verts[next]}, w.gotP, w.wantP) {
+				fan := [][2]float64{work.verts[prev], work.verts[v], work.verts[next]}
+				if !regionWorthTrying(fan, w.gotP, w.wantP) {
 					continue
 				}
-				propose(work.dropVertex(v), rings[1:])
+				propose(work.dropVertex(v), rings[1:], pointsRect(fan))
 			}
 		}
 		for h := 1; h < len(rings); h++ {
@@ -430,7 +435,7 @@ func (s Simplify) Run() (formPick, error) {
 			}
 			keep := append([]pathRing{}, rings[1:h]...)
 			keep = append(keep, rings[h+1:]...)
-			propose(rings[0], keep)
+			propose(rings[0], keep, pointsRect(rings[h].points()))
 		}
 	}
 	if len(jobs) == 0 {
