@@ -17,7 +17,7 @@ import (
 // Operator is one edit. choose starts every applicable Operator
 // in the current neighborhood and waits once.
 type Operator interface {
-	Name() string
+	ID() Op
 	Applies() bool
 	Run() (formPick, error)
 }
@@ -25,7 +25,8 @@ type Operator interface {
 type Op int
 
 const (
-	OpAbsorb Op = iota
+	OpNone Op = iota
+	OpAbsorb
 	OpCover
 	OpTriangle
 	OpRing
@@ -44,6 +45,7 @@ const (
 )
 
 var operatorNames = [opCount]string{
+	OpNone:     "",
 	OpAbsorb:   "absorb",
 	OpCover:    "cover",
 	OpTriangle: "triangle",
@@ -76,7 +78,7 @@ type op struct {
 	i, j    int
 }
 
-func (o op) Name() string { return o.id.String() }
+func (o op) ID() Op { return o.id }
 
 func (o op) impl() Operator {
 	switch o.id {
@@ -138,7 +140,7 @@ type Cover struct {
 	left  leftover
 }
 
-func (Cover) Name() string { return "cover" }
+func (Cover) ID() Op { return OpCover }
 func (c Cover) Applies() bool {
 	return c.left.big() && !c.left.paper && c.world.paths < maxPaths
 }
@@ -153,7 +155,7 @@ func (c Cover) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g.ring = ring
-	return s.addLayer(filledPath(ring, g.fill), g, c.Name())
+	return s.addLayer(filledPath(ring, g.fill), g, OpCover)
 }
 
 // Triangle places the biggest leftover triangle that stays inside the mask.
@@ -162,7 +164,7 @@ type Triangle struct {
 	left  leftover
 }
 
-func (Triangle) Name() string { return "triangle" }
+func (Triangle) ID() Op { return OpTriangle }
 func (tr Triangle) Applies() bool {
 	return tr.left.big() && !tr.left.paper && tr.world.paths < maxPaths
 }
@@ -183,7 +185,7 @@ func (tr Triangle) Run() (formPick, error) {
 	g.work = work
 	g.ring = ring
 	g = s.seedGrow(g)
-	return s.addLayer(filledPath(ring, g.fill), g, tr.Name())
+	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
 }
 
 // Ring is a leftover with a painted interior: evenodd outer plus holes
@@ -193,7 +195,7 @@ type Ring struct {
 	left  leftover
 }
 
-func (Ring) Name() string { return "ring" }
+func (Ring) ID() Op { return OpRing }
 func (r Ring) Applies() bool {
 	if !r.left.big() || r.left.paper || r.world.paths >= maxPaths {
 		return false
@@ -212,7 +214,7 @@ func (r Ring) Run() (formPick, error) {
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
-	return s.addLayer(withHoles(filledPath(g.ring, g.fill), holes), g, r.Name())
+	return s.addLayer(withHoles(filledPath(g.ring, g.fill), holes), g, OpRing)
 }
 
 // Absorb writes leftover error back into a touching path as a 2-stop.
@@ -224,7 +226,7 @@ type Absorb struct {
 	scratch scratch
 }
 
-func (Absorb) Name() string { return "absorb" }
+func (Absorb) ID() Op { return OpAbsorb }
 func (a Absorb) Applies() bool {
 	return a.left.big() && !a.left.paper && a.world.paths > 0
 }
@@ -250,7 +252,7 @@ func (a *Absorb) Run() (formPick, error) {
 			continue
 		}
 		cand := p.WithLinearFill(grad)
-		pick, err := s.scoreCand(replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, a.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, OpAbsorb)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -268,7 +270,7 @@ type Grow struct {
 	scratch scratch
 }
 
-func (g Grow) Name() string { return "grow" }
+func (g Grow) ID() Op { return OpGrow }
 func (g Grow) Applies() bool {
 	return g.left.big() && !g.left.paper
 }
@@ -290,7 +292,7 @@ func (g *Grow) Run() (formPick, error) {
 		if lin, ok := s.doc.Children()[work.i+1].LinearFill(); ok {
 			cand = cand.WithLinearFill(lin)
 		}
-		pick, err := s.scoreCand(replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, g.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, OpGrow)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -310,7 +312,7 @@ type Carve struct {
 	scratch scratch
 }
 
-func (c Carve) Name() string { return "carve" }
+func (c Carve) ID() Op { return OpCarve }
 func (c Carve) Applies() bool {
 	return c.left.big() && c.world.paths > 0
 }
@@ -342,7 +344,7 @@ func (c *Carve) Run() (formPick, error) {
 		work := ownedMinus(s.owner, c.left.island, s.w, uint16(i+1), c.scratch.seen)
 		dirty0 := islandRect(c.left.island).Union(nodeRect(node))
 		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, c.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -404,7 +406,7 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 		return nonePick(), nil
 	}
 	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
-	pick, err := s.scoreCand(next, last, gr, c.Name())
+	pick, err := s.scoreCand(next, last, gr, OpCarve)
 	if err != nil {
 		return nonePick(), err
 	}
@@ -424,7 +426,7 @@ type Simplify struct {
 	buckets [][]pix
 }
 
-func (s Simplify) Name() string { return "simplify" }
+func (s Simplify) ID() Op { return OpSimplify }
 func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
@@ -497,7 +499,7 @@ func (s Simplify) Run() (formPick, error) {
 	for _, job := range jobs {
 		job := job
 		eg.Go(func() error {
-			pick, err := w.scoreCand(job.next, job.node, job.g, s.Name())
+			pick, err := w.scoreCand(job.next, job.node, job.g, OpSimplify)
 			if err != nil {
 				return err
 			}
@@ -525,7 +527,7 @@ type Wash struct {
 	scratch scratch
 }
 
-func (Wash) Name() string { return "wash" }
+func (Wash) ID() Op { return OpWash }
 func (w Wash) Applies() bool {
 	return w.world.paths > 0
 }
@@ -545,7 +547,7 @@ func (w *Wash) Run() (formPick, error) {
 		}
 		cand := p.WithLinearFill(grad)
 		g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, w.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpWash)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -576,7 +578,7 @@ func (w *Wash) Run() (formPick, error) {
 			cand := filledPath(g.ring, s.fills[i]).WithLinearFill(grad)
 			next := replaceAt(s.doc, i+1, cand.Node())
 			next = dropAt(next, j+1)
-			pick, err := s.scoreCand(next, cand.Node(), g, w.Name())
+			pick, err := s.scoreCand(next, cand.Node(), g, OpWash)
 			if err != nil {
 				return nonePick(), err
 			}
@@ -600,7 +602,7 @@ type Join struct {
 	scratch scratch
 }
 
-func (Join) Name() string { return "join" }
+func (Join) ID() Op { return OpJoin }
 func (j Join) Applies() bool {
 	return j.world.paths >= 2
 }
@@ -641,7 +643,7 @@ func (j *Join) Run() (formPick, error) {
 				cand := filledPath(ring, fill)
 				next := replaceAt(s.doc, i+1, cand.Node())
 				next = dropAt(next, jn+1)
-				pick, err := s.scoreCand(next, cand.Node(), g, j.Name())
+				pick, err := s.scoreCand(next, cand.Node(), g, OpJoin)
 				if err != nil {
 					return nonePick(), err
 				}
@@ -665,7 +667,7 @@ type Subtract struct {
 	buckets [][]pix
 }
 
-func (Subtract) Name() string { return "subtract" }
+func (Subtract) ID() Op { return OpSubtract }
 func (s Subtract) Applies() bool {
 	return s.world.paths >= 2
 }
@@ -697,7 +699,7 @@ func (s Subtract) Run() (formPick, error) {
 				cand = cand.WithLinearFill(lin)
 			}
 			g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
-			pick, err := w.scoreCand(replaceAt(w.doc, j+1, cand.Node()), cand.Node(), g, s.Name())
+			pick, err := w.scoreCand(replaceAt(w.doc, j+1, cand.Node()), cand.Node(), g, OpSubtract)
 			if err != nil {
 				return nonePick(), err
 			}
@@ -715,7 +717,7 @@ type Delete struct {
 	i     int
 }
 
-func (Delete) Name() string { return "delete" }
+func (Delete) ID() Op { return OpDelete }
 func (d Delete) Applies() bool {
 	return d.world.paths >= 2 && d.i >= 0 && d.i < d.world.paths
 }
@@ -742,7 +744,7 @@ func (d Delete) Run() (formPick, error) {
 	if ok {
 		got = render.Keep(ngot)
 	}
-	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: d.Name(), ok: ok, scored: true}, nil
+	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
 }
 
 // Slide moves one vertex of a touching path toward the leftover outline.
@@ -751,7 +753,7 @@ type Slide struct {
 	left  leftover
 }
 
-func (Slide) Name() string { return "slide" }
+func (Slide) ID() Op { return OpSlide }
 func (sl Slide) Applies() bool {
 	return sl.left.big() && sl.world.paths > 0
 }
@@ -802,7 +804,7 @@ func (sl Slide) Run() (formPick, error) {
 			cand = cand.WithLinearFill(lin)
 		}
 		g := s.seedGrow(grow{i: i, work: sl.left.island, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, sl.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpSlide)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -819,7 +821,7 @@ type Bend struct {
 	left  leftover
 }
 
-func (Bend) Name() string { return "bend" }
+func (Bend) ID() Op { return OpBend }
 func (b Bend) Applies() bool {
 	return b.left.big() && b.world.paths > 0
 }
@@ -875,7 +877,7 @@ func (b Bend) Run() (formPick, error) {
 			cand = cand.WithLinearFill(lin)
 		}
 		g := s.seedGrow(grow{i: i, work: b.left.island, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, b.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpBend)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -893,7 +895,7 @@ type HullPath struct {
 	buckets [][]pix
 }
 
-func (HullPath) Name() string { return "hull" }
+func (HullPath) ID() Op { return OpHull }
 func (h HullPath) Applies() bool {
 	return h.world.paths > 0
 }
@@ -920,7 +922,7 @@ func (h HullPath) Run() (formPick, error) {
 			cand = cand.WithLinearFill(lin)
 		}
 		g := s.seedGrow(grow{i: i, work: h.buckets[i], fill: s.fills[i], ring: ring})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, h.Name())
+		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpHull)
 		if err != nil {
 			return nonePick(), err
 		}
@@ -937,7 +939,7 @@ type Swap struct {
 	i, j  int
 }
 
-func (Swap) Name() string { return "swap" }
+func (Swap) ID() Op { return OpSwap }
 func (sw Swap) Applies() bool {
 	return sw.i >= 0 && sw.j > sw.i && sw.j < sw.world.paths
 }
@@ -970,7 +972,7 @@ func (sw Swap) Run() (formPick, error) {
 	return formPick{
 		doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
-		op: sw.Name(), ok: ok, scored: true,
+		op: OpSwap, ok: ok, scored: true,
 		fills: fills, owner: owner,
 	}, nil
 }
@@ -1064,7 +1066,7 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 			jobs = append(jobs, job{op: op})
 		}
 	}
-	bestByName := make(map[string]*namedPick, len(operatorNames))
+	bestByOp := make(map[Op]*namedPick, opCount)
 	var mu sync.Mutex
 	var pool []formPick
 	g, _ := errgroup.WithContext(ctx)
@@ -1085,10 +1087,11 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 			elapsed := time.Since(started)
 			mu.Lock()
 			defer mu.Unlock()
-			st := bestByName[job.op.Name()]
+			id := job.op.ID()
+			st := bestByOp[id]
 			if st == nil {
 				st = &namedPick{}
-				bestByName[job.op.Name()] = st
+				bestByOp[id] = st
 			}
 			if elapsed > st.elapsed {
 				st.elapsed = elapsed
@@ -1105,22 +1108,22 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 	if err := g.Wait(); err != nil {
 		return nil, nil, err
 	}
-	for _, name := range operatorNames {
-		if st, ok := bestByName[name]; ok {
-			s.logCandidate(name, st.elapsed, st.pick)
+	for id := OpNone; id < opCount; id++ {
+		if st, ok := bestByOp[id]; ok {
+			s.logCandidate(id, st.elapsed, st.pick)
 		}
 	}
-	return pool, collectRated(bestByName), nil
+	return pool, collectRated(bestByOp), nil
 }
 
-func collectRated(bestByName map[string]*namedPick) []search.Rated {
+func collectRated(bestByOp map[Op]*namedPick) []search.Rated {
 	var out []search.Rated
-	for _, name := range operatorNames {
-		st, ok := bestByName[name]
+	for id := OpNone + 1; id < opCount; id++ {
+		st, ok := bestByOp[id]
 		if !ok {
 			continue
 		}
-		r := search.Rated{Name: name, Ok: st.pick.ok}
+		r := search.Rated{Name: id.String(), Ok: st.pick.ok}
 		if st.pick.scored {
 			score := st.pick.errSum
 			r.Score = &score
@@ -1146,8 +1149,8 @@ func mergeRated(dst, src []search.Rated) []search.Rated {
 		}
 	}
 	var out []search.Rated
-	for _, name := range operatorNames {
-		if r, ok := by[name]; ok {
+	for id := OpNone + 1; id < opCount; id++ {
+		if r, ok := by[id.String()]; ok {
 			out = append(out, r)
 		}
 	}

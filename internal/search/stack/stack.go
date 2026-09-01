@@ -130,7 +130,7 @@ type formPick struct {
 	reclaims [][]pix
 	dropIdx  int
 	mergeJ   int
-	op       string
+	op       Op
 	ok       bool
 	scored   bool
 	island   []pix
@@ -148,7 +148,7 @@ type snapshot struct {
 	errSum   float64
 	paths    int
 	commands int
-	operator string
+	operator Op
 }
 
 func nonePick() formPick {
@@ -306,8 +306,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		}
 		s.candidateLog = candidateLog
 		started := time.Now()
-		emit := func(op string, blob []pix, rated []search.Rated) bool {
-			ep := epochOf(s.doc, op)
+		emit := func(id Op, blob []pix, rated []search.Rated) bool {
+			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
 			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob)
 			ep.Rated = rated
@@ -382,13 +382,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			break
 		}
 		if !yielded {
-			emit("", nil, nil)
+			emit(OpNone, nil, nil)
 		}
 	}
 }
 
-func epochOf(doc svg.Document, op string) search.Epoch {
-	return search.Epoch{Document: doc, Scale: 1, Operator: op}
+func epochOf(doc svg.Document, id Op) search.Epoch {
+	return search.Epoch{Document: doc, Scale: 1, Operator: id.String()}
 }
 
 func (left leftover) big() bool {
@@ -482,7 +482,7 @@ func islandOf(best snapshot, pool []formPick) []pix {
 }
 
 func markKept(rated []search.Rated, kept []formPick) {
-	chosen := ""
+	chosen := OpNone
 	if len(kept) > 0 {
 		chosen = kept[0].op
 	}
@@ -505,7 +505,7 @@ func markKept(rated []search.Rated, kept []formPick) {
 		rated[ranked[k].i].Best = true
 	}
 	for i := range rated {
-		if rated[i].Name == chosen {
+		if rated[i].Name == chosen.String() {
 			rated[i].Chosen = true
 		}
 	}
@@ -624,20 +624,20 @@ func (s *world) connecting(island []pix, seen []byte) []grow {
 	return out
 }
 
-func (s *world) logCandidate(op string, elapsed time.Duration, p formPick) {
+func (s *world) logCandidate(id Op, elapsed time.Duration, p formPick) {
 	if s == nil || s.candidateLog == nil {
 		return
 	}
 	s.logMu.Lock()
 	defer s.logMu.Unlock()
 	if !p.scored {
-		fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=-\n", op, elapsed.Seconds())
+		fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=-\n", id, elapsed.Seconds())
 		return
 	}
-	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", op, elapsed.Seconds(), p.errSum)
+	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", id, elapsed.Seconds(), p.errSum)
 }
 
-func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, op string) (formPick, error) {
+func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (formPick, error) {
 	if p, ok := cand.Path(); ok {
 		for _, r := range pathRings(p) {
 			if ringCrosses(r) {
@@ -660,13 +660,13 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, op string) (
 	if ok {
 		got = render.Keep(ngot)
 	}
-	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: op, ok: ok, scored: true}, nil
+	return formPick{doc: next, got: got, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
 }
 
 // addLayer scores a new path on top and at one random existing
 // slot. A background plate loses on top; Score keeps it if the
 // random slot is behind the thing it must not cover.
-func (s *world) addLayer(cand svg.Path, g grow, op string) (formPick, error) {
+func (s *world) addLayer(cand svg.Path, g grow, id Op) (formPick, error) {
 	node := cand.Node()
 	best := nonePick()
 	slots := []int{s.paths}
@@ -680,7 +680,7 @@ func (s *world) addLayer(cand svg.Path, g grow, op string) (formPick, error) {
 		} else {
 			next = insertAt(s.doc, at+1, node)
 		}
-		pick, err := s.scoreCand(next, node, g, op)
+		pick, err := s.scoreCand(next, node, g, id)
 		if err != nil {
 			return nonePick(), err
 		}

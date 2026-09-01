@@ -153,7 +153,7 @@ func TestSimplifyIsBandOne(t *testing.T) {
 	s := &world{paths: 1}
 	found := false
 	for _, o := range s.worldOperators(1) {
-		if o.Name() == "simplify" {
+		if o.ID() == OpSimplify {
 			found = true
 		}
 	}
@@ -161,7 +161,7 @@ func TestSimplifyIsBandOne(t *testing.T) {
 		t.Fatal("simplify not scheduled in band 1")
 	}
 	for _, o := range s.worldOperators(2) {
-		if o.Name() == "simplify" {
+		if o.ID() == OpSimplify {
 			t.Fatal("simplify scheduled in band 2")
 		}
 	}
@@ -180,7 +180,7 @@ func TestDrySearchStopsOnFullMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 		n++
-		if ep.Operator != "" {
+		if ep.Operator != OpNone.String() {
 			t.Fatalf("operator=%q want empty on a full match", ep.Operator)
 		}
 	}
@@ -801,12 +801,12 @@ func TestLeftoverHeatDropsCloseTintNextToFullMiss(t *testing.T) {
 func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 	c, w, j, r := 40.0, 10.0, 20.0, 30.0
 	rated := []search.Rated{
-		{Name: "cover", Score: &c},
-		{Name: "wash", Score: &w},
-		{Name: "join", Score: &j},
-		{Name: "triangle", Score: &r},
+		{Name: OpCover.String(), Score: &c},
+		{Name: OpWash.String(), Score: &w},
+		{Name: OpJoin.String(), Score: &j},
+		{Name: OpTriangle.String(), Score: &r},
 	}
-	kept := []formPick{{op: "wash"}, {op: "join"}, {op: "triangle"}}
+	kept := []formPick{{op: OpWash}, {op: OpJoin}, {op: OpTriangle}}
 	markKept(rated, kept)
 	if !rated[1].Best || !rated[1].Chosen {
 		t.Fatalf("wash=%+v want best+chosen", rated[1])
@@ -880,7 +880,7 @@ func TestStackGapGetsTriangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" && ep.Operator != "hull" && ep.Operator != "triangle" {
+		if ep.Operator != OpCover.String() && ep.Operator != OpHull.String() && ep.Operator != OpTriangle.String() {
 			t.Fatalf("operator=%s want cover, hull, or triangle", ep.Operator)
 		}
 		p, ok := fk[0].Path()
@@ -2080,7 +2080,7 @@ func TestStackEpochRatesCover(t *testing.T) {
 		}
 		ok := false
 		for _, r := range ep.Rated {
-			if r.Name == "cover" && r.Ok && r.Score != nil {
+			if r.Name == OpCover.String() && r.Ok && r.Score != nil {
 				ok = true
 			}
 		}
@@ -2094,16 +2094,16 @@ func TestStackEpochRatesCover(t *testing.T) {
 
 func TestCollectRatedKeepsLosingScore(t *testing.T) {
 	a := 99.0
-	got := collectRated(map[string]*namedPick{
-		"delete": {pick: formPick{errSum: a, ok: false, scored: true}},
-		"join":   {pick: nonePick()},
+	got := collectRated(map[Op]*namedPick{
+		OpDelete: {pick: formPick{errSum: a, ok: false, scored: true}},
+		OpJoin:   {pick: nonePick()},
 	})
 	var del, join *search.Rated
 	for i := range got {
 		switch got[i].Name {
-		case "delete":
+		case OpDelete.String():
 			del = &got[i]
-		case "join":
+		case OpJoin.String():
 			join = &got[i]
 		}
 	}
@@ -2143,7 +2143,7 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull" && ops[0] != "triangle") {
+	if len(ops) == 0 || (ops[0] != OpCover.String() && ops[0] != OpHull.String() && ops[0] != OpTriangle.String()) {
 		t.Fatalf("operators=%v want cover, hull, or triangle first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
@@ -2177,7 +2177,7 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != "cover" {
+		if ep.Operator != OpCover.String() {
 			continue
 		}
 		fk := forms(ep.Document)
@@ -2191,7 +2191,7 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 }
 
 func TestEpochOfNativeScale(t *testing.T) {
-	if got := epochOf(svg.NewDocument(1, 1), "cover").Scale; got != 1 {
+	if got := epochOf(svg.NewDocument(1, 1), OpCover).Scale; got != 1 {
 		t.Fatalf("scale=%d want 1", got)
 	}
 }
@@ -2797,7 +2797,7 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != "cover" && ep.Operator != "hull" {
+		if ep.Operator != OpCover.String() && ep.Operator != OpHull.String() {
 			t.Fatalf("operator=%s want cover or hull", ep.Operator)
 		}
 		p, ok := fk[0].Path()
