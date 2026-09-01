@@ -90,7 +90,10 @@ func largestTriangle(island []pix) [][2]float64 {
 	}
 	set := pixSet(island)
 	defer releaseBits(set)
-	hull := uniquePoints(convexHull(islandCorners(island)))
+	// Pixel centers sit inside the leftover. Outer corners stick
+	// out, so the obvious 3-point hull of a triangular leftover
+	// fails the inside check and collapses to a sliver.
+	hull := uniquePoints(convexHull(islandPoints(island)))
 	if ring := firstInsideByArea(hull, set); len(ring) == 3 {
 		return ring
 	}
@@ -98,7 +101,7 @@ func largestTriangle(island []pix) [][2]float64 {
 		if len(hole) < minIsland {
 			continue
 		}
-		pts := uniquePoints(append(append([][2]float64{}, hull...), convexHull(islandCorners(hole))...))
+		pts := uniquePoints(append(append([][2]float64{}, hull...), convexHull(islandPoints(hole))...))
 		if ring := firstInsideByArea(pts, set); len(ring) == 3 {
 			return ring
 		}

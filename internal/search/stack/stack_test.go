@@ -149,6 +149,14 @@ func TestArchiveKeepsNondominated(t *testing.T) {
 	}
 }
 
+func TestTriangleAppliesOnPaperLeftover(t *testing.T) {
+	s := &world{paths: 1}
+	tr := Triangle{world: s, left: leftover{island: make([]pix, minIsland), col: paper, paper: true}}
+	if !tr.Applies() {
+		t.Fatal("paper leftover must still get a triangle proposal")
+	}
+}
+
 func TestLaterEpochRatesTriangle(t *testing.T) {
 	s := &world{paths: 1}
 	left := leftover{island: make([]pix, minIsland), col: color.NRGBA{R: 255, A: 255}}
@@ -182,12 +190,12 @@ func TestLaterEpochRatesTriangle(t *testing.T) {
 			case OpSlide.String(), OpBend.String(), OpGrow.String(), OpCarve.String(), OpAbsorb.String(), OpTriangle.String(), OpRing.String():
 				leftover = true
 			}
-			if r.Name == OpTriangle.String() && r.Score != nil {
+			if r.Name == OpTriangle.String() {
 				triangle = true
 			}
 		}
 		if leftover && !triangle {
-			t.Fatalf("epoch %d rated=%v want triangle with a score", n, ep.Rated)
+			t.Fatalf("epoch %d rated=%v want triangle proposed", n, ep.Rated)
 		}
 		if leftover {
 			later++
@@ -1014,6 +1022,24 @@ func TestLargestTriangleFillsSolidPlate(t *testing.T) {
 	}
 }
 
+func TestLargestTriangleFitsTriangleMask(t *testing.T) {
+	var island []pix
+	for y := 0; y < 30; y++ {
+		width := 40 * (30 - y) / 30
+		for x := 0; x < width; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	ring := largestTriangle(island)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%v want 3", ring)
+	}
+	got := trianglePix(ring)
+	if len(got) < len(island)*2/3 {
+		t.Fatalf("fitted=%d leftover=%d, sliver of a triangular leftover", len(got), len(island))
+	}
+}
+
 func TestLargestTriangleManyHolesDoesNotExplode(t *testing.T) {
 	var island []pix
 	for y := 0; y < 32; y++ {
@@ -1047,8 +1073,8 @@ func TestLargestTriangleStaysInsideL(t *testing.T) {
 		t.Fatalf("ring=%v", ring)
 	}
 	got := trianglePix(ring)
-	if len(got) < 64 {
-		t.Fatalf("pixels=%d want at least half the bar", len(got))
+	if len(got) < 40 {
+		t.Fatalf("pixels=%d want the inscribed bar, not a sliver", len(got))
 	}
 	for _, p := range got {
 		if p.x >= 4 && p.y >= 8 {

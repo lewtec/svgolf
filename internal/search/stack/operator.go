@@ -109,7 +109,7 @@ type Triangle struct {
 
 func (Triangle) ID() Op { return OpTriangle }
 func (tr Triangle) Applies() bool {
-	return tr.left.big() && !tr.left.paper && tr.world.paths < maxPaths
+	return tr.left.big() && tr.world.paths < maxPaths
 }
 
 func (tr Triangle) Run() (formPick, error) {
