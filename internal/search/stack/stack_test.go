@@ -78,6 +78,45 @@ func TestSimplifyDropsUselessHole(t *testing.T) {
 	}
 }
 
+func TestSimplifySkipsLoadBearingEars(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	outer := [][2]float64{{0, 0}, {16, 0}, {16, 16}, {0, 16}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(outer, red).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 16*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pick.ok {
+		t.Fatal("simplify scored a load-bearing ear on an exact rectangle")
+	}
+}
+
 func TestAcceptLexicographicEqualErrorFewerCommands(t *testing.T) {
 	if !acceptLexicographic(100, 2, 8, 100, 2, 10) {
 		t.Fatal("equal error and fewer commands must be accepted")

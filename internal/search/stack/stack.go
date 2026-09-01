@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"iter"
+	"math"
 	"math/rand/v2"
 	"runtime"
 	"sort"
@@ -1063,6 +1064,52 @@ func (r pathRing) spliceAfter(ei int, chain [][2]float64) pathRing {
 		edges = append(edges, r.edges[k])
 	}
 	return pathRing{verts: verts, edges: edges}
+}
+
+// regionWorthTrying is true when a drop can still change the picture:
+// the polygon is empty of raster pixels (command golf) or it covers a
+// mismatch. A region of already-correct pixels is skipped so simplify
+// does not re-render every load-bearing ear.
+func regionWorthTrying(ring [][2]float64, got, want *loss.Plane) bool {
+	if len(ring) < 3 || got == nil || want == nil || got.Image() == nil || want.Image() == nil {
+		return true
+	}
+	minX, minY := ring[0][0], ring[0][1]
+	maxX, maxY := minX, minY
+	for _, p := range ring[1:] {
+		if p[0] < minX {
+			minX = p[0]
+		}
+		if p[0] > maxX {
+			maxX = p[0]
+		}
+		if p[1] < minY {
+			minY = p[1]
+		}
+		if p[1] > maxY {
+			maxY = p[1]
+		}
+	}
+	box := image.Rect(int(math.Floor(minX)), int(math.Floor(minY)), int(math.Ceil(maxX)), int(math.Ceil(maxY)))
+	box = box.Intersect(want.Image().Rect)
+	if box.Empty() {
+		return true
+	}
+	got.EnsureRect(box)
+	want.EnsureRect(box)
+	seen := false
+	for y := box.Min.Y; y < box.Max.Y; y++ {
+		for x := box.Min.X; x < box.Max.X; x++ {
+			if !pointInRing(ring, float64(x)+0.5, float64(y)+0.5) {
+				continue
+			}
+			seen = true
+			if errAtHSV(got.At(x, y), want.At(x, y)) > 0 {
+				return true
+			}
+		}
+	}
+	return !seen
 }
 
 func (r pathRing) collapseColinearLines() pathRing {

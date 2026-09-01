@@ -456,23 +456,40 @@ func (s Simplify) Run() (formPick, error) {
 			}
 			return cand
 		}
+		propose := func(outer pathRing, holes []pathRing) {
+			if len(outer.verts) < 3 || ringCrosses(outer.points()) {
+				return
+			}
+			cand := paint(outer, holes)
+			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
+		}
 		outer := rings[0]
-		if len(outer.verts) >= 4 {
-			for v := 0; v < len(outer.verts); v++ {
-				shorter := outer.dropVertex(v)
-				if len(shorter.verts) < 3 || ringCrosses(shorter.points()) {
+		work := outer.collapseColinearLines()
+		if len(work.verts) < len(outer.verts) {
+			propose(work, rings[1:])
+		}
+		if len(work.verts) >= 4 {
+			n := len(work.verts)
+			for v := 0; v < n; v++ {
+				prev := (v - 1 + n) % n
+				next := (v + 1) % n
+				if !regionWorthTrying([][2]float64{work.verts[prev], work.verts[v], work.verts[next]}, w.gotP, w.wantP) {
 					continue
 				}
-				cand := paint(shorter, rings[1:])
-				jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
+				propose(work.dropVertex(v), rings[1:])
 			}
 		}
 		for h := 1; h < len(rings); h++ {
+			if !regionWorthTrying(rings[h].points(), w.gotP, w.wantP) {
+				continue
+			}
 			keep := append([]pathRing{}, rings[1:h]...)
 			keep = append(keep, rings[h+1:]...)
-			cand := paint(rings[0], keep)
-			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: g})
+			propose(rings[0], keep)
 		}
+	}
+	if len(jobs) == 0 {
+		return nonePick(), nil
 	}
 	var mu sync.Mutex
 	best := nonePick()
