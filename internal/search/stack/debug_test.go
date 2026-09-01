@@ -38,7 +38,7 @@ func TestDebugFramesMarksHottestIsland(t *testing.T) {
 	}
 }
 
-func TestDebugFramesUsesProvidedBlob(t *testing.T) {
+func TestDebugFramesMarksEveryDifference(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
@@ -57,21 +57,26 @@ func TestDebugFramesUsesProvidedBlob(t *testing.T) {
 			want.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
 		}
 	}
-	small := []pix{{1, 1}, {2, 1}, {1, 2}, {2, 2}}
-	_, isle := DebugFrames(got, want, small, nil)
+	_, isle := DebugFrames(got, want, nil, nil)
 	if c := isle.NRGBAAt(2, 2); c.R < 200 || c.G < 200 || c.B < 200 {
-		t.Fatalf("provided blob %+v want white mask", c)
+		t.Fatalf("red miss %+v want white", c)
 	}
-	if c := isle.NRGBAAt(12, 12); c.R > 80 || c.G > 80 || c.B > 80 {
-		t.Fatalf("hottest leftover marked %+v", c)
+	if c := isle.NRGBAAt(12, 12); c.R < 200 || c.G < 200 || c.B < 200 {
+		t.Fatalf("blue miss %+v want white", c)
+	}
+	if c := isle.NRGBAAt(0, 0); c.R > 40 || c.G > 40 || c.B > 40 {
+		t.Fatalf("match %+v want black", c)
 	}
 }
 
 func TestDebugFramesPaintsFittedTriangle(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
-	blob := []pix{{1, 1}, {2, 1}, {3, 1}, {1, 2}, {2, 2}, {3, 2}}
+	got := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for _, p := range []pix{{1, 1}, {2, 1}, {3, 1}, {1, 2}, {2, 2}, {3, 2}} {
+		want.SetNRGBA(p.x, p.y, color.NRGBA{B: 255, A: 255})
+	}
 	fitted := []pix{{2, 1}, {2, 2}}
-	_, isle := DebugFrames(nil, want, blob, fitted)
+	_, isle := DebugFrames(got, want, nil, fitted)
 	if c := isle.NRGBAAt(1, 1); c.R < 200 || c.G < 200 {
 		t.Fatalf("mask %+v want white", c)
 	}

@@ -19,8 +19,8 @@ type Epoch struct {
 	Scale    int
 	Operator Op
 	Elapsed  time.Duration
-	// Heat is ColorAt residual. Island is the leftover mask this
-	// step used (white) and the inscribed triangle (orange).
+	// Heat is ColorAt residual. Island is every differing pixel
+	// (white) and the inscribed triangle (orange).
 	// Nil when the adapter does not publish debug frames.
 	Heat   *image.NRGBA
 	Island *image.NRGBA
