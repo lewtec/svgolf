@@ -903,11 +903,24 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pick.scored {
-		t.Fatal("join scored=false want the losing Score")
+	if !pick.ok {
+		t.Fatal("join=false want the L as one path")
 	}
-	if pick.ok {
-		t.Fatal("join=true; hull of an L must lose")
+	s.apply(pick)
+	if s.paths != 1 {
+		t.Fatalf("paths=%d want 1", s.paths)
+	}
+}
+
+func TestRingsNearCloseVertices(t *testing.T) {
+	a := [][2]float64{{0, 0}, {8, 0}, {8, 8}, {0, 8}}
+	b := [][2]float64{{9, 0}, {16, 0}, {16, 8}, {9, 8}}
+	far := [][2]float64{{20, 20}, {24, 20}, {24, 24}, {20, 24}}
+	if !ringsNear(a, b) {
+		t.Fatal("1px gap")
+	}
+	if ringsNear(a, far) {
+		t.Fatal("far pair")
 	}
 }
 

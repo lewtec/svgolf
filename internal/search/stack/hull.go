@@ -235,6 +235,55 @@ func pointOnSeg(p, a, b [2]float64) bool {
 	return p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY
 }
 
+func minVertDist2(a, b [][2]float64) float64 {
+	best := -1.0
+	for _, p := range a {
+		for _, q := range b {
+			dx, dy := p[0]-q[0], p[1]-q[1]
+			d := dx*dx + dy*dy
+			if best < 0 || d < best {
+				best = d
+			}
+		}
+	}
+	return best
+}
+
+// ringsNear is overlap, or a vertex of one sits on/next to the other.
+func ringsNear(a, b [][2]float64) bool {
+	if ringsOverlap(a, b) {
+		return true
+	}
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	return minVertDist2(a, b) <= 2
+}
+
+func oneBlob(work []pix) bool {
+	if len(work) <= 1 {
+		return true
+	}
+	set := pixSet(work)
+	defer releaseBits(set)
+	seen := map[pix]bool{work[0]: true}
+	st := []pix{work[0]}
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for len(st) > 0 {
+		p := st[len(st)-1]
+		st = st[:len(st)-1]
+		for _, d := range dirs {
+			q := pix{p.x + d.x, p.y + d.y}
+			if !set.has(q) || seen[q] {
+				continue
+			}
+			seen[q] = true
+			st = append(st, q)
+		}
+	}
+	return len(seen) == len(work)
+}
+
 // ringsOverlap is true when two simple rings share area or an edge.
 func ringsOverlap(a, b [][2]float64) bool {
 	if len(a) < 3 || len(b) < 3 {

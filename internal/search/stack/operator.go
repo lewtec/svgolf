@@ -475,7 +475,9 @@ func (w *Wash) Run() (formPick, error) {
 	return best, nil
 }
 
-// Join unifies two overlapping same-family paths into one hull.
+// Join unifies two same-family paths that overlap or have
+// close vertices. A single blob keeps the union outline;
+// a gap uses the hull and Score decides.
 type Join struct {
 	world   *world
 	buckets [][]pix
@@ -494,22 +496,27 @@ func (j *Join) Run() (formPick, error) {
 	outers := pathOuters(s.doc, s.paths)
 	for i := 0; i < s.paths; i++ {
 		for jn := i + 1; jn < s.paths; jn++ {
-			if !ringsOverlap(outers[i], outers[jn]) {
-				continue
-			}
 			if !sameRampFamily(s.fills[i], s.fills[jn]) {
 				continue
 			}
-			pts := append([][2]float64{}, outers[i]...)
-			pts = append(pts, outers[jn]...)
-			ring := uncross(convexHull(pts))
-			if len(ring) < 3 {
+			if !ringsNear(outers[i], outers[jn]) {
 				continue
 			}
 			j.scratch.work = j.scratch.work[:0]
 			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
 			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
 			work := append([]pix{}, j.scratch.work...)
+			var ring [][2]float64
+			if oneBlob(work) {
+				ring = coverRing(work)
+			} else {
+				pts := append([][2]float64{}, outers[i]...)
+				pts = append(pts, outers[jn]...)
+				ring = uncross(convexHull(pts))
+			}
+			if len(ring) < 3 {
+				continue
+			}
 			fills := []color.NRGBA{s.fills[i], s.fills[jn]}
 			if fills[0] == fills[1] {
 				fills = fills[:1]
