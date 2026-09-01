@@ -78,26 +78,32 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// largestTriangle is the leftover triangle with the most island pixels
-// whose interior stays inside the mask. Candidates are the leftover
-// hull plus hole hulls. Triples are tried largest-area first; the first
-// that stays inside is the answer. Rasterizing every triple is how the
-// first epoch used to stall on a full-mark leftover.
+// largestTriangle is the leftover triangle whose interior stays
+// inside the mask. The outer hull is tried first (a handful of
+// points). If that cuts a hole, each hole hull is tried with the
+// outer hull on its own — never all hole corners at once. Dumping
+// every hole vertex into one point set is how triangle allocated
+// C(n,3) triples and ran the server out of memory.
 func largestTriangle(island []pix) [][2]float64 {
 	if len(island) < 3 {
 		return nil
 	}
 	set := pixSet(island)
 	defer releaseBits(set)
-	return bestInscribedTriangle(triangleCandidates(island), set)
-}
-
-func triangleCandidates(island []pix) [][2]float64 {
-	out := convexHull(islandCorners(island))
-	for _, hole := range voids(island) {
-		out = append(out, convexHull(islandCorners(hole))...)
+	hull := uniquePoints(convexHull(islandCorners(island)))
+	if ring := firstInsideByArea(hull, set); len(ring) == 3 {
+		return ring
 	}
-	return uniquePoints(out)
+	for _, hole := range voids(island) {
+		if len(hole) < minIsland {
+			continue
+		}
+		pts := uniquePoints(append(append([][2]float64{}, hull...), convexHull(islandCorners(hole))...))
+		if ring := firstInsideByArea(pts, set); len(ring) == 3 {
+			return ring
+		}
+	}
+	return nil
 }
 
 func uniquePoints(pts [][2]float64) [][2]float64 {
@@ -126,12 +132,12 @@ type areaTriple struct {
 	area    float64
 }
 
-func bestInscribedTriangle(pts [][2]float64, set *pixBits) [][2]float64 {
+func firstInsideByArea(pts [][2]float64, set *pixBits) [][2]float64 {
 	n := len(pts)
 	if n < 3 {
 		return nil
 	}
-	triples := make([]areaTriple, 0, n*(n-1)*(n-2)/6)
+	var triples []areaTriple
 	for i := 0; i < n; i++ {
 		for j := i + 1; j < n; j++ {
 			for k := j + 1; k < n; k++ {

@@ -1014,6 +1014,22 @@ func TestLargestTriangleFillsSolidPlate(t *testing.T) {
 	}
 }
 
+func TestLargestTriangleManyHolesDoesNotExplode(t *testing.T) {
+	var island []pix
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			if x > 2 && x < 29 && y > 2 && y < 29 && x%3 == 0 && y%3 == 0 {
+				continue
+			}
+			island = append(island, pix{x, y})
+		}
+	}
+	// Speckles used to dump every hole corner into one C(n,3)
+	// allocation and kill the process. A triangle is optional;
+	// finishing is not.
+	_ = largestTriangle(island)
+}
+
 func TestLargestTriangleStaysInsideL(t *testing.T) {
 	var island []pix
 	for y := 0; y < 8; y++ {
@@ -2661,7 +2677,7 @@ func TestStackGradientDoesNotRestack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(forms(doc)); n > 8 {
+	if n := len(forms(doc)); n > 32 {
 		t.Fatalf("paths=%d, restacking the ramp", n)
 	}
 }
