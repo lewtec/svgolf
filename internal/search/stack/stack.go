@@ -307,10 +307,10 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		}
 		s.candidateLog = candidateLog
 		started := time.Now()
-		emit := func(id Op, blob []pix, rated []search.Rated) bool {
+		emit := func(id Op, blob, fitted []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
-			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob)
+			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
 			ep.Rated = rated
 			started = time.Now()
 			return yield(ep, nil)
@@ -366,7 +366,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				s.load(archive[0])
 				yielded = true
 				markKept(rated, []formPick{{op: archive[0].operator}})
-				if !emit(archive[0].operator, islandOf(archive[0], pool), rated) {
+				blob, fitted := leftoverView(archive[0], pool)
+				if !emit(archive[0].operator, blob, fitted, rated) {
 					return
 				}
 				// A new plate just landed. Try wash/join before
@@ -389,7 +390,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			break
 		}
 		if !yielded {
-			emit(OpNone, nil, nil)
+			emit(OpNone, nil, nil, nil)
 		}
 	}
 }
@@ -489,13 +490,20 @@ func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]
 	return next, archiveChanged(archive, next)
 }
 
-func islandOf(best snapshot, pool []formPick) []pix {
+func leftoverView(best snapshot, pool []formPick) (blob, fitted []pix) {
 	for _, p := range pool {
 		if p.op == best.operator {
-			return p.island
+			blob = p.island
+			break
 		}
 	}
-	return nil
+	for _, p := range pool {
+		if p.op == OpTriangle && len(p.work) > 0 {
+			fitted = p.work
+			break
+		}
+	}
+	return blob, fitted
 }
 
 func markKept(rated []search.Rated, kept []formPick) {

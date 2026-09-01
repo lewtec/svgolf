@@ -89,7 +89,7 @@ templ JobPage(j JobView) {
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
 				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
 				@frameCard("HSV delta", "/jobs/" + j.ID + "/files/last-error.png")
-				@frameCard("hottest leftover", "/jobs/" + j.ID + "/files/last-island.png")
+				@frameCard("leftover mask", "/jobs/" + j.ID + "/files/last-island.png")
 			</div>
 			<div class="card bg-base-200">
 				<div class="card-body">
@@ -213,7 +213,7 @@ templ JobPage(j JobView) {
 				for (const [sel, name] of [
 					["got", "last.png"],
 					["HSV delta", "last-error.png"],
-					["hottest leftover", "last-island.png"],
+					["leftover mask", "last-island.png"],
 				]) {
 					const img = document.querySelector(`img[alt="${sel}"]`);
 					if (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;

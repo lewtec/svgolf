@@ -787,7 +787,7 @@ type Epoch struct {
     Operator Op            // absorb, triangle, ring, grow, carve, simplify, wash, join, subtract, delete, or none
     Elapsed  time.Duration // wall time of this step
     Heat     *image.NRGBA  // ColorAt residual; nil if unpublished
-    Island   *image.NRGBA  // leftover this step used; nil if unpublished
+    Island   *image.NRGBA  // leftover mask this step used (white) and inscribed triangle (orange); nil if unpublished
 }
 
 type Search interface {

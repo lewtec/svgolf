@@ -265,7 +265,7 @@ func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.N
 	}
 	heat, island := ep.Heat, ep.Island
 	if heat == nil || island == nil {
-		heat, island = stack.DebugFrames(got, want, nil)
+		heat, island = stack.DebugFrames(got, want, nil, nil)
 	}
 	if err := writePNG(filepath.Join(dir, pad+"-error.png"), heat); err != nil {
 		return nil, err

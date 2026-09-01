@@ -20,12 +20,15 @@ func TestDebugFramesMarksHottestIsland(t *testing.T) {
 			want.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
 		}
 	}
-	heat, island := DebugFrames(got, want, nil)
+	heat, island := DebugFrames(got, want, nil, nil)
 	if heat == nil || island == nil {
 		t.Fatal("nil frames")
 	}
-	if island.NRGBAAt(8, 8).R < 200 {
-		t.Fatalf("island pixel %+v want highlight", island.NRGBAAt(8, 8))
+	if c := island.NRGBAAt(8, 8); c.R < 200 || c.G < 200 || c.B < 200 {
+		t.Fatalf("island pixel %+v want white mask", c)
+	}
+	if c := island.NRGBAAt(0, 0); c.R > 40 || c.G > 40 || c.B > 40 {
+		t.Fatalf("outside mask %+v want black", c)
 	}
 	if heat.NRGBAAt(8, 8).R < 100 {
 		t.Fatalf("heat miss %+v", heat.NRGBAAt(8, 8))
@@ -55,11 +58,27 @@ func TestDebugFramesUsesProvidedBlob(t *testing.T) {
 		}
 	}
 	small := []pix{{1, 1}, {2, 1}, {1, 2}, {2, 2}}
-	_, isle := DebugFrames(got, want, small)
-	if isle.NRGBAAt(2, 2).R < 200 {
-		t.Fatal("provided blob not marked")
+	_, isle := DebugFrames(got, want, small, nil)
+	if c := isle.NRGBAAt(2, 2); c.R < 200 || c.G < 200 || c.B < 200 {
+		t.Fatalf("provided blob %+v want white mask", c)
 	}
-	if isle.NRGBAAt(12, 12).R > 80 {
-		t.Fatal("hottest() used instead of provided leftover")
+	if c := isle.NRGBAAt(12, 12); c.R > 80 || c.G > 80 || c.B > 80 {
+		t.Fatalf("hottest leftover marked %+v", c)
+	}
+}
+
+func TestDebugFramesPaintsFittedTriangle(t *testing.T) {
+	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	blob := []pix{{1, 1}, {2, 1}, {3, 1}, {1, 2}, {2, 2}, {3, 2}}
+	fitted := []pix{{2, 1}, {2, 2}}
+	_, isle := DebugFrames(nil, want, blob, fitted)
+	if c := isle.NRGBAAt(1, 1); c.R < 200 || c.G < 200 {
+		t.Fatalf("mask %+v want white", c)
+	}
+	if c := isle.NRGBAAt(2, 1); c.R < 200 || c.G > 120 {
+		t.Fatalf("fitted %+v want orange", c)
+	}
+	if c := isle.NRGBAAt(0, 0); c.R > 40 {
+		t.Fatalf("outside %+v want black", c)
 	}
 }
