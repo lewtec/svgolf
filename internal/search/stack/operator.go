@@ -22,6 +22,115 @@ type Operator interface {
 	Run() (formPick, error)
 }
 
+type Op int
+
+const (
+	OpAbsorb Op = iota
+	OpCover
+	OpRect
+	OpRing
+	OpGrow
+	OpCarve
+	OpSlide
+	OpBend
+	OpSimplify
+	OpHull
+	OpWash
+	OpJoin
+	OpSubtract
+	OpSwap
+	OpDelete
+	opCount
+)
+
+var operatorNames = [opCount]string{
+	OpAbsorb:   "absorb",
+	OpCover:    "cover",
+	OpRect:     "rect",
+	OpRing:     "ring",
+	OpGrow:     "grow",
+	OpCarve:    "carve",
+	OpSlide:    "slide",
+	OpBend:     "bend",
+	OpSimplify: "simplify",
+	OpHull:     "hull",
+	OpWash:     "wash",
+	OpJoin:     "join",
+	OpSubtract: "subtract",
+	OpSwap:     "swap",
+	OpDelete:   "delete",
+}
+
+func (id Op) String() string {
+	if id < 0 || id >= opCount {
+		return ""
+	}
+	return operatorNames[id]
+}
+
+type op struct {
+	id      Op
+	world   *world
+	left    leftover
+	buckets [][]pix
+	i, j    int
+}
+
+func (o op) Name() string { return o.id.String() }
+
+func (o op) impl() Operator {
+	switch o.id {
+	case OpAbsorb:
+		return &Absorb{world: o.world, left: o.left}
+	case OpCover:
+		return Cover{world: o.world, left: o.left}
+	case OpRect:
+		return Rect{world: o.world, left: o.left}
+	case OpRing:
+		return Ring{world: o.world, left: o.left}
+	case OpGrow:
+		return &Grow{world: o.world, left: o.left}
+	case OpCarve:
+		return &Carve{world: o.world, left: o.left}
+	case OpSlide:
+		return Slide{world: o.world, left: o.left}
+	case OpBend:
+		return Bend{world: o.world, left: o.left}
+	case OpSimplify:
+		return Simplify{world: o.world, buckets: o.buckets}
+	case OpHull:
+		return HullPath{world: o.world, buckets: o.buckets}
+	case OpWash:
+		return &Wash{world: o.world, buckets: o.buckets}
+	case OpJoin:
+		return &Join{world: o.world, buckets: o.buckets}
+	case OpSubtract:
+		return Subtract{world: o.world, buckets: o.buckets}
+	case OpSwap:
+		return Swap{world: o.world, i: o.i, j: o.j}
+	case OpDelete:
+		return Delete{world: o.world, i: o.i}
+	default:
+		return nil
+	}
+}
+
+func (o op) Applies() bool {
+	im := o.impl()
+	if im == nil {
+		return false
+	}
+	return im.Applies()
+}
+
+func (o op) Run() (formPick, error) {
+	im := o.impl()
+	if im == nil {
+		return nonePick(), nil
+	}
+	return im.Run()
+}
+
 // Cover places a rough leftover hull. Slide and Bend walk
 // the leftover outline later.
 type Cover struct {
@@ -893,14 +1002,14 @@ func (sw Swap) Run() (formPick, error) {
 
 func (s *world) leftoverOps(left leftover) []Operator {
 	return []Operator{
-		&Absorb{world: s, left: left},
-		Cover{world: s, left: left},
-		Rect{world: s, left: left},
-		Ring{world: s, left: left},
-		&Grow{world: s, left: left},
-		&Carve{world: s, left: left},
-		Slide{world: s, left: left},
-		Bend{world: s, left: left},
+		op{id: OpAbsorb, world: s, left: left},
+		op{id: OpCover, world: s, left: left},
+		op{id: OpRect, world: s, left: left},
+		op{id: OpRing, world: s, left: left},
+		op{id: OpGrow, world: s, left: left},
+		op{id: OpCarve, world: s, left: left},
+		op{id: OpSlide, world: s, left: left},
+		op{id: OpBend, world: s, left: left},
 	}
 }
 
@@ -910,19 +1019,19 @@ func (s *world) worldOps() []Operator {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	ops := []Operator{
-		// Simplify{world: s, buckets: buckets},
-		HullPath{world: s, buckets: buckets},
-		&Wash{world: s, buckets: buckets},
-		&Join{world: s, buckets: buckets},
-		Subtract{world: s, buckets: buckets},
+		// op{id: OpSimplify, world: s, buckets: buckets},
+		op{id: OpHull, world: s, buckets: buckets},
+		op{id: OpWash, world: s, buckets: buckets},
+		op{id: OpJoin, world: s, buckets: buckets},
+		op{id: OpSubtract, world: s, buckets: buckets},
 	}
 	for i := 0; i < s.paths; i++ {
 		for j := i + 1; j < s.paths; j++ {
-			ops = append(ops, Swap{world: s, i: i, j: j})
+			ops = append(ops, op{id: OpSwap, world: s, i: i, j: j})
 		}
 	}
 	for i := 0; i < s.paths; i++ {
-		ops = append(ops, Delete{world: s, i: i})
+		ops = append(ops, op{id: OpDelete, world: s, i: i})
 	}
 	return ops
 }
@@ -930,11 +1039,6 @@ func (s *world) worldOps() []Operator {
 type namedPick struct {
 	pick    formPick
 	elapsed time.Duration
-}
-
-var operatorNames = []string{
-	"absorb", "cover", "rect", "hull", "ring", "grow", "carve",
-	"slide", "bend", "simplify", "wash", "join", "subtract", "swap", "delete",
 }
 
 func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, world bool) ([]formPick, []search.Rated, error) {
