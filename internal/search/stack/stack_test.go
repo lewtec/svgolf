@@ -446,6 +446,56 @@ func TestHottestDilatesThinCoreIntoHalo(t *testing.T) {
 	}
 }
 
+func TestHasCoreRejectsThinStrip(t *testing.T) {
+	var line []pix
+	for y := 4; y < 7; y++ {
+		for x := 2; x < 18; x++ {
+			line = append(line, pix{x, y})
+		}
+	}
+	if !hasInterior(line) {
+		t.Fatal("3px strip should have interior")
+	}
+	if hasCore(line) {
+		t.Fatal("3px strip should not have a core")
+	}
+	var plate []pix
+	for y := 4; y < 12; y++ {
+		for x := 4; x < 12; x++ {
+			plate = append(plate, pix{x, y})
+		}
+	}
+	if !hasCore(plate) {
+		t.Fatal("8x8 plate should have a core")
+	}
+}
+
+func TestHottestPrefersPlateOverThinStrip(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	black := color.NRGBA{A: 255}
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 12; y++ {
+		for x := 4; x < 12; x++ {
+			want.SetNRGBA(x, y, black)
+		}
+	}
+	for y := 20; y < 23; y++ {
+		for x := 4; x < 28; x++ {
+			want.SetNRGBA(x, y, black)
+		}
+	}
+	_, island := (&world{got: got, want: want}).hottest()
+	if len(island) != 64 {
+		t.Fatalf("island=%d want the 8x8 plate, not the 3px strip", len(island))
+	}
+}
+
 func TestLeftoverHeatCloseTintIsHotWhenAlone(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
@@ -1923,8 +1973,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull") {
-		t.Fatalf("operators=%v want cover or hull first", ops)
+	if len(ops) == 0 || (ops[0] != "cover" && ops[0] != "hull" && ops[0] != "rect") {
+		t.Fatalf("operators=%v want cover, hull, or rect first", ops)
 	}
 	for ep, err := range (Stack{}).Search(t.Context(), img) {
 		if err != nil {

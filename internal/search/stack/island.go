@@ -294,25 +294,72 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	if maxH <= 0 {
 		return nil
 	}
+	var thin []leftoverBlob
 	for cut := 0.5; ; cut /= 2 {
 		s.stampHeat(heat, w, h, b, cut)
 		despeckle(s.scratch.mark, w, h)
-		for step := 0; ; step++ {
-			blobs := s.floodBlobs(w, h, gotP, wantP, k, true, minIsland)
-			if len(blobs) > 0 {
-				return blobs
+		if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
+			return cores
+		} else if len(rest) > 0 {
+			thin = rest
+		}
+		saved := append([]byte(nil), s.scratch.mark...)
+		if s.erodeMark(w, h) {
+			if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
+				return cores
+			} else if len(rest) > 0 {
+				thin = rest
 			}
-			s.unfloodMark()
+			copy(s.scratch.mark, saved)
+		}
+		for step := 0; ; step++ {
 			if step >= w+h || !s.dilateIntoHeat(heat, w, h) {
 				break
+			}
+			grown := append([]byte(nil), s.scratch.mark...)
+			if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
+				return cores
+			} else if len(rest) > 0 {
+				thin = rest
+			}
+			copy(s.scratch.mark, grown)
+			if s.erodeMark(w, h) {
+				if cores, rest := s.coresFromMark(w, h, gotP, wantP, k); len(cores) > 0 {
+					return cores
+				} else if len(rest) > 0 {
+					thin = rest
+				}
+				copy(s.scratch.mark, grown)
 			}
 		}
 		if cut < 1.0/64 {
 			break
 		}
 	}
+	if len(thin) > 0 {
+		return thin
+	}
 	s.stampHeat(heat, w, h, b, 0)
 	return s.floodBlobs(w, h, gotP, wantP, k, false, 1)
+}
+
+func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int) (cores, rest []leftoverBlob) {
+	blobs := s.floodBlobs(w, h, gotP, wantP, 0, true, minIsland)
+	s.unfloodMark()
+	for _, b := range blobs {
+		if hasCore(b.island) {
+			cores = append(cores, b)
+		} else {
+			rest = append(rest, b)
+		}
+	}
+	if k > 0 && len(cores) > k {
+		cores = cores[:k]
+	}
+	if k > 0 && len(rest) > k {
+		rest = rest[:k]
+	}
+	return cores, rest
 }
 
 func (s *world) stampHeat(heat []float64, w, h int, b image.Rectangle, cut float64) {
@@ -367,6 +414,43 @@ func (s *world) dilateIntoHeat(heat []float64, w, h int) bool {
 	if !grew {
 		return false
 	}
+	for i, v := range seen {
+		if v == 0 {
+			continue
+		}
+		seen[i] = 0
+		mark[i] = 1
+	}
+	return true
+}
+
+func (s *world) erodeMark(w, h int) bool {
+	mark, seen := s.scratch.mark, s.scratch.seen
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	kept := false
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mark[y*w+x] == 0 {
+				continue
+			}
+			ok := true
+			for _, d := range dirs {
+				nx, ny := x+d.x, y+d.y
+				if nx < 0 || ny < 0 || nx >= w || ny >= h || mark[ny*w+nx] == 0 {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				seen[y*w+x] = 1
+				kept = true
+			}
+		}
+	}
+	if !kept {
+		return false
+	}
+	clear(mark)
 	for i, v := range seen {
 		if v == 0 {
 			continue
@@ -434,10 +518,10 @@ func rankBlob(best []leftoverBlob, k int, b leftoverBlob, min int) []leftoverBlo
 			break
 		}
 	}
-	if pos == k {
+	if k > 0 && pos >= k {
 		return best
 	}
-	if len(best) < k {
+	if k <= 0 || len(best) < k {
 		best = append(best, leftoverBlob{})
 	}
 	copy(best[pos+1:], best[pos:])
@@ -460,6 +544,27 @@ func hasInterior(island []pix) bool {
 		}
 	}
 	return false
+}
+
+func erodeIsland(island []pix) []pix {
+	if len(island) == 0 {
+		return nil
+	}
+	set := pixSet(island)
+	defer releaseBits(set)
+	var out []pix
+	for _, p := range island {
+		if set.has(pix{p.x - 1, p.y}) && set.has(pix{p.x + 1, p.y}) && set.has(pix{p.x, p.y - 1}) && set.has(pix{p.x, p.y + 1}) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// hasCore is true when the leftover still has interior after one
+// erode. A 2–3px line has interior but is a rim; a plate survives.
+func hasCore(island []pix) bool {
+	return hasInterior(erodeIsland(island))
 }
 
 func despeckle(mark []byte, w, h int) {
