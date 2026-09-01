@@ -9,20 +9,12 @@ import (
 
 func filledFit(island []pix, ring [][2]float64, col color.NRGBA) svg.Path {
 	set := pixSet(island)
+	defer releaseBits(set)
 	ring = flowRing(set, ring)
 	return appendFit(svg.NewPath(), set, ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
 }
 
-// flowRing moves each vertex toward the neighbor midpoint when that fits the island better.
-func pixSet(island []pix) map[pix]bool {
-	m := make(map[pix]bool, len(island))
-	for _, p := range island {
-		m[p] = true
-	}
-	return m
-}
-
-func flowRing(set map[pix]bool, ring [][2]float64) [][2]float64 {
+func flowRing(set *pixBits, ring [][2]float64) [][2]float64 {
 	n := len(ring)
 	if n < 3 {
 		return ring
@@ -45,7 +37,7 @@ func flowRing(set map[pix]bool, ring [][2]float64) [][2]float64 {
 
 // appendFit walks the ring. At each vertex, keep two lines or an interpolating
 // cubic pair, whichever scores better on the island in that corner's bbox.
-func appendFit(p svg.Path, set map[pix]bool, ring [][2]float64) svg.Path {
+func appendFit(p svg.Path, set *pixBits, ring [][2]float64) svg.Path {
 	n := len(ring)
 	if n < 3 {
 		return p
@@ -78,7 +70,7 @@ func crTo(p0, p1, p2, p3 [2]float64) (c1, c2 [2]float64) {
 		[2]float64{p2[0] - (p3[0]-p1[0])/6, p2[1] - (p3[1]-p1[1])/6}
 }
 
-func edgeScore(set map[pix]bool, a, b, c [2]float64, curve bool) float64 {
+func edgeScore(set *pixBits, a, b, c [2]float64, curve bool) float64 {
 	var pts [][2]float64
 	if curve {
 		c1, c2 := crTo(a, a, b, c)
@@ -100,20 +92,20 @@ func edgeScore(set map[pix]bool, a, b, c [2]float64, curve bool) float64 {
 	return e
 }
 
-func edgeErr(set map[pix]bool, q [2]float64) float64 {
+func edgeErr(set *pixBits, q [2]float64) float64 {
 	ix, iy := int(math.Floor(q[0])), int(math.Floor(q[1]))
 	p := pix{ix, iy}
 	n4 := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
-	if !set[p] {
+	if !set.has(p) {
 		for _, d := range n4 {
-			if set[pix{ix + d.x, iy + d.y}] {
+			if set.has(pix{ix + d.x, iy + d.y}) {
 				return 0.5
 			}
 		}
 		return 2
 	}
 	for _, d := range n4 {
-		if !set[pix{ix + d.x, iy + d.y}] {
+		if !set.has(pix{ix + d.x, iy + d.y}) {
 			return 0
 		}
 	}

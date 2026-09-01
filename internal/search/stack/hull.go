@@ -15,19 +15,20 @@ func islandPoints(island []pix) [][2]float64 {
 
 func islandCorners(island []pix) [][2]float64 {
 	set := pixSet(island)
+	defer releaseBits(set)
 	pts := make([][2]float64, 0, 16)
 	for _, p := range island {
 		fx, fy := float64(p.x), float64(p.y)
-		if !set[pix{p.x - 1, p.y}] || !set[pix{p.x, p.y - 1}] {
+		if !set.has(pix{p.x - 1, p.y}) || !set.has(pix{p.x, p.y - 1}) {
 			pts = append(pts, [2]float64{fx, fy})
 		}
-		if !set[pix{p.x + 1, p.y}] || !set[pix{p.x, p.y - 1}] {
+		if !set.has(pix{p.x + 1, p.y}) || !set.has(pix{p.x, p.y - 1}) {
 			pts = append(pts, [2]float64{fx + 1, fy})
 		}
-		if !set[pix{p.x + 1, p.y}] || !set[pix{p.x, p.y + 1}] {
+		if !set.has(pix{p.x + 1, p.y}) || !set.has(pix{p.x, p.y + 1}) {
 			pts = append(pts, [2]float64{fx + 1, fy + 1})
 		}
-		if !set[pix{p.x - 1, p.y}] || !set[pix{p.x, p.y + 1}] {
+		if !set.has(pix{p.x - 1, p.y}) || !set.has(pix{p.x, p.y + 1}) {
 			pts = append(pts, [2]float64{fx, fy + 1})
 		}
 	}
@@ -346,19 +347,19 @@ func ringSubtract(keep, cut [][2]float64, bounds image.Rectangle) []pix {
 
 func leftoverIsHole(owned, leftover []pix) bool {
 	drop := pixSet(leftover)
+	defer releaseBits(drop)
 	var rem []pix
 	for _, p := range owned {
-		if !drop[p] {
+		if !drop.has(p) {
 			rem = append(rem, p)
 		}
 	}
 	if len(rem) == 0 {
 		return false
 	}
-	want := pixSet(leftover)
 	for _, h := range voids(rem) {
 		for _, p := range h {
-			if want[p] {
+			if drop.has(p) {
 				return true
 			}
 		}

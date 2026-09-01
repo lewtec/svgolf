@@ -3,11 +3,87 @@ package stack
 import (
 	"image"
 	"image/color"
+	"runtime"
+	"sync"
 
 	"github.com/lewtec/svgolf/internal/loss"
 )
 
 type pix struct{ x, y int }
+
+// pixBits is an island membership mask. Same answers as a map[pix]bool.
+type pixBits struct {
+	minX, minY, w, h int
+	bits             []uint64
+}
+
+var (
+	emptyBits = &pixBits{}
+	bitsOnce  sync.Once
+	bitsPool  chan *pixBits
+)
+
+func initBits() {
+	bitsOnce.Do(func() {
+		n := runtime.GOMAXPROCS(0)
+		if n < 1 {
+			n = 1
+		}
+		bitsPool = make(chan *pixBits, n)
+		for i := 0; i < n; i++ {
+			bitsPool <- &pixBits{}
+		}
+	})
+}
+
+func pixSet(island []pix) *pixBits {
+	if len(island) == 0 {
+		return emptyBits
+	}
+	initBits()
+	b := <-bitsPool
+	b.load(island)
+	return b
+}
+
+func releaseBits(b *pixBits) {
+	if b == nil || b == emptyBits {
+		return
+	}
+	b.minX, b.minY, b.w, b.h = 0, 0, 0, 0
+	b.bits = b.bits[:0]
+	bitsPool <- b
+}
+
+func (b *pixBits) load(island []pix) {
+	r := islandRect(island)
+	w, h := r.Dx(), r.Dy()
+	n := (w*h + 63) / 64
+	if cap(b.bits) < n {
+		b.bits = make([]uint64, n)
+	} else {
+		b.bits = b.bits[:n]
+		clear(b.bits)
+	}
+	b.minX, b.minY, b.w, b.h = r.Min.X, r.Min.Y, w, h
+	for _, p := range island {
+		x, y := p.x-b.minX, p.y-b.minY
+		i := y*w + x
+		b.bits[i>>6] |= 1 << uint(i&63)
+	}
+}
+
+func (b *pixBits) has(p pix) bool {
+	if b == nil {
+		return false
+	}
+	x, y := p.x-b.minX, p.y-b.minY
+	if uint(x) >= uint(b.w) || uint(y) >= uint(b.h) {
+		return false
+	}
+	i := y*b.w + x
+	return b.bits[i>>6]&(1<<uint(i&63)) != 0
+}
 
 func coarse(c color.NRGBA) int {
 	if c.A == 0 {
@@ -219,18 +295,27 @@ func (s *world) hottestN(k int) []leftoverBlob {
 		return nil
 	}
 	for cut := 0.5; ; cut /= 2 {
-		blobs := s.collectBlobs(heat, w, h, b, gotP, wantP, k, cut, true, minIsland)
-		if len(blobs) > 0 {
-			return blobs
+		s.stampHeat(heat, w, h, b, cut)
+		despeckle(s.scratch.mark, w, h)
+		for step := 0; ; step++ {
+			blobs := s.floodBlobs(w, h, gotP, wantP, k, true, minIsland)
+			if len(blobs) > 0 {
+				return blobs
+			}
+			s.unfloodMark()
+			if step >= w+h || !s.dilateIntoHeat(heat, w, h) {
+				break
+			}
 		}
 		if cut < 1.0/64 {
 			break
 		}
 	}
-	return s.collectBlobs(heat, w, h, b, gotP, wantP, k, 0, false, 1)
+	s.stampHeat(heat, w, h, b, 0)
+	return s.floodBlobs(w, h, gotP, wantP, k, false, 1)
 }
 
-func (s *world) collectBlobs(heat []float64, w, h int, b image.Rectangle, gotP, wantP *loss.Plane, k int, cut float64, interior bool, min int) []leftoverBlob {
+func (s *world) stampHeat(heat []float64, w, h int, b image.Rectangle, cut float64) {
 	want := s.want
 	mark, family := s.scratch.mark, s.scratch.family
 	clear(mark)
@@ -243,9 +328,58 @@ func (s *world) collectBlobs(heat []float64, w, h int, b image.Rectangle, gotP, 
 			family[y*w+x] = coarse(want.NRGBAAt(b.Min.X+x, b.Min.Y+y))
 		}
 	}
-	if interior {
-		despeckle(mark, w, h)
+}
+
+func (s *world) unfloodMark() {
+	for i, v := range s.scratch.mark {
+		if v == 2 {
+			s.scratch.mark[i] = 1
+		}
 	}
+}
+
+// dilateIntoHeat grows the mask into residual heat (AA halo),
+// not into a full match.
+func (s *world) dilateIntoHeat(heat []float64, w, h int) bool {
+	mark, seen, family := s.scratch.mark, s.scratch.seen, s.scratch.family
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	grew := false
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if mark[y*w+x] == 0 {
+				continue
+			}
+			for _, d := range dirs {
+				nx, ny := x+d.x, y+d.y
+				if nx < 0 || ny < 0 || nx >= w || ny >= h {
+					continue
+				}
+				i := ny*w + nx
+				if mark[i] != 0 || seen[i] != 0 || heat[i] <= 0 {
+					continue
+				}
+				seen[i] = 1
+				family[i] = family[y*w+x]
+				grew = true
+			}
+		}
+	}
+	if !grew {
+		return false
+	}
+	for i, v := range seen {
+		if v == 0 {
+			continue
+		}
+		seen[i] = 0
+		mark[i] = 1
+	}
+	return true
+}
+
+func (s *world) floodBlobs(w, h int, gotP, wantP *loss.Plane, k int, interior bool, min int) []leftoverBlob {
+	want := s.want
+	mark, family := s.scratch.mark, s.scratch.family
 	best := make([]leftoverBlob, 0, k)
 	var cur []pix
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
@@ -319,8 +453,9 @@ func hasInterior(island []pix) bool {
 		return false
 	}
 	set := pixSet(island)
+	defer releaseBits(set)
 	for _, p := range island {
-		if set[pix{p.x - 1, p.y}] && set[pix{p.x + 1, p.y}] && set[pix{p.x, p.y - 1}] && set[pix{p.x, p.y + 1}] {
+		if set.has(pix{p.x - 1, p.y}) && set.has(pix{p.x + 1, p.y}) && set.has(pix{p.x, p.y - 1}) && set.has(pix{p.x, p.y + 1}) {
 			return true
 		}
 	}

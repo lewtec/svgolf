@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"math"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -326,6 +327,29 @@ func TestHasInteriorRejectsOnePixelRim(t *testing.T) {
 	}
 }
 
+func TestPixSetPoolDoesNotDeadlock(t *testing.T) {
+	var plate []pix
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			plate = append(plate, pix{x, y})
+		}
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !hasInterior(plate) {
+				t.Error("plate")
+			}
+			if len(islandCorners(plate)) < 4 {
+				t.Error("corners")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestHottestSkipsRimForAreaStrip(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
@@ -397,6 +421,28 @@ func TestHottestFullMatchIsEmpty(t *testing.T) {
 	_, island := (&world{got: img, want: img}).hottest()
 	if island != nil {
 		t.Fatalf("full match leftover=%d", len(island))
+	}
+}
+
+func TestHottestDilatesThinCoreIntoHalo(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	black := color.NRGBA{A: 255}
+	halo := color.NRGBA{R: 220, G: 220, B: 220, A: 255}
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for x := 4; x < 13; x++ {
+		want.SetNRGBA(x, 8, black)
+		want.SetNRGBA(x, 7, halo)
+		want.SetNRGBA(x, 9, halo)
+	}
+	_, island := (&world{got: got, want: want}).hottest()
+	if !hasInterior(island) || len(island) <= 9 {
+		t.Fatalf("island=%d want the 1px line dilated into its halo", len(island))
 	}
 }
 

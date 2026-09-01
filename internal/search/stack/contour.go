@@ -6,10 +6,10 @@ func contour(island []pix) [][2]float64 {
 	if len(island) == 0 {
 		return nil
 	}
-	in := make(map[pix]bool, len(island))
+	in := pixSet(island)
+	defer releaseBits(in)
 	start := island[0]
 	for _, p := range island {
-		in[p] = true
 		if p.y < start.y || (p.y == start.y && p.x < start.x) {
 			start = p
 		}
@@ -24,7 +24,7 @@ func contour(island []pix) [][2]float64 {
 		for k := 1; k <= 8; k++ {
 			d := (come + k) % 8
 			q := pix{cur.x + n8[d].x, cur.y + n8[d].y}
-			if in[q] {
+			if in.has(q) {
 				found = d
 				nxt = q
 				break
@@ -56,19 +56,20 @@ func outline(island []pix) [][2]float64 {
 		return nil
 	}
 	set := pixSet(island)
+	defer releaseBits(set)
 	type vert struct{ x, y int }
 	next := make(map[vert]vert, len(island)*2)
 	for _, p := range island {
-		if !set[pix{p.x, p.y - 1}] {
+		if !set.has(pix{p.x, p.y - 1}) {
 			next[vert{p.x, p.y}] = vert{p.x + 1, p.y}
 		}
-		if !set[pix{p.x + 1, p.y}] {
+		if !set.has(pix{p.x + 1, p.y}) {
 			next[vert{p.x + 1, p.y}] = vert{p.x + 1, p.y + 1}
 		}
-		if !set[pix{p.x, p.y + 1}] {
+		if !set.has(pix{p.x, p.y + 1}) {
 			next[vert{p.x + 1, p.y + 1}] = vert{p.x, p.y + 1}
 		}
-		if !set[pix{p.x - 1, p.y}] {
+		if !set.has(pix{p.x - 1, p.y}) {
 			next[vert{p.x, p.y + 1}] = vert{p.x, p.y}
 		}
 	}
