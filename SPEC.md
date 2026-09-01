@@ -784,7 +784,7 @@ package search
 type Epoch struct {
     Document svg.Document
     Scale    int           // 1 = native
-    Operator string        // absorb, triangle, ring, grow, carve, simplify, wash, join, drop, or empty
+    Operator Op            // absorb, triangle, ring, grow, carve, simplify, wash, join, subtract, delete, or none
     Elapsed  time.Duration // wall time of this step
     Heat     *image.NRGBA  // ColorAt residual; nil if unpublished
     Island   *image.NRGBA  // leftover this step used; nil if unpublished

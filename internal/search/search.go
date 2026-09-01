@@ -12,12 +12,12 @@ import (
 
 // Epoch is one Search yield: the Document, the adapter's working scale,
 // the operator that produced it, and how long that step took.
-// Scale is 1 at native size. Operator is absorb, triangle, grow,
-// carve, simplify, wash, join, subtract, drop, or empty.
+// Scale is 1 at native size. Operator is the adapter Op that produced
+// this document, or OpNone.
 type Epoch struct {
 	Document svg.Document
 	Scale    int
-	Operator string
+	Operator Op
 	Elapsed  time.Duration
 	// Heat is ColorAt residual. Island is the leftover this step used.
 	// Nil when the adapter does not publish debug frames.

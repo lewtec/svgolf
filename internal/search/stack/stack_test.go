@@ -180,7 +180,7 @@ func TestDrySearchStopsOnFullMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 		n++
-		if ep.Operator != OpNone.String() {
+		if ep.Operator != OpNone {
 			t.Fatalf("operator=%q want empty on a full match", ep.Operator)
 		}
 	}
@@ -880,7 +880,7 @@ func TestStackGapGetsTriangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpTriangle.String() && ep.Operator != OpRing.String() {
+		if ep.Operator != OpTriangle && ep.Operator != OpRing {
 			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
 		}
 		p, ok := fk[0].Path()
@@ -2132,7 +2132,7 @@ func TestStackEpochOperator(t *testing.T) {
 		if len(forms(ep.Document)) == 0 {
 			continue
 		}
-		ops = append(ops, ep.Operator)
+		ops = append(ops, ep.Operator.String())
 	}
 	if len(ops) == 0 || (ops[0] != OpTriangle.String() && ops[0] != OpRing.String()) {
 		t.Fatalf("operators=%v want triangle or ring first", ops)
@@ -2168,7 +2168,7 @@ func TestStackExpandHasNoLinear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator != OpTriangle.String() {
+		if ep.Operator != OpTriangle {
 			continue
 		}
 		fk := forms(ep.Document)
@@ -2749,7 +2749,7 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpTriangle.String() && ep.Operator != OpRing.String() {
+		if ep.Operator != OpTriangle && ep.Operator != OpRing {
 			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
 		}
 		p, ok := fk[0].Path()

@@ -22,49 +22,25 @@ type Operator interface {
 	Run() (formPick, error)
 }
 
-type Op int
+type Op = search.Op
 
 const (
-	OpNone Op = iota
-	OpAbsorb
-	OpTriangle
-	OpRing
-	OpGrow
-	OpCarve
-	OpSlide
-	OpBend
-	OpSimplify
-	OpWash
-	OpJoin
-	OpSubtract
-	OpSwap
-	OpDelete
-	opCount
+	OpNone     = search.OpNone
+	OpAbsorb   = search.OpAbsorb
+	OpTriangle = search.OpTriangle
+	OpRing     = search.OpRing
+	OpGrow     = search.OpGrow
+	OpCarve    = search.OpCarve
+	OpSlide    = search.OpSlide
+	OpBend     = search.OpBend
+	OpSimplify = search.OpSimplify
+	OpWash     = search.OpWash
+	OpJoin     = search.OpJoin
+	OpSubtract = search.OpSubtract
+	OpSwap     = search.OpSwap
+	OpDelete   = search.OpDelete
+	opCount    = search.OpCount
 )
-
-var operatorNames = [opCount]string{
-	OpNone:     "",
-	OpAbsorb:   "absorb",
-	OpTriangle: "triangle",
-	OpRing:     "ring",
-	OpGrow:     "grow",
-	OpCarve:    "carve",
-	OpSlide:    "slide",
-	OpBend:     "bend",
-	OpSimplify: "simplify",
-	OpWash:     "wash",
-	OpJoin:     "join",
-	OpSubtract: "subtract",
-	OpSwap:     "swap",
-	OpDelete:   "delete",
-}
-
-func (id Op) String() string {
-	if id < 0 || id >= opCount {
-		return ""
-	}
-	return operatorNames[id]
-}
 
 type op struct {
 	id      Op

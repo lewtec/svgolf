@@ -388,7 +388,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 }
 
 func epochOf(doc svg.Document, id Op) search.Epoch {
-	return search.Epoch{Document: doc, Scale: 1, Operator: id.String()}
+	return search.Epoch{Document: doc, Scale: 1, Operator: id}
 }
 
 func (left leftover) big() bool {

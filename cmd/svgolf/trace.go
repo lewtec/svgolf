@@ -49,7 +49,7 @@ func (t *Trace) Record(ep search.Epoch) error {
 		if err != nil {
 			return err
 		}
-		op := ep.Operator
+		op := ep.Operator.String()
 		if op == "" {
 			op = "-"
 		}

@@ -225,7 +225,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 			Status:       "running",
 			Search:       s.algo,
 			Epochs:       n,
-			Operator:     ep.Operator,
+			Operator:     ep.Operator.String(),
 			Score:        sc,
 			Scores:       scores,
 			Rounds:       rounds,
