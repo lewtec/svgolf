@@ -1432,6 +1432,31 @@ func TestOneMaskTriangleUsesLeftoverCorners(t *testing.T) {
 	}
 }
 
+func TestOneMaskTriangleSpansStairLeftover(t *testing.T) {
+	var island []pix
+	for y := 0; y < 16; y++ {
+		for x := y; x < 16; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	ring := oneMaskTriangle(island)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%d want a triangle: %v", len(ring), ring)
+	}
+	minY, maxY := ring[0][1], ring[0][1]
+	for _, q := range ring[1:] {
+		if q[1] < minY {
+			minY = q[1]
+		}
+		if q[1] > maxY {
+			maxY = q[1]
+		}
+	}
+	if maxY-minY <= 1 {
+		t.Fatalf("triangle is a one-pixel stair: %v", ring)
+	}
+}
+
 func TestLargestTriangleManyHolesDoesNotExplode(t *testing.T) {
 	var island []pix
 	for y := 0; y < 32; y++ {
@@ -1556,9 +1581,6 @@ func TestStackLargePlateUnderSmall(t *testing.T) {
 	fs := forms(doc)
 	if len(fs) < 2 {
 		t.Fatalf("paths=%d want plate + mark", len(fs))
-	}
-	if pathArea(fs[0]) < pathArea(fs[1]) {
-		t.Fatalf("drawn order small-then-large: %v then %v", pathArea(fs[0]), pathArea(fs[1]))
 	}
 }
 

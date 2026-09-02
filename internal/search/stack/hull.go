@@ -78,14 +78,31 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// oneMaskTriangle is one leftover ear: three consecutive
-// outline corners. Later epochs place the rest. Join welds them.
+// oneMaskTriangle is three leftover outline corners spaced
+// around the ring. Consecutive stairs are a one-pixel sliver.
 func oneMaskTriangle(island []pix) [][2]float64 {
 	ring := coverRing(island)
-	if len(ring) < 3 {
+	n := len(ring)
+	if n < 3 {
 		return nil
 	}
-	return [][2]float64{ring[0], ring[1], ring[2]}
+	if n == 3 {
+		return ring
+	}
+	step := n / 3
+	if step < 1 {
+		step = 1
+	}
+	for off := 0; off < n; off++ {
+		a := ring[off]
+		b := ring[(off+step)%n]
+		c := ring[(off+2*step)%n]
+		if triangleArea2(a, b, c) == 0 {
+			continue
+		}
+		return uncross([][2]float64{a, b, c})
+	}
+	return nil
 }
 
 func largestTriangle(island []pix) [][2]float64 {
