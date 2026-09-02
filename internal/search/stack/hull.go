@@ -2,6 +2,7 @@ package stack
 
 import (
 	"image"
+	"math/rand/v2"
 	"sort"
 )
 
@@ -78,106 +79,33 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// largestTriangle proposes one leftover triangle: three mask
-// points whose filled triangle stays in the leftover. Epochs
-// pick among proposals; this does not search for a maximum.
-func largestTriangle(island []pix) [][2]float64 {
-	if len(island) < 3 {
-		return nil
-	}
-	set := pixSet(island)
-	defer releaseBits(set)
-	if ring := threeMaskPoints(set, extremaPoints(island)); len(ring) == 3 {
-		return ring
-	}
-	hull := uniquePoints(convexHull(islandPoints(island)))
-	if ring := threeMaskPoints(set, hull); len(ring) == 3 {
-		return ring
-	}
-	if ring := threeMaskPoints(set, leftoverSamples(island)); len(ring) == 3 {
-		return ring
-	}
-	return nil
-}
-
-func leftoverSamples(island []pix) [][2]float64 {
+// oneMaskTriangle is one leftover add: three leftover pixels.
+// Score ranks it. This does not search, grow, or fit.
+func oneMaskTriangle(island []pix) [][2]float64 {
 	n := len(island)
 	if n < 3 {
 		return nil
 	}
-	step := n / 12
-	if step < 1 {
-		step = 1
+	i := rand.IntN(n)
+	j := rand.IntN(n)
+	for j == i {
+		j = rand.IntN(n)
 	}
-	out := make([][2]float64, 0, 13)
-	seen := map[pix]bool{}
-	for i := 0; i < n; i += step {
-		p := island[i]
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		out = append(out, [2]float64{float64(p.x) + 0.5, float64(p.y) + 0.5})
+	k := rand.IntN(n)
+	for k == i || k == j {
+		k = rand.IntN(n)
 	}
-	return out
-}
-
-func extremaPoints(island []pix) [][2]float64 {
-	if len(island) == 0 {
+	a := [2]float64{float64(island[i].x) + 0.5, float64(island[i].y) + 0.5}
+	b := [2]float64{float64(island[j].x) + 0.5, float64(island[j].y) + 0.5}
+	c := [2]float64{float64(island[k].x) + 0.5, float64(island[k].y) + 0.5}
+	if triangleArea2(a, b, c) == 0 {
 		return nil
 	}
-	left, right, top, bot := island[0], island[0], island[0], island[0]
-	for _, p := range island[1:] {
-		if p.x < left.x || (p.x == left.x && p.y < left.y) {
-			left = p
-		}
-		if p.x > right.x || (p.x == right.x && p.y > right.y) {
-			right = p
-		}
-		if p.y < top.y || (p.y == top.y && p.x < top.x) {
-			top = p
-		}
-		if p.y > bot.y || (p.y == bot.y && p.x > bot.x) {
-			bot = p
-		}
-	}
-	return [][2]float64{
-		{float64(left.x) + 0.5, float64(left.y) + 0.5},
-		{float64(right.x) + 0.5, float64(right.y) + 0.5},
-		{float64(top.x) + 0.5, float64(top.y) + 0.5},
-		{float64(bot.x) + 0.5, float64(bot.y) + 0.5},
-	}
+	return uncross([][2]float64{a, b, c})
 }
 
-func threeMaskPoints(set *pixBits, pts [][2]float64) [][2]float64 {
-	n := len(pts)
-	if n < 3 {
-		return nil
-	}
-	accept := func(a, b, c [2]float64) [][2]float64 {
-		if triangleArea2(a, b, c) == 0 {
-			return nil
-		}
-		if triangleInsideCount(set, a, b, c) < minIsland {
-			return nil
-		}
-		return uncross([][2]float64{a, b, c})
-	}
-	for i := 0; i < n; i++ {
-		if ring := accept(pts[i], pts[(i+n/3)%n], pts[(i+2*n/3)%n]); len(ring) == 3 {
-			return ring
-		}
-	}
-	for i := 0; i < n; i++ {
-		for j := i + 1; j < n; j++ {
-			for k := j + 1; k < n; k++ {
-				if ring := accept(pts[i], pts[j], pts[k]); len(ring) == 3 {
-					return ring
-				}
-			}
-		}
-	}
-	return nil
+func largestTriangle(island []pix) [][2]float64 {
+	return oneMaskTriangle(island)
 }
 
 func uniquePoints(pts [][2]float64) [][2]float64 {

@@ -100,7 +100,7 @@ func (o op) Run() (formPick, error) {
 	return im.Run()
 }
 
-// Triangle places the biggest leftover triangle that stays inside the mask.
+// Triangle adds three leftover pixels as a path. Score ranks it.
 type Triangle struct {
 	world *world
 	left  leftover
@@ -113,24 +113,14 @@ func (tr Triangle) Applies() bool {
 
 func (tr Triangle) Run() (formPick, error) {
 	s, g := tr.world, tr.left.fresh
-	if len(g.work) < minIsland {
+	if len(g.work) < 3 {
 		return nonePick(), nil
 	}
-	ring := largestTriangle(g.work)
+	ring := oneMaskTriangle(g.work)
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
 	work := trianglePix(ring)
-	if len(work) < minIsland {
-		return nonePick(), nil
-	}
-	in := pixSet(g.work)
-	defer releaseBits(in)
-	for _, p := range work {
-		if !in.has(p) {
-			return nonePick(), nil
-		}
-	}
 	g.work = work
 	g.ring = ring
 	g.fill = modeFill(s.want, work)
@@ -903,12 +893,9 @@ func leftoverAddOperators(s *world, left leftover) []Operator {
 
 func (s *world) leftoverOperators(left leftover, band int) []Operator {
 	var add []Operator
-	if !left.region && hasInterior(left.island) {
+	if !left.region && left.big() {
 		add = leftoverAddOperators(s, left)
 	}
-	// Below the full-miss band, leftover is a refine hypothesis
-	// plus an inscribed triangle when the mask has interior.
-	// Grow on a rim leftover traces raster rounding.
 	if left.deltaHi > 0 && left.deltaLo < 64 {
 		if left.deltaHi <= 16 {
 			switch band {
