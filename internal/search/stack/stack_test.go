@@ -1027,6 +1027,35 @@ func TestLeftoverDeltaBandSelectsMildStrip(t *testing.T) {
 	}
 }
 
+func TestStackMildStripGetsTriangle(t *testing.T) {
+	light, dark, delta := mildCyanStrip()
+	if delta <= 0 {
+		t.Fatal("no mild pair")
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 16))
+	for y := 0; y < 16; y++ {
+		c := light
+		if y >= 8 {
+			c = dark
+		}
+		for x := 0; x < 24; x++ {
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	triangles := 0
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ep.Operator == OpTriangle {
+			triangles++
+		}
+	}
+	if triangles < 2 {
+		t.Fatalf("triangles=%d want leftover ears on the mild strip too", triangles)
+	}
+}
+
 func TestHottestGlowsColorFromRim(t *testing.T) {
 	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
 	got := image.NewNRGBA(image.Rect(0, 0, 20, 20))
@@ -1259,8 +1288,8 @@ func TestOneMaskTriangleUsesLeftoverCorners(t *testing.T) {
 		}
 	}
 	ring := oneMaskTriangle(island)
-	if len(ring) != 4 {
-		t.Fatalf("ring=%d want the four leftover corners: %v", len(ring), ring)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%d want one leftover ear: %v", len(ring), ring)
 	}
 	want := map[[2]float64]bool{
 		{3, 2}:   true,
@@ -1324,8 +1353,8 @@ func TestTrianglePlacesInscribedPlate(t *testing.T) {
 			n++
 		}
 	}
-	if n != 4 {
-		t.Fatalf("cmds=%d want the leftover rectangle", n)
+	if n != 3 {
+		t.Fatalf("cmds=%d want one leftover ear", n)
 	}
 }
 
@@ -2871,8 +2900,8 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 				n++
 			}
 		}
-		if n != 4 {
-			t.Fatalf("first form points=%d want the leftover rectangle", n)
+		if n != 3 {
+			t.Fatalf("first form points=%d want one leftover ear", n)
 		}
 		return
 	}

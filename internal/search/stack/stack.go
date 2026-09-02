@@ -387,8 +387,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if !emit(archive[0].operator, blob, fitted, rated) {
 					return
 				}
-				// A new plate just landed. Try wash/join before
-				// another leftover add, or a ramp stacks flats forever.
+				// After a leftover add, score wash/join against
+				// the next ear in the same neighborhood.
 				if leftoverAdd(archive[0].operator) {
 					band = 2
 				} else {
@@ -522,12 +522,6 @@ func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]
 	var cands []snapshot
 	for _, p := range pool {
 		if !p.ok || !p.scored {
-			continue
-		}
-		// Score leftover add every leftover band. Skip accept on
-		// the wash band so a ramp can land a linear instead of
-		// stacking another flat.
-		if leftoverAdd(p.op) && band == 2 {
 			continue
 		}
 		s.load(p.parent)

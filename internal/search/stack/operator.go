@@ -103,7 +103,7 @@ func (o op) Run() (formPick, error) {
 	return im.Run()
 }
 
-// Triangle places the leftover outline.
+// Triangle places one leftover ear.
 type Triangle struct {
 	world *world
 	left  leftover
@@ -119,7 +119,7 @@ func (tr Triangle) Run() (formPick, error) {
 	if len(g.work) < 3 {
 		return nonePick(), nil
 	}
-	ring := coverRing(g.work)
+	ring := oneMaskTriangle(g.work)
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
