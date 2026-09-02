@@ -124,8 +124,12 @@ func (tr Triangle) Run() (formPick, error) {
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
-	g.ring = ring
 	g.fill = modeFill(s.want, g.work)
+	g.work = trianglePix(ring)
+	if len(g.work) == 0 {
+		return nonePick(), nil
+	}
+	g.ring = ring
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
 }
@@ -159,6 +163,7 @@ func (r Ring) Run() (formPick, error) {
 }
 
 // Absorb paints leftover into a touching path as a 2-stop linear.
+// Not scheduled: leftover is another ear or Wash.
 type Absorb struct {
 	world   *world
 	left    leftover
@@ -531,52 +536,48 @@ func (j Join) Applies() bool {
 
 func (j *Join) Run() (formPick, error) {
 	s := j.world
-	best := nonePick()
-	outers := pathOuters(s.doc, s.paths)
-	for i := 0; i < s.paths; i++ {
-		for jn := i + 1; jn < s.paths; jn++ {
-			if !sameRampFamily(s.fills[i], s.fills[jn]) {
-				continue
-			}
-			j.scratch.work = j.scratch.work[:0]
-			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
-			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
-			work := append([]pix{}, j.scratch.work...)
-			nodeI := s.doc.Children()[i+1]
-			nodeJ := s.doc.Children()[jn+1]
-			pa, oka := nodeI.Path()
-			pb, okb := nodeJ.Path()
-			if oka && okb {
-				ra, rb := parsePathRings(pa), parsePathRings(pb)
-				if len(ra) > 0 && len(rb) > 0 {
-					if stitched, ok := stitchNearEdge(ra[0], rb[0]); ok {
-						if pick, err := j.scoreJoin(s, i, jn, work, stitched, nil); err != nil {
-							return nonePick(), err
-						} else if betterPick(pick, best) {
-							best = pick
-						}
-						continue
-					}
-				}
-			}
-			if !ringsNear(outers[i], outers[jn]) && !bucketsTouch(j.buckets[i], j.buckets[jn]) {
-				continue
-			}
-			if !oneBlob(work) {
-				continue
-			}
-			ring := coverRing(work)
-			if len(ring) < 3 {
-				continue
-			}
-			if pick, err := j.scoreJoin(s, i, jn, work, polylineRing(ring), nil); err != nil {
-				return nonePick(), err
-			} else if betterPick(pick, best) {
-				best = pick
+	if s.paths < 2 {
+		return nonePick(), nil
+	}
+	i := rand.IntN(s.paths)
+	jn := rand.IntN(s.paths - 1)
+	if jn >= i {
+		jn++
+	}
+	if i > jn {
+		i, jn = jn, i
+	}
+	if !sameRampFamily(s.fills[i], s.fills[jn]) {
+		return nonePick(), nil
+	}
+	j.scratch.work = j.scratch.work[:0]
+	j.scratch.work = append(j.scratch.work, j.buckets[i]...)
+	j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
+	work := append([]pix{}, j.scratch.work...)
+	nodeI := s.doc.Children()[i+1]
+	nodeJ := s.doc.Children()[jn+1]
+	pa, oka := nodeI.Path()
+	pb, okb := nodeJ.Path()
+	if oka && okb {
+		ra, rb := parsePathRings(pa), parsePathRings(pb)
+		if len(ra) > 0 && len(rb) > 0 {
+			if stitched, ok := stitchNearEdge(ra[0], rb[0]); ok {
+				return j.scoreJoin(s, i, jn, work, stitched, nil)
 			}
 		}
 	}
-	return best, nil
+	outers := pathOuters(s.doc, s.paths)
+	if !ringsNear(outers[i], outers[jn]) && !bucketsTouch(j.buckets[i], j.buckets[jn]) {
+		return nonePick(), nil
+	}
+	if !oneBlob(work) {
+		return nonePick(), nil
+	}
+	ring := coverRing(work)
+	if len(ring) < 3 {
+		return nonePick(), nil
+	}
+	return j.scoreJoin(s, i, jn, work, polylineRing(ring), nil)
 }
 
 func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes []pathRing) (formPick, error) {
@@ -646,52 +647,53 @@ func (s Subtract) Applies() bool {
 
 func (s Subtract) Run() (formPick, error) {
 	w := s.world
-	best := nonePick()
+	if w.paths < 2 {
+		return nonePick(), nil
+	}
+	i := rand.IntN(w.paths)
+	j := rand.IntN(w.paths - 1)
+	if j >= i {
+		j++
+	}
 	outers := pathOuters(w.doc, w.paths)
-	for i := 0; i < w.paths; i++ {
-		for j := 0; j < w.paths; j++ {
-			if i == j || !ringsOverlap(outers[i], outers[j]) {
-				continue
-			}
-			if len(outers[i]) < 3 || len(outers[j]) < 3 {
-				continue
-			}
-			node := w.doc.Children()[j+1]
-			bounds := nodeRect(node).Intersect(image.Rect(0, 0, w.w, w.h))
-			rem := ringSubtract(outers[j], outers[i], bounds)
-			if !hasInterior(rem) {
-				continue
-			}
-			var rings [][][2]float64
-			if h := coverRing(rem); len(h) >= 3 {
-				rings = append(rings, h)
-			}
-			overlap := ringAnd(outers[j], outers[i], bounds)
-			if shrunk := shrinkOuter(outers[j], overlap); len(shrunk) >= 3 {
-				rings = append(rings, shrunk)
-			}
-			dropCutter := paperLeftover(w.fills[i])
-			for _, ring := range rings {
-				cand := filledPath(ring, w.fills[j])
-				if lin, ok := node.LinearFill(); ok {
-					cand = cand.WithLinearFill(lin)
-				}
-				g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
-				next := replaceAt(w.doc, j+1, cand.Node())
-				if dropCutter {
-					next = dropAt(next, i+1)
-				}
-				pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
-				if err != nil {
-					return nonePick(), err
-				}
-				if dropCutter {
-					pick.dropIdx = i
-				}
-				if betterPick(pick, best) {
-					best = pick
-				}
-			}
+	if !ringsOverlap(outers[i], outers[j]) || len(outers[i]) < 3 || len(outers[j]) < 3 {
+		return nonePick(), nil
+	}
+	node := w.doc.Children()[j+1]
+	bounds := nodeRect(node).Intersect(image.Rect(0, 0, w.w, w.h))
+	rem := ringSubtract(outers[j], outers[i], bounds)
+	if !hasInterior(rem) {
+		return nonePick(), nil
+	}
+	var rings [][][2]float64
+	if h := coverRing(rem); len(h) >= 3 {
+		rings = append(rings, h)
+	}
+	overlap := ringAnd(outers[j], outers[i], bounds)
+	if shrunk := shrinkOuter(outers[j], overlap); len(shrunk) >= 3 {
+		rings = append(rings, shrunk)
+	}
+	best := nonePick()
+	dropCutter := paperLeftover(w.fills[i])
+	for _, ring := range rings {
+		cand := filledPath(ring, w.fills[j])
+		if lin, ok := node.LinearFill(); ok {
+			cand = cand.WithLinearFill(lin)
+		}
+		g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
+		next := replaceAt(w.doc, j+1, cand.Node())
+		if dropCutter {
+			next = dropAt(next, i+1)
+		}
+		pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
+		if err != nil {
+			return nonePick(), err
+		}
+		if dropCutter {
+			pick.dropIdx = i
+		}
+		if betterPick(pick, best) {
+			best = pick
 		}
 	}
 	return best, nil
@@ -743,8 +745,13 @@ func (sl Slide) Run() (formPick, error) {
 	if len(target) < 1 {
 		return nonePick(), nil
 	}
-	best := nonePick()
 	hot := islandRect(sl.left.island)
+	type candPath struct {
+		i     int
+		outer pathRing
+		holes []pathRing
+	}
+	var hits []candPath
 	for i := 0; i < s.paths; i++ {
 		node := s.doc.Children()[i+1]
 		if !nodeRect(node).Overlaps(hot) {
@@ -758,40 +765,35 @@ func (sl Slide) Run() (formPick, error) {
 		if len(rings) == 0 || len(rings[0].verts) < 3 {
 			continue
 		}
-		outer := rings[0]
-		vi, bestD := 0, -1.0
-		for v, q := range outer.verts {
-			pull := nearest(target, q)
-			d := (q[0]-pull[0])*(q[0]-pull[0]) + (q[1]-pull[1])*(q[1]-pull[1])
-			if bestD < 0 || d < bestD {
-				vi, bestD = v, d
-			}
-		}
-		pull := nearest(target, outer.verts[vi])
-		if pull[0] == outer.verts[vi][0] && pull[1] == outer.verts[vi][1] {
-			pull = leftoverCenter(sl.left.island)
-		}
-		if pull[0] == outer.verts[vi][0] && pull[1] == outer.verts[vi][1] {
-			continue
-		}
-		moved := outer.moveVertex(vi, pull)
-		if len(moved.verts) < 3 {
-			continue
-		}
-		cand := filledRings(moved, rings[1:], s.fills[i])
-		if lin, ok := node.LinearFill(); ok {
-			cand = cand.WithLinearFill(lin)
-		}
-		g := s.seedGrow(grow{i: i, work: sl.left.island, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpSlide)
-		if err != nil {
-			return nonePick(), err
-		}
-		if betterPick(pick, best) {
-			best = pick
-		}
+		hits = append(hits, candPath{i: i, outer: rings[0], holes: rings[1:]})
 	}
-	return best, nil
+	if len(hits) == 0 {
+		return nonePick(), nil
+	}
+	hit := hits[rand.IntN(len(hits))]
+	vi := rand.IntN(len(hit.outer.verts))
+	pull := nearest(target, hit.outer.verts[vi])
+	if pull[0] == hit.outer.verts[vi][0] && pull[1] == hit.outer.verts[vi][1] {
+		pull = leftoverCenter(sl.left.island)
+	}
+	if pull[0] == hit.outer.verts[vi][0] && pull[1] == hit.outer.verts[vi][1] {
+		return nonePick(), nil
+	}
+	moved := hit.outer.moveVertex(vi, pull)
+	if len(moved.verts) < 3 {
+		return nonePick(), nil
+	}
+	node := s.doc.Children()[hit.i+1]
+	cand := filledRings(moved, hit.holes, s.fills[hit.i])
+	if lin, ok := node.LinearFill(); ok {
+		cand = cand.WithLinearFill(lin)
+	}
+	g := s.seedGrow(grow{i: hit.i, work: sl.left.island, fill: s.fills[hit.i]})
+	pick, err := s.scoreCand(replaceAt(s.doc, hit.i+1, cand.Node()), cand.Node(), g, OpSlide)
+	if err != nil {
+		return nonePick(), err
+	}
+	return pick, nil
 }
 
 // Bend turns one leftover-facing edge into a cubic.
@@ -925,27 +927,19 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 	if left.deltaHi > 0 && left.deltaLo < 64 {
 		if left.deltaHi <= 16 {
 			switch band {
-			case 1, 3:
+			case 1, 2, 3, 4:
 				return add
-			case 2, 4:
-				return append(add, op{id: OpAbsorb, world: s, left: left})
 			default:
 				return nil
 			}
 		}
 		switch band {
-		case 1:
-			return append(add,
-				op{id: OpSlide, world: s, left: left},
-				op{id: OpBend, world: s, left: left},
-			)
-		case 2:
-			return append(add, op{id: OpAbsorb, world: s, left: left})
+		case 1, 2, 3:
+			return add
 		case 4:
 			return append(add,
 				op{id: OpSlide, world: s, left: left},
 				op{id: OpBend, world: s, left: left},
-				op{id: OpAbsorb, world: s, left: left},
 			)
 		default:
 			return nil
@@ -962,10 +956,9 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 		case 1, 3:
 			return add
 		case 2:
-			return append(add, op{id: OpAbsorb, world: s, left: left})
+			return add
 		case 4:
 			return append(add,
-				op{id: OpAbsorb, world: s, left: left},
 				op{id: OpGrow, world: s, left: left},
 				op{id: OpCarve, world: s, left: left},
 			)
@@ -974,20 +967,12 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 		}
 	}
 	switch band {
-	case 1:
-		return append(add,
-			op{id: OpSlide, world: s, left: left},
-			op{id: OpBend, world: s, left: left},
-		)
-	case 2:
-		return append(add, op{id: OpAbsorb, world: s, left: left})
-	case 3:
+	case 1, 2, 3:
 		return add
 	case 4:
 		return append(add,
 			op{id: OpSlide, world: s, left: left},
 			op{id: OpBend, world: s, left: left},
-			op{id: OpAbsorb, world: s, left: left},
 			op{id: OpGrow, world: s, left: left},
 			op{id: OpCarve, world: s, left: left},
 		)
@@ -1015,13 +1000,19 @@ func (s *world) worldOperators(band int) []Operator {
 		op{id: OpJoin, world: s, buckets: buckets},
 		op{id: OpSubtract, world: s, buckets: buckets},
 	}
-	for i := 0; i < s.paths; i++ {
-		for j := i + 1; j < s.paths; j++ {
-			ops = append(ops, op{id: OpSwap, world: s, i: i, j: j})
+	if s.paths >= 2 {
+		i := rand.IntN(s.paths)
+		j := rand.IntN(s.paths - 1)
+		if j >= i {
+			j++
 		}
+		if i > j {
+			i, j = j, i
+		}
+		ops = append(ops, op{id: OpSwap, world: s, i: i, j: j})
 	}
-	for i := 0; i < s.paths; i++ {
-		ops = append(ops, op{id: OpDelete, world: s, i: i})
+	if s.paths >= 2 {
+		ops = append(ops, op{id: OpDelete, world: s, i: rand.IntN(s.paths)})
 	}
 	return ops
 }

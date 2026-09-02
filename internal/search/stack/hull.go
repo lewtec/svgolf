@@ -212,6 +212,26 @@ func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
 	return n
 }
 
+func trianglePix(ring [][2]float64) []pix {
+	if len(ring) < 3 {
+		return nil
+	}
+	a, b, c := ring[0], ring[1], ring[2]
+	if triangleArea2(a, b, c) == 0 {
+		return nil
+	}
+	x0, x1, y0, y1 := triangleBounds(a, b, c)
+	var out []pix
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			if pointInTriangle([2]float64{float64(x) + 0.5, float64(y) + 0.5}, a, b, c) {
+				out = append(out, pix{x, y})
+			}
+		}
+	}
+	return out
+}
+
 func hullRing(work []pix) [][2]float64 {
 	if len(work) == 0 {
 		return nil
