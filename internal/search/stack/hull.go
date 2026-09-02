@@ -78,32 +78,103 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// largestTriangle is the leftover triangle whose interior stays
-// inside the mask. The outer hull is tried first (a handful of
-// points). If that cuts a hole, each hole hull is tried with the
-// outer hull on its own — never all hole corners at once. Dumping
-// every hole vertex into one point set is how triangle allocated
-// C(n,3) triples and ran the server out of memory.
+// largestTriangle proposes one leftover triangle: three mask
+// points whose filled triangle stays in the leftover. Epochs
+// pick among proposals; this does not search for a maximum.
 func largestTriangle(island []pix) [][2]float64 {
 	if len(island) < 3 {
 		return nil
 	}
 	set := pixSet(island)
 	defer releaseBits(set)
-	// Pixel centers sit inside the leftover. Outer corners stick
-	// out, so the obvious 3-point hull of a triangular leftover
-	// fails the inside check and collapses to a sliver.
-	hull := uniquePoints(convexHull(islandPoints(island)))
-	if ring := firstInsideByArea(hull, set); len(ring) == 3 {
+	if ring := threeMaskPoints(set, extremaPoints(island)); len(ring) == 3 {
 		return ring
 	}
-	for _, hole := range voids(island) {
-		if len(hole) < minIsland {
+	hull := uniquePoints(convexHull(islandPoints(island)))
+	if ring := threeMaskPoints(set, hull); len(ring) == 3 {
+		return ring
+	}
+	if ring := threeMaskPoints(set, leftoverSamples(island)); len(ring) == 3 {
+		return ring
+	}
+	return nil
+}
+
+func leftoverSamples(island []pix) [][2]float64 {
+	n := len(island)
+	if n < 3 {
+		return nil
+	}
+	step := n / 12
+	if step < 1 {
+		step = 1
+	}
+	out := make([][2]float64, 0, 13)
+	seen := map[pix]bool{}
+	for i := 0; i < n; i += step {
+		p := island[i]
+		if seen[p] {
 			continue
 		}
-		pts := uniquePoints(append(append([][2]float64{}, hull...), convexHull(islandPoints(hole))...))
-		if ring := firstInsideByArea(pts, set); len(ring) == 3 {
+		seen[p] = true
+		out = append(out, [2]float64{float64(p.x) + 0.5, float64(p.y) + 0.5})
+	}
+	return out
+}
+
+func extremaPoints(island []pix) [][2]float64 {
+	if len(island) == 0 {
+		return nil
+	}
+	left, right, top, bot := island[0], island[0], island[0], island[0]
+	for _, p := range island[1:] {
+		if p.x < left.x || (p.x == left.x && p.y < left.y) {
+			left = p
+		}
+		if p.x > right.x || (p.x == right.x && p.y > right.y) {
+			right = p
+		}
+		if p.y < top.y || (p.y == top.y && p.x < top.x) {
+			top = p
+		}
+		if p.y > bot.y || (p.y == bot.y && p.x > bot.x) {
+			bot = p
+		}
+	}
+	return [][2]float64{
+		{float64(left.x) + 0.5, float64(left.y) + 0.5},
+		{float64(right.x) + 0.5, float64(right.y) + 0.5},
+		{float64(top.x) + 0.5, float64(top.y) + 0.5},
+		{float64(bot.x) + 0.5, float64(bot.y) + 0.5},
+	}
+}
+
+func threeMaskPoints(set *pixBits, pts [][2]float64) [][2]float64 {
+	n := len(pts)
+	if n < 3 {
+		return nil
+	}
+	accept := func(a, b, c [2]float64) [][2]float64 {
+		if triangleArea2(a, b, c) == 0 {
+			return nil
+		}
+		if triangleInsideCount(set, a, b, c) < minIsland {
+			return nil
+		}
+		return uncross([][2]float64{a, b, c})
+	}
+	for i := 0; i < n; i++ {
+		if ring := accept(pts[i], pts[(i+n/3)%n], pts[(i+2*n/3)%n]); len(ring) == 3 {
 			return ring
+		}
+	}
+	for i := 0; i < n; i++ {
+		for j := i + 1; j < n; j++ {
+			for k := j + 1; k < n; k++ {
+				if ring := accept(pts[i], pts[j], pts[k]); len(ring) == 3 {
+					return ring
+				}
+			}
 		}
 	}
 	return nil
@@ -199,8 +270,8 @@ func triangleBounds(a, b, c [2]float64) (x0, x1, y0, y1 int) {
 			maxY = p[1]
 		}
 	}
-	x0, x1 = int(minX), int(maxX)
-	y0, y1 = int(minY), int(maxY)
+	x0, x1 = int(minX), int(maxX)+1
+	y0, y1 = int(minY), int(maxY)+1
 	return x0, x1, y0, y1
 }
 

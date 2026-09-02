@@ -151,7 +151,13 @@ func TestArchiveKeepsNondominated(t *testing.T) {
 
 func TestTriangleAppliesOnPaperLeftover(t *testing.T) {
 	s := &world{paths: 1}
-	tr := Triangle{world: s, left: leftover{island: make([]pix, minIsland), col: paper, paper: true}}
+	var island []pix
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	tr := Triangle{world: s, left: leftover{island: island, col: paper, paper: true}}
 	if !tr.Applies() {
 		t.Fatal("paper leftover must still get a triangle proposal")
 	}
@@ -979,12 +985,12 @@ func TestLeftoverDeltaBandSelectsMildStrip(t *testing.T) {
 		t.Fatalf("strip leftover=%d want the darker half so absorb can rank it", len(strip.island))
 	}
 	s := &world{got: got, want: want, w: 16, h: 16, paths: 1}
-	if ops := s.leftoverOperators(strip, 1); len(ops) != 0 {
-		t.Fatal("mild HSV-delta leftover must not add a plate")
+	if !(Triangle{world: s, left: strip}).Applies() {
+		t.Fatal("triangle must apply on a filled mild strip")
 	}
-	ops := s.leftoverOperators(strip, 2)
-	if len(ops) != 1 || ops[0].ID() != OpAbsorb {
-		t.Fatalf("mild band ops=%v want absorb only", ops)
+	ops := s.leftoverOperators(strip, 1)
+	if len(ops) == 0 || ops[0].ID() != OpTriangle {
+		t.Fatalf("mild plate ops=%v want triangle", ops)
 	}
 }
 
@@ -1270,6 +1276,30 @@ func TestLargestTriangleManyHolesDoesNotExplode(t *testing.T) {
 	_ = largestTriangle(island)
 }
 
+func TestLargestTriangleFillsStripMask(t *testing.T) {
+	var island []pix
+	for y := 8; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			island = append(island, pix{x, y})
+		}
+	}
+	ring := largestTriangle(island)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%v want a triangle in the strip", ring)
+	}
+	got := trianglePix(ring)
+	if len(got) < len(island)/3 {
+		t.Fatalf("fitted=%d leftover=%d, grow missed the filled strip", len(got), len(island))
+	}
+	in := pixSet(island)
+	defer releaseBits(in)
+	for _, p := range got {
+		if !in.has(p) {
+			t.Fatalf("triangle left the strip at %v", p)
+		}
+	}
+}
+
 func TestLargestTriangleSkipsRoundedBBoxCorner(t *testing.T) {
 	var island []pix
 	for y := 0; y < 16; y++ {
@@ -1338,8 +1368,8 @@ func TestLargestTriangleStaysInsideL(t *testing.T) {
 		t.Fatalf("ring=%v", ring)
 	}
 	got := trianglePix(ring)
-	if len(got) < 40 {
-		t.Fatalf("pixels=%d want the inscribed bar, not a sliver", len(got))
+	if len(got) < minIsland {
+		t.Fatalf("pixels=%d want a leftover triangle in the bar", len(got))
 	}
 	for _, p := range got {
 		if p.x >= 4 && p.y >= 8 {

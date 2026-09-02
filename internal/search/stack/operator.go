@@ -108,7 +108,7 @@ type Triangle struct {
 
 func (Triangle) ID() Op { return OpTriangle }
 func (tr Triangle) Applies() bool {
-	return tr.left.big() && !tr.left.region && tr.world.paths < maxPaths
+	return tr.left.big() && !tr.left.region && hasInterior(tr.left.island) && tr.world.paths < maxPaths
 }
 
 func (tr Triangle) Run() (formPick, error) {
@@ -902,36 +902,45 @@ func leftoverAddOperators(s *world, left leftover) []Operator {
 }
 
 func (s *world) leftoverOperators(left leftover, band int) []Operator {
-	// Below the full-miss band, leftover is a refine hypothesis.
-	// 0–16 is absorb only (darker strip → existing fill).
-	// 16–64 is slide/bend/absorb. Grow/triangle on those bands
-	// nibble raster rounding and collapse a disk to a box.
+	var add []Operator
+	if !left.region && hasInterior(left.island) {
+		add = leftoverAddOperators(s, left)
+	}
+	// Below the full-miss band, leftover is a refine hypothesis
+	// plus an inscribed triangle when the mask has interior.
+	// Grow on a rim leftover traces raster rounding.
 	if left.deltaHi > 0 && left.deltaLo < 64 {
 		if left.deltaHi <= 16 {
-			if band != 2 && band != 4 {
+			switch band {
+			case 1, 3:
+				return add
+			case 2, 4:
+				return append(add, op{id: OpAbsorb, world: s, left: left})
+			default:
 				return nil
 			}
-			return []Operator{op{id: OpAbsorb, world: s, left: left}}
 		}
 		switch band {
 		case 1:
-			return []Operator{
+			return append(add,
 				op{id: OpSlide, world: s, left: left},
 				op{id: OpBend, world: s, left: left},
-			}
+			)
 		case 2:
-			return []Operator{op{id: OpAbsorb, world: s, left: left}}
+			return append(add, op{id: OpAbsorb, world: s, left: left})
 		case 4:
-			return []Operator{
+			return append(add,
 				op{id: OpSlide, world: s, left: left},
 				op{id: OpBend, world: s, left: left},
 				op{id: OpAbsorb, world: s, left: left},
-			}
+			)
 		default:
 			return nil
 		}
 	}
-	add := leftoverAddOperators(s, left)
+	if len(add) == 0 {
+		add = leftoverAddOperators(s, left)
+	}
 	// A color-region leftover is a cover hypothesis. Slide/bend
 	// stay on the residual miss so they are not pulled onto the
 	// already-painted plate.
