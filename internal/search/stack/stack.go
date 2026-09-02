@@ -891,7 +891,7 @@ func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2
 		if !holePainted(got, want, h) {
 			continue
 		}
-		r := hullRing(h)
+		r := coverRing(h)
 		if len(r) >= 3 {
 			rings = append(rings, r)
 		}
@@ -1140,6 +1140,59 @@ func (r pathRing) setEdge(i int, cmd svg.PathCmd) pathRing {
 	edges := append([]svg.PathCmd{}, r.edges...)
 	edges[i] = cmd
 	return pathRing{verts: append([][2]float64{}, r.verts...), edges: edges}
+}
+
+func endpointsNear(p, q [2]float64) bool {
+	dx, dy := p[0]-q[0], p[1]-q[1]
+	return dx*dx+dy*dy <= 2
+}
+
+// stitchNearEdge welds two rings along a pair of opposite edges
+// whose endpoints sit on each other. Other edges, including
+// cubics, stay. Score ranks the weld against leaving two paths.
+func stitchNearEdge(a, b pathRing) (pathRing, bool) {
+	na, nb := len(a.verts), len(b.verts)
+	if na < 3 || nb < 3 || len(a.edges) != na || len(b.edges) != nb {
+		return pathRing{}, false
+	}
+	for ia := 0; ia < na; ia++ {
+		ap, aq := a.verts[ia], a.verts[(ia+1)%na]
+		for ib := 0; ib < nb; ib++ {
+			bp, bq := b.verts[ib], b.verts[(ib+1)%nb]
+			if !endpointsNear(ap, bq) || !endpointsNear(aq, bp) {
+				continue
+			}
+			verts := make([][2]float64, 0, na+nb-2)
+			edges := make([]svg.PathCmd, 0, na+nb-2)
+			for k := 1; k <= na; k++ {
+				verts = append(verts, a.verts[(ia+k)%na])
+			}
+			for k := 2; k < nb; k++ {
+				verts = append(verts, b.verts[(ib+k)%nb])
+			}
+			for k := 1; k < na; k++ {
+				edges = append(edges, a.edges[(ia+k)%na])
+			}
+			for k := 1; k < nb; k++ {
+				edges = append(edges, b.edges[(ib+k)%nb])
+			}
+			if len(verts) < 3 || len(edges) != len(verts) {
+				continue
+			}
+			for i, e := range edges {
+				if e.Kind == svg.CmdClose {
+					e.Kind = svg.CmdLine
+					edges[i] = e
+				}
+			}
+			out := pathRing{verts: verts, edges: edges}
+			if ringCrosses(out.points()) {
+				continue
+			}
+			return out, true
+		}
+	}
+	return pathRing{}, false
 }
 
 func (r pathRing) spliceAfter(ei int, chain [][2]float64) pathRing {

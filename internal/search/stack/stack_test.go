@@ -26,7 +26,7 @@ func forms(d svg.Document) []svg.Node {
 	return kids[1:]
 }
 
-func TestSimplifyDropsUselessHole(t *testing.T) {
+func TestUnholeDropsUselessHole(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
@@ -64,12 +64,12 @@ func TestSimplifyDropsUselessHole(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Unhole{world: s, buckets: [][]pix{nil}}).Run()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !pick.ok {
-		t.Fatal("simplify=false want drop the hole over red")
+		t.Fatal("unhole=false want drop the hole over red")
 	}
 	s.apply(pick)
 	p, ok := s.doc.Children()[1].Path()
@@ -177,9 +177,12 @@ func TestLaterEpochRatesTriangle(t *testing.T) {
 			t.Fatalf("triangle must be proposed in leftover band %d", band)
 		}
 	}
-	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
-	for y := 0; y < 16; y++ {
-		for x := 0; x < 16; x++ {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 16))
+	for y := 2; y < 14; y++ {
+		for x := 2; x < 14; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+		for x := 18; x < 30; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
@@ -252,20 +255,50 @@ func TestFolderTabGetsTriangle(t *testing.T) {
 	}
 }
 
-func TestSimplifyIsBandOne(t *testing.T) {
+func TestGrowCarveAreLateBand(t *testing.T) {
 	s := &world{paths: 1}
-	found := false
-	for _, o := range s.worldOperators(1) {
-		if o.ID() == OpSimplify {
-			found = true
+	left := leftover{island: make([]pix, minIsland), col: color.NRGBA{R: 255, A: 255}}
+	for _, band := range []int{1, 2, 3} {
+		for _, o := range s.leftoverOperators(left, band) {
+			if o.ID() == OpGrow || o.ID() == OpCarve {
+				t.Fatalf("%s scheduled in leftover band %d; hull ops wait for band 4", o.ID(), band)
+			}
 		}
 	}
-	if !found {
+	foundGrow, foundCarve := false, false
+	for _, o := range s.leftoverOperators(left, 4) {
+		switch o.ID() {
+		case OpGrow:
+			foundGrow = true
+		case OpCarve:
+			foundCarve = true
+		}
+	}
+	if !foundGrow || !foundCarve {
+		t.Fatal("grow and carve must still be proposed in leftover band 4")
+	}
+}
+
+func TestSimplifyIsBandOne(t *testing.T) {
+	s := &world{paths: 1}
+	foundSimplify, foundUnhole := false, false
+	for _, o := range s.worldOperators(1) {
+		switch o.ID() {
+		case OpSimplify:
+			foundSimplify = true
+		case OpUnhole:
+			foundUnhole = true
+		}
+	}
+	if !foundSimplify {
 		t.Fatal("simplify not scheduled in band 1")
 	}
+	if !foundUnhole {
+		t.Fatal("unhole not scheduled in band 1")
+	}
 	for _, o := range s.worldOperators(2) {
-		if o.ID() == OpSimplify {
-			t.Fatal("simplify scheduled in band 2")
+		if o.ID() == OpSimplify || o.ID() == OpUnhole {
+			t.Fatalf("%s scheduled in band 2", o.ID())
 		}
 	}
 }
@@ -1218,25 +1251,26 @@ func TestStackGapGetsTriangle(t *testing.T) {
 	t.Fatal("no form")
 }
 
-func TestOneMaskTriangleUsesLeftoverPixels(t *testing.T) {
+func TestOneMaskTriangleUsesLeftoverCorners(t *testing.T) {
 	var island []pix
 	for y := 2; y < 10; y++ {
 		for x := 3; x < 11; x++ {
 			island = append(island, pix{x, y})
 		}
 	}
-	in := pixSet(island)
-	defer releaseBits(in)
-	var ring [][2]float64
-	for try := 0; try < 32 && len(ring) != 3; try++ {
-		ring = oneMaskTriangle(island)
+	ring := oneMaskTriangle(island)
+	if len(ring) != 4 {
+		t.Fatalf("ring=%d want the four leftover corners: %v", len(ring), ring)
 	}
-	if len(ring) != 3 {
-		t.Fatal("oneMaskTriangle never returned three leftover pixels")
+	want := map[[2]float64]bool{
+		{3, 2}:   true,
+		{11, 2}:  true,
+		{11, 10}: true,
+		{3, 10}:  true,
 	}
 	for _, q := range ring {
-		if !in.has(pix{int(q[0]), int(q[1])}) {
-			t.Fatalf("vertex %v is not a leftover pixel", q)
+		if !want[q] {
+			t.Fatalf("vertex %v is not a leftover corner", q)
 		}
 	}
 }
@@ -1290,8 +1324,8 @@ func TestTrianglePlacesInscribedPlate(t *testing.T) {
 			n++
 		}
 	}
-	if n != 3 {
-		t.Fatalf("cmds=%d want 3", n)
+	if n != 4 {
+		t.Fatalf("cmds=%d want the leftover rectangle", n)
 	}
 }
 
@@ -1466,6 +1500,156 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 	if s.paths != 1 {
 		t.Fatalf("paths=%d want 1", s.paths)
 	}
+}
+
+func TestStitchNearEdgeKeepsCubic(t *testing.T) {
+	left, err := svg.NewPath().WithCommands([]svg.PathCmd{
+		{Kind: svg.CmdMove, X: 0, Y: 0},
+		{Kind: svg.CmdCubic, X1: 4, Y1: 0, X2: 8, Y2: 0, X: 12, Y: 0},
+		{Kind: svg.CmdLine, X: 12, Y: 16},
+		{Kind: svg.CmdLine, X: 0, Y: 16},
+		{Kind: svg.CmdClose},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := svg.NewPath().WithCommands([]svg.PathCmd{
+		{Kind: svg.CmdMove, X: 12, Y: 0},
+		{Kind: svg.CmdLine, X: 24, Y: 0},
+		{Kind: svg.CmdLine, X: 24, Y: 16},
+		{Kind: svg.CmdLine, X: 12, Y: 16},
+		{Kind: svg.CmdClose},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ra, rb := parsePathRings(left), parsePathRings(right)
+	if len(ra) == 0 || len(rb) == 0 {
+		t.Fatal("parse rings")
+	}
+	got, ok := stitchNearEdge(ra[0], rb[0])
+	if !ok {
+		t.Fatal("stitch=false want weld along the shared edge")
+	}
+	p := filledRings(got, nil, color.NRGBA{A: 255})
+	if cubics(p.Node()) == 0 {
+		t.Fatal("stitch dropped the cubic")
+	}
+	if !pathHasXY(p, 0, 0) || !pathHasXY(p, 0, 16) {
+		t.Fatalf("stitch dropped the far edge: %+v", p.Commands())
+	}
+}
+
+func TestStitchNearEdgeTwoTriangles(t *testing.T) {
+	a, err := svg.NewPath().WithCommands([]svg.PathCmd{
+		{Kind: svg.CmdMove, X: 0, Y: 0},
+		{Kind: svg.CmdCubic, X1: 6, Y1: 0, X2: 10, Y2: 0, X: 16, Y: 0},
+		{Kind: svg.CmdLine, X: 0, Y: 16},
+		{Kind: svg.CmdClose},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svg.NewPath().WithCommands([]svg.PathCmd{
+		{Kind: svg.CmdMove, X: 16, Y: 0},
+		{Kind: svg.CmdLine, X: 16, Y: 16},
+		{Kind: svg.CmdLine, X: 0, Y: 16},
+		{Kind: svg.CmdClose},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ra, rb := parsePathRings(a), parsePathRings(b)
+	got, ok := stitchNearEdge(ra[0], rb[0])
+	if !ok {
+		t.Fatal("stitch=false want two triangles that share an edge")
+	}
+	p := filledRings(got, nil, color.NRGBA{A: 255})
+	if cubics(p.Node()) == 0 {
+		t.Fatal("stitch dropped the cubic")
+	}
+	if !pathHasXY(p, 16, 16) {
+		t.Fatalf("stitch missed the free vertex: %+v", p.Commands())
+	}
+}
+
+func TestJoinKeepsUntouchedCubic(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 170, B: 220, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 24, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 24; x++ {
+			img.SetNRGBA(x, y, cyan)
+		}
+	}
+	left, err := svg.NewPath().WithCommands([]svg.PathCmd{
+		{Kind: svg.CmdMove, X: 0, Y: 0},
+		{Kind: svg.CmdCubic, X1: 4, Y1: 0, X2: 8, Y2: 0, X: 12, Y: 0},
+		{Kind: svg.CmdLine, X: 12, Y: 16},
+		{Kind: svg.CmdLine, X: 0, Y: 16},
+		{Kind: svg.CmdClose},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left = left.WithFill(cyan)
+	right := filledPath([][2]float64{{12, 0}, {24, 0}, {24, 16}, {12, 16}}, cyan)
+	doc := svg.NewDocument(24, 16).WithViewBox(0, 0, 24, 16)
+	doc = doc.Append(whitePane(24, 16).Node()).Append(left.Node()).Append(right.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 24*16)
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 12; x++ {
+			owner[y*24+x] = 1
+		}
+		for x := 12; x < 24; x++ {
+			owner[y*24+x] = 2
+		}
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{cyan, cyan},
+		paths:  2,
+		w:      24,
+		h:      16,
+		errSum: Score(got, img),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("join=false want one plate")
+	}
+	s.apply(pick)
+	if s.paths != 1 {
+		t.Fatalf("paths=%d want 1", s.paths)
+	}
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if cubics(p.Node()) == 0 {
+		t.Fatal("join erased the untouched cubic")
+	}
+}
+
+func pathHasXY(p svg.Path, x, y float64) bool {
+	for _, c := range p.Commands() {
+		if c.X == x && c.Y == y {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRingsNearCloseVertices(t *testing.T) {
@@ -2687,8 +2871,8 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 				n++
 			}
 		}
-		if n != 3 {
-			t.Fatalf("first form points=%d want a triangle", n)
+		if n != 4 {
+			t.Fatalf("first form points=%d want the leftover rectangle", n)
 		}
 		return
 	}

@@ -2,7 +2,6 @@ package stack
 
 import (
 	"image"
-	"math/rand/v2"
 	"sort"
 )
 
@@ -79,29 +78,13 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// oneMaskTriangle is one leftover add: three leftover pixels.
-// Score ranks it. This does not search, grow, or fit.
+// oneMaskTriangle is the leftover outline corners.
 func oneMaskTriangle(island []pix) [][2]float64 {
-	n := len(island)
-	if n < 3 {
+	ring := coverRing(island)
+	if len(ring) < 3 {
 		return nil
 	}
-	i := rand.IntN(n)
-	j := rand.IntN(n)
-	for j == i {
-		j = rand.IntN(n)
-	}
-	k := rand.IntN(n)
-	for k == i || k == j {
-		k = rand.IntN(n)
-	}
-	a := [2]float64{float64(island[i].x) + 0.5, float64(island[i].y) + 0.5}
-	b := [2]float64{float64(island[j].x) + 0.5, float64(island[j].y) + 0.5}
-	c := [2]float64{float64(island[k].x) + 0.5, float64(island[k].y) + 0.5}
-	if triangleArea2(a, b, c) == 0 {
-		return nil
-	}
-	return uncross([][2]float64{a, b, c})
+	return ring
 }
 
 func largestTriangle(island []pix) [][2]float64 {
@@ -226,26 +209,6 @@ func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
 		}
 	}
 	return n
-}
-
-func trianglePix(ring [][2]float64) []pix {
-	if len(ring) < 3 {
-		return nil
-	}
-	a, b, c := ring[0], ring[1], ring[2]
-	if triangleArea2(a, b, c) == 0 {
-		return nil
-	}
-	x0, x1, y0, y1 := triangleBounds(a, b, c)
-	var out []pix
-	for y := y0; y < y1; y++ {
-		for x := x0; x < x1; x++ {
-			if pointInTriangle([2]float64{float64(x) + 0.5, float64(y) + 0.5}, a, b, c) {
-				out = append(out, pix{x, y})
-			}
-		}
-	}
-	return out
 }
 
 func hullRing(work []pix) [][2]float64 {

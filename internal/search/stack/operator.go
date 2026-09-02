@@ -38,6 +38,7 @@ const (
 	OpSubtract = search.OpSubtract
 	OpSwap     = search.OpSwap
 	OpDelete   = search.OpDelete
+	OpUnhole   = search.OpUnhole
 	opCount    = search.OpCount
 )
 
@@ -70,7 +71,7 @@ func (o op) impl() Operator {
 	case OpSimplify:
 		return Simplify{world: o.world, buckets: o.buckets}
 	case OpWash:
-		return &Wash{world: o.world, buckets: o.buckets}
+		return Wash{world: o.world, buckets: o.buckets}
 	case OpJoin:
 		return &Join{world: o.world, buckets: o.buckets}
 	case OpSubtract:
@@ -79,6 +80,8 @@ func (o op) impl() Operator {
 		return Swap{world: o.world, i: o.i, j: o.j}
 	case OpDelete:
 		return Delete{world: o.world, i: o.i}
+	case OpUnhole:
+		return Unhole{world: o.world, buckets: o.buckets}
 	default:
 		return nil
 	}
@@ -100,7 +103,7 @@ func (o op) Run() (formPick, error) {
 	return im.Run()
 }
 
-// Triangle adds three leftover pixels as a path. Score ranks it.
+// Triangle places the leftover outline.
 type Triangle struct {
 	world *world
 	left  leftover
@@ -116,20 +119,17 @@ func (tr Triangle) Run() (formPick, error) {
 	if len(g.work) < 3 {
 		return nonePick(), nil
 	}
-	ring := oneMaskTriangle(g.work)
+	ring := coverRing(g.work)
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
-	work := trianglePix(ring)
-	g.work = work
 	g.ring = ring
-	g.fill = modeFill(s.want, work)
+	g.fill = modeFill(s.want, g.work)
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
 }
 
-// Ring is a leftover with a painted interior: evenodd outer plus holes
-// so a visor does not fill the face.
+// Ring places a leftover that already surrounds painted pixels.
 type Ring struct {
 	world *world
 	left  leftover
@@ -150,16 +150,14 @@ func (r Ring) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	g := r.left.fresh
-	g.ring = hullRing(g.work)
+	g.ring = coverRing(g.work)
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
 	return s.addLayer(withHoles(filledPath(g.ring, g.fill), holes), g, OpRing)
 }
 
-// Absorb writes leftover error back into a touching path as a 2-stop.
-// That is the backprop step: residual updates an existing plate
-// instead of stacking another flat.
+// Absorb paints leftover into a touching path as a 2-stop linear.
 type Absorb struct {
 	world   *world
 	left    leftover
@@ -203,7 +201,7 @@ func (a *Absorb) Run() (formPick, error) {
 	return best, nil
 }
 
-// Grow expands an existing path over the leftover with a hull union.
+// Grow expands a touching path over leftover.
 type Grow struct {
 	world   *world
 	left    leftover
@@ -243,9 +241,7 @@ func (g *Grow) Run() (formPick, error) {
 	return best, nil
 }
 
-// Carve cuts a painted leftover out of a covering path.
-// Paper leftover shrinks the covering ring instead of stacking
-// an evenodd white hole.
+// Carve removes leftover from a covering path.
 type Carve struct {
 	world   *world
 	left    leftover
@@ -360,7 +356,7 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-// Simplify drops one vertex or one hole. Score picks the drop.
+// Simplify drops one vertex.
 type Simplify struct {
 	world   *world
 	buckets [][]pix
@@ -426,14 +422,6 @@ func (s Simplify) Run() (formPick, error) {
 				propose(work.dropVertex(v), rings[1:], pointsRect(fan))
 			}
 		}
-		for h := 1; h < len(rings); h++ {
-			if !regionWorthTrying(rings[h].points(), w.gotP, w.wantP) {
-				continue
-			}
-			keep := append([]pathRing{}, rings[1:h]...)
-			keep = append(keep, rings[h+1:]...)
-			propose(rings[0], keep, pointsRect(rings[h].points()))
-		}
 	}
 	if len(jobs) == 0 {
 		return nonePick(), nil
@@ -465,11 +453,63 @@ func (s Simplify) Run() (formPick, error) {
 	return best, nil
 }
 
-// Wash fits a 2-stop linear on one path, or on two owners that form a ramp.
+// Unhole drops one evenodd hole.
+type Unhole struct {
+	world   *world
+	buckets [][]pix
+}
+
+func (Unhole) ID() Op { return OpUnhole }
+func (u Unhole) Applies() bool {
+	return u.world.paths > 0
+}
+
+func (u Unhole) Run() (formPick, error) {
+	w := u.world
+	best := nonePick()
+	for i := 0; i < w.paths; i++ {
+		node := w.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		if len(rings) < 2 {
+			continue
+		}
+		g := w.seedGrow(grow{i: i, work: u.buckets[i], fill: w.fills[i]})
+		lin, hasLin := node.LinearFill()
+		for h := 1; h < len(rings); h++ {
+			if !regionWorthTrying(rings[h].points(), w.gotP, w.wantP) {
+				continue
+			}
+			keep := append([]pathRing{}, rings[1:h]...)
+			keep = append(keep, rings[h+1:]...)
+			cand := filledRings(rings[0], keep, w.fills[i])
+			if hasLin {
+				cand = cand.WithLinearFill(lin)
+			}
+			lg := g
+			lg.dirty0 = pointsRect(rings[h].points())
+			pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), lg, OpUnhole)
+			if err != nil {
+				return nonePick(), err
+			}
+			if pick.ok && pick.errSum > w.errSum {
+				pick.ok = false
+			}
+			if betterPick(pick, best) {
+				best = pick
+			}
+		}
+	}
+	return best, nil
+}
+
+// Wash paints a 2-stop linear on one path.
 type Wash struct {
 	world   *world
 	buckets [][]pix
-	scratch scratch
 }
 
 func (Wash) ID() Op { return OpWash }
@@ -477,7 +517,7 @@ func (w Wash) Applies() bool {
 	return w.world.paths > 0
 }
 
-func (w *Wash) Run() (formPick, error) {
+func (w Wash) Run() (formPick, error) {
 	s := w.world
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
@@ -500,47 +540,10 @@ func (w *Wash) Run() (formPick, error) {
 			best = pick
 		}
 	}
-	if s.paths < 2 {
-		return best, nil
-	}
-	for i := 0; i < s.paths; i++ {
-		for j := i + 1; j < s.paths; j++ {
-			w.scratch.work = w.scratch.work[:0]
-			w.scratch.work = append(w.scratch.work, w.buckets[i]...)
-			w.scratch.work = append(w.scratch.work, w.buckets[j]...)
-			if len(w.scratch.work) < minIsland {
-				continue
-			}
-			grad, ok := fitLinearStops(w.scratch.work, s.want)
-			if !ok {
-				continue
-			}
-			work := append([]pix{}, w.scratch.work...)
-			g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i], ring: hullRing(work)})
-			if len(g.ring) < 3 {
-				continue
-			}
-			cand := filledPath(g.ring, s.fills[i]).WithLinearFill(grad)
-			next := replaceAt(s.doc, i+1, cand.Node())
-			next = dropAt(next, j+1)
-			pick, err := s.scoreCand(next, cand.Node(), g, OpWash)
-			if err != nil {
-				return nonePick(), err
-			}
-			if pick.ok {
-				pick.mergeJ = j
-			}
-			if betterPick(pick, best) {
-				best = pick
-			}
-		}
-	}
 	return best, nil
 }
 
-// Join unifies two same-family paths that overlap or have
-// a vertex next to the other's vertex or edge. A single
-// blob keeps the union outline; a gap uses the hull.
+// Join welds two touching same-family paths.
 type Join struct {
 	world   *world
 	buckets [][]pix
@@ -561,53 +564,102 @@ func (j *Join) Run() (formPick, error) {
 			if !sameRampFamily(s.fills[i], s.fills[jn]) {
 				continue
 			}
-			if !ringsNear(outers[i], outers[jn]) {
-				continue
-			}
 			j.scratch.work = j.scratch.work[:0]
 			j.scratch.work = append(j.scratch.work, j.buckets[i]...)
 			j.scratch.work = append(j.scratch.work, j.buckets[jn]...)
 			work := append([]pix{}, j.scratch.work...)
-			var ring [][2]float64
-			if oneBlob(work) {
-				ring = coverRing(work)
-			} else {
-				pts := append([][2]float64{}, outers[i]...)
-				pts = append(pts, outers[jn]...)
-				ring = uncross(convexHull(pts))
+			nodeI := s.doc.Children()[i+1]
+			nodeJ := s.doc.Children()[jn+1]
+			pa, oka := nodeI.Path()
+			pb, okb := nodeJ.Path()
+			if oka && okb {
+				ra, rb := parsePathRings(pa), parsePathRings(pb)
+				if len(ra) > 0 && len(rb) > 0 {
+					if stitched, ok := stitchNearEdge(ra[0], rb[0]); ok {
+						if pick, err := j.scoreJoin(s, i, jn, work, stitched, nil); err != nil {
+							return nonePick(), err
+						} else if betterPick(pick, best) {
+							best = pick
+						}
+						continue
+					}
+				}
 			}
+			if !ringsNear(outers[i], outers[jn]) && !bucketsTouch(j.buckets[i], j.buckets[jn]) {
+				continue
+			}
+			if !oneBlob(work) {
+				continue
+			}
+			ring := coverRing(work)
 			if len(ring) < 3 {
 				continue
 			}
-			fills := []color.NRGBA{s.fills[i], s.fills[jn]}
-			if fills[0] == fills[1] {
-				fills = fills[:1]
-			}
-			for _, fill := range fills {
-				g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: ring})
-				g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[jn+1]))
-				cand := filledPath(ring, fill)
-				next := replaceAt(s.doc, i+1, cand.Node())
-				next = dropAt(next, jn+1)
-				pick, err := s.scoreCand(next, cand.Node(), g, OpJoin)
-				if err != nil {
-					return nonePick(), err
-				}
-				if pick.ok {
-					pick.mergeJ = jn
-					pick.work = work
-				}
-				if betterPick(pick, best) {
-					best = pick
-				}
+			if pick, err := j.scoreJoin(s, i, jn, work, polylineRing(ring), nil); err != nil {
+				return nonePick(), err
+			} else if betterPick(pick, best) {
+				best = pick
 			}
 		}
 	}
 	return best, nil
 }
 
-// Subtract punches one overlapping path out of another. Score
-// keeps it when the lower plate should not paint under the upper.
+func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes []pathRing) (formPick, error) {
+	best := nonePick()
+	fills := []color.NRGBA{s.fills[i], s.fills[jn]}
+	if fills[0] == fills[1] {
+		fills = fills[:1]
+	}
+	node := s.doc.Children()[i+1]
+	lin, hasLin := node.LinearFill()
+	if !hasLin {
+		if l, ok := s.doc.Children()[jn+1].LinearFill(); ok {
+			lin, hasLin = l, true
+		}
+	}
+	for _, fill := range fills {
+		g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: outer.points()})
+		g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[jn+1]))
+		cand := filledRings(outer, holes, fill)
+		if hasLin {
+			cand = cand.WithLinearFill(lin)
+		}
+		next := replaceAt(s.doc, i+1, cand.Node())
+		next = dropAt(next, jn+1)
+		pick, err := s.scoreCand(next, cand.Node(), g, OpJoin)
+		if err != nil {
+			return nonePick(), err
+		}
+		if pick.ok {
+			pick.mergeJ = jn
+			pick.work = work
+		}
+		if betterPick(pick, best) {
+			best = pick
+		}
+	}
+	return best, nil
+}
+
+func bucketsTouch(a, b []pix) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	set := pixSet(b)
+	defer releaseBits(set)
+	dirs := [5]pix{{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for _, p := range a {
+		for _, d := range dirs {
+			if set.has(pix{p.x + d.x, p.y + d.y}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Subtract cuts one path out of another.
 type Subtract struct {
 	world   *world
 	buckets [][]pix
@@ -637,7 +689,7 @@ func (s Subtract) Run() (formPick, error) {
 				continue
 			}
 			var rings [][][2]float64
-			if h := hullRing(rem); len(h) >= 3 {
+			if h := coverRing(rem); len(h) >= 3 {
 				rings = append(rings, h)
 			}
 			overlap := ringAnd(outers[j], outers[i], bounds)
@@ -671,7 +723,7 @@ func (s Subtract) Run() (formPick, error) {
 	return best, nil
 }
 
-// Delete removes path i if Score improves.
+// Delete removes one path.
 type Delete struct {
 	world *world
 	i     int
@@ -700,7 +752,7 @@ func (d Delete) Run() (formPick, error) {
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
 }
 
-// Slide moves one vertex of a touching path toward the leftover outline.
+// Slide moves one vertex toward leftover.
 type Slide struct {
 	world *world
 	left  leftover
@@ -768,7 +820,7 @@ func (sl Slide) Run() (formPick, error) {
 	return best, nil
 }
 
-// Bend pulls the leftover-facing edge into a cubic toward the residual.
+// Bend turns one leftover-facing edge into a cubic.
 type Bend struct {
 	world *world
 	left  leftover
@@ -847,7 +899,7 @@ func (b Bend) Run() (formPick, error) {
 	return best, nil
 }
 
-// Swap exchanges paths i and j. Score judges the painted order.
+// Swap exchanges two paths.
 type Swap struct {
 	world *world
 	i, j  int
@@ -935,7 +987,9 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 		switch band {
 		case 1, 3:
 			return add
-		case 2, 4:
+		case 2:
+			return append(add, op{id: OpAbsorb, world: s, left: left})
+		case 4:
 			return append(add,
 				op{id: OpAbsorb, world: s, left: left},
 				op{id: OpGrow, world: s, left: left},
@@ -952,11 +1006,7 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 			op{id: OpBend, world: s, left: left},
 		)
 	case 2:
-		return append(add,
-			op{id: OpAbsorb, world: s, left: left},
-			op{id: OpGrow, world: s, left: left},
-			op{id: OpCarve, world: s, left: left},
-		)
+		return append(add, op{id: OpAbsorb, world: s, left: left})
 	case 3:
 		return add
 	case 4:
@@ -983,6 +1033,7 @@ func (s *world) worldOperators(band int) []Operator {
 	if band == 1 {
 		return []Operator{
 			op{id: OpSimplify, world: s, buckets: buckets},
+			op{id: OpUnhole, world: s, buckets: buckets},
 		}
 	}
 	ops := []Operator{

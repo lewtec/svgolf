@@ -18,6 +18,7 @@ const (
 	OpSubtract
 	OpSwap
 	OpDelete
+	OpUnhole
 	OpCount
 )
 
@@ -36,6 +37,7 @@ var operatorNames = [OpCount]string{
 	OpSubtract: "subtract",
 	OpSwap:     "swap",
 	OpDelete:   "delete",
+	OpUnhole:   "unhole",
 }
 
 func (id Op) String() string {
