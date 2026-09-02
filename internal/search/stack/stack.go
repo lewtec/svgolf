@@ -21,14 +21,25 @@ import (
 )
 
 const (
-	maxPaths      = 512
-	minIsland     = 8
-	minErr        = 8
-	polyFit       = 2
+	maxPaths  = 512
+	minIsland = 8
+	minErr    = 8
+	polyFit   = 2
 	// leftoverPicks = 3
 	leftoverPicks = 1
 	survivorPicks = 3
 )
+
+// leftoverDeltaBands are exclusive HSV ColorAt ranges (0..180).
+// leftovers() takes one hottest blob per band so a mild plate
+// (a darker strip) can be ranked against a hot rim. High-error
+// bands come first so leftover[0] stays the Score-scale miss.
+var leftoverDeltaBands = [][2]float64{
+	{64, 180},
+	{32, 64},
+	{16, 32},
+	{0, 16},
+}
 
 // Stack is variable neighborhood descent on a tiny non-dominated archive.
 // Want stays native.
@@ -98,16 +109,21 @@ func LogCandidates(w io.Writer) {
 	candidateLog = w
 }
 
-// leftover is the hottest residual blob and the paths that already
-// touch it. paper leftovers carve; others may cover or grow.
-// fresh is the new-plate grow (work=island, i=-1).
+// leftover is one hypothesized miss. island is the residual Score
+// miss, or a color-region flood of a color that residual touches.
+// region leftovers are cover hypotheses; Score ranks their ops
+// against residual ops. paper leftovers carve. fresh is the
+// new-plate grow (work=island, i=-1).
 type leftover struct {
-	island []pix
-	glow   []pix
-	col    color.NRGBA
-	paper  bool
-	grows  []grow
-	fresh  grow
+	island  []pix
+	glow    []pix
+	col     color.NRGBA
+	paper   bool
+	region  bool
+	deltaLo float64
+	deltaHi float64
+	grows   []grow
+	fresh   grow
 }
 
 type grow struct {
@@ -405,19 +421,45 @@ func (left leftover) big() bool {
 }
 
 func (s *world) leftovers() []leftover {
-	blobs := s.hottestN(leftoverPicks)
-	out := make([]leftover, 0, len(blobs))
-	for _, b := range blobs {
-		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)}
-		if !left.paper {
-			left.glow = s.glowByColor(b, s.gotP, s.wantP).island
-		}
-		if len(left.glow) == 0 {
-			left.glow = left.island
-		}
-		out = append(out, left)
+	var out []leftover
+	for _, band := range leftoverDeltaBands {
+		out = append(out, s.leftoversFrom(s.hottestMarked(leftoverPicks, band[0], band[1]), band[0], band[1])...)
 	}
 	return s.bindLeftovers(out)
+}
+
+func (s *world) leftoversFrom(blobs []leftoverBlob, lo, hi float64) []leftover {
+	out := make([]leftover, 0, len(blobs)*2)
+	for _, b := range blobs {
+		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col), deltaLo: lo, deltaHi: hi}
+		left.glow = b.island
+		var regions []leftover
+		if !left.paper {
+			var best []pix
+			emitted := map[int]bool{}
+			for _, col := range s.leftoverColors(b) {
+				g := s.floodWant(b.island, col)
+				if len(g) > len(best) {
+					best = g
+				}
+				if len(g) <= len(b.island) {
+					continue
+				}
+				bin := coarse(col)
+				if emitted[bin] {
+					continue
+				}
+				emitted[bin] = true
+				regions = append(regions, leftover{island: g, glow: g, col: col, region: true, deltaLo: lo, deltaHi: hi})
+			}
+			if len(best) > 0 {
+				left.glow = best
+			}
+		}
+		out = append(out, left)
+		out = append(out, regions...)
+	}
+	return out
 }
 
 // bindLeftovers scores leftover islands against the loaded document

@@ -639,29 +639,35 @@ func (s Subtract) Run() (formPick, error) {
 			if !hasInterior(rem) {
 				continue
 			}
-			ring := coverRing(rem)
-			if len(ring) < 3 {
-				continue
+			var rings [][][2]float64
+			if h := hullRing(rem); len(h) >= 3 {
+				rings = append(rings, h)
 			}
-			cand := filledPath(ring, w.fills[j])
-			if lin, ok := node.LinearFill(); ok {
-				cand = cand.WithLinearFill(lin)
+			overlap := ringAnd(outers[j], outers[i], bounds)
+			if shrunk := shrinkOuter(outers[j], overlap); len(shrunk) >= 3 {
+				rings = append(rings, shrunk)
 			}
-			g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
-			next := replaceAt(w.doc, j+1, cand.Node())
 			dropCutter := paperLeftover(w.fills[i])
-			if dropCutter {
-				next = dropAt(next, i+1)
-			}
-			pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
-			if err != nil {
-				return nonePick(), err
-			}
-			if dropCutter {
-				pick.dropIdx = i
-			}
-			if betterPick(pick, best) {
-				best = pick
+			for _, ring := range rings {
+				cand := filledPath(ring, w.fills[j])
+				if lin, ok := node.LinearFill(); ok {
+					cand = cand.WithLinearFill(lin)
+				}
+				g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
+				next := replaceAt(w.doc, j+1, cand.Node())
+				if dropCutter {
+					next = dropAt(next, i+1)
+				}
+				pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
+				if err != nil {
+					return nonePick(), err
+				}
+				if dropCutter {
+					pick.dropIdx = i
+				}
+				if betterPick(pick, best) {
+					best = pick
+				}
 			}
 		}
 	}
@@ -889,7 +895,53 @@ func leftoverAddOperators(s *world, left leftover) []Operator {
 }
 
 func (s *world) leftoverOperators(left leftover, band int) []Operator {
+	// Below the full-miss band, leftover is a refine hypothesis.
+	// 0–16 is absorb only (darker strip → existing fill).
+	// 16–64 is slide/bend/absorb. Grow/triangle on those bands
+	// nibble raster rounding and collapse a disk to a box.
+	if left.deltaHi > 0 && left.deltaLo < 64 {
+		if left.deltaHi <= 16 {
+			if band != 2 && band != 4 {
+				return nil
+			}
+			return []Operator{op{id: OpAbsorb, world: s, left: left}}
+		}
+		switch band {
+		case 1:
+			return []Operator{
+				op{id: OpSlide, world: s, left: left},
+				op{id: OpBend, world: s, left: left},
+			}
+		case 2:
+			return []Operator{op{id: OpAbsorb, world: s, left: left}}
+		case 4:
+			return []Operator{
+				op{id: OpSlide, world: s, left: left},
+				op{id: OpBend, world: s, left: left},
+				op{id: OpAbsorb, world: s, left: left},
+			}
+		default:
+			return nil
+		}
+	}
 	add := leftoverAddOperators(s, left)
+	// A color-region leftover is a cover hypothesis. Slide/bend
+	// stay on the residual miss so they are not pulled onto the
+	// already-painted plate.
+	if left.region {
+		switch band {
+		case 1, 3:
+			return add
+		case 2, 4:
+			return append(add,
+				op{id: OpAbsorb, world: s, left: left},
+				op{id: OpGrow, world: s, left: left},
+				op{id: OpCarve, world: s, left: left},
+			)
+		default:
+			return nil
+		}
+	}
 	switch band {
 	case 1:
 		return append(add,

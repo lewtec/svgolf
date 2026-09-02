@@ -259,6 +259,10 @@ func (s *world) hottest() (color.NRGBA, []pix) {
 }
 
 func (s *world) hottestN(k int) []leftoverBlob {
+	return s.hottestMarked(k, minErr, 180)
+}
+
+func (s *world) hottestMarked(k int, lo, hi float64) []leftoverBlob {
 	if k <= 0 || s.want == nil {
 		return nil
 	}
@@ -277,7 +281,7 @@ func (s *world) hottestN(k int) []leftoverBlob {
 	}
 	gotP.Ensure()
 	wantP.Ensure()
-	if !s.stampResidual(gotP, wantP, w, h, b) {
+	if !s.stampResidual(gotP, wantP, w, h, b, lo, hi) {
 		return nil
 	}
 	despeckle(s.scratch.mark, w, h)
@@ -310,17 +314,18 @@ func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int) (cores, 
 	return cores, rest
 }
 
-// stampResidual marks every pixel Score treats as a miss
-// (colorErr > minErr). Raw got!=want includes raster rounding
-// on a matching fill and turns the whole plate into leftover.
-func (s *world) stampResidual(gotP, wantP *loss.Plane, w, h int, b image.Rectangle) bool {
+// stampResidual marks pixels whose HSV ColorAt sits in (lo, hi].
+// leftovers() walks leftoverDeltaBands so a mild strip is its own
+// leftover instead of disappearing under minErr.
+func (s *world) stampResidual(gotP, wantP *loss.Plane, w, h int, b image.Rectangle, lo, hi float64) bool {
 	want := s.want
 	mark, family := s.scratch.mark, s.scratch.family
 	clear(mark)
 	any := false
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			if colorErrHSV(gotP.At(x, y), wantP.At(x, y)) <= minErr {
+			e := colorErrHSV(gotP.At(x, y), wantP.At(x, y))
+			if e <= lo || e > hi {
 				continue
 			}
 			mark[y*w+x] = 1
@@ -331,68 +336,97 @@ func (s *world) stampResidual(gotP, wantP *loss.Plane, w, h int, b image.Rectang
 	return any
 }
 
-func (s *world) glowByColor(b leftoverBlob, gotP, wantP *loss.Plane) leftoverBlob {
-	if paperLeftover(b.col) || len(b.island) == 0 || s.want == nil {
-		return b
-	}
-	w, h := s.w, s.h
-	if w == 0 || h == 0 {
-		r := s.want.Bounds()
-		w, h = r.Dx(), r.Dy()
-	}
-	s.scratch.ensure(w * h)
-	seen := s.scratch.seen
-	clear(seen)
-	bin := coarse(b.col)
-	var pending []pix
-	for _, p := range b.island {
-		if uint(p.x) >= uint(w) || uint(p.y) >= uint(h) {
-			continue
+func (s *world) leftoverColors(b leftoverBlob) []color.NRGBA {
+	var out []color.NRGBA
+	seen := map[int]bool{}
+	add := func(c color.NRGBA) {
+		if paperLeftover(c) {
+			return
 		}
-		if seen[p.y*w+p.x] != 0 {
-			continue
+		bin := coarse(c)
+		if seen[bin] {
+			return
 		}
-		wc := s.want.NRGBAAt(p.x, p.y)
-		if paperLeftover(wc) || coarse(wc) != bin {
-			continue
-		}
-		seen[p.y*w+p.x] = 1
-		pending = append(pending, p)
+		seen[bin] = true
+		out = append(out, c)
 	}
-	if len(pending) == 0 {
-		return b
+	add(b.col)
+	for _, fill := range s.fills {
+		add(fill)
 	}
-	out := make([]pix, 0, len(b.island))
-	var errSum float64
+	if s.want == nil {
+		return out
+	}
+	w, h := s.worldSize()
 	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
-	for len(pending) > 0 {
-		p := pending[len(pending)-1]
-		pending = pending[:len(pending)-1]
-		out = append(out, p)
-		errSum += errAtHSV(gotP.At(p.x, p.y), wantP.At(p.x, p.y))
+	ox, oy := s.want.Rect.Min.X, s.want.Rect.Min.Y
+	for _, p := range b.island {
 		for _, d := range dirs {
 			nx, ny := p.x+d.x, p.y+d.y
 			if uint(nx) >= uint(w) || uint(ny) >= uint(h) {
 				continue
 			}
-			i := ny*w + nx
-			if seen[i] != 0 {
-				continue
-			}
-			wc := s.want.NRGBAAt(nx, ny)
-			if paperLeftover(wc) || coarse(wc) != bin {
-				continue
-			}
-			seen[i] = 1
-			pending = append(pending, pix{nx, ny})
+			add(s.want.NRGBAAt(ox+nx, oy+ny))
 		}
 	}
-	if len(out) < len(b.island) {
-		return b
+	return out
+}
+
+func (s *world) worldSize() (w, h int) {
+	w, h = s.w, s.h
+	if (w == 0 || h == 0) && s.want != nil {
+		r := s.want.Bounds()
+		w, h = r.Dx(), r.Dy()
 	}
-	b.island = out
-	b.errSum = errSum
-	return b
+	return w, h
+}
+
+func (s *world) floodWant(seed []pix, col color.NRGBA) []pix {
+	if paperLeftover(col) || len(seed) == 0 || s.want == nil {
+		return nil
+	}
+	w, h := s.worldSize()
+	s.scratch.ensure(w * h)
+	seen := s.scratch.seen
+	clear(seen)
+	bin := coarse(col)
+	ox, oy := s.want.Rect.Min.X, s.want.Rect.Min.Y
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	var pending []pix
+	push := func(p pix) {
+		if uint(p.x) >= uint(w) || uint(p.y) >= uint(h) {
+			return
+		}
+		i := p.y*w + p.x
+		if seen[i] != 0 {
+			return
+		}
+		wc := s.want.NRGBAAt(ox+p.x, oy+p.y)
+		if paperLeftover(wc) || coarse(wc) != bin {
+			return
+		}
+		seen[i] = 1
+		pending = append(pending, p)
+	}
+	for _, p := range seed {
+		push(p)
+		for _, d := range dirs {
+			push(pix{p.x + d.x, p.y + d.y})
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]pix, 0, len(seed))
+	for len(pending) > 0 {
+		p := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		out = append(out, p)
+		for _, d := range dirs {
+			push(pix{p.x + d.x, p.y + d.y})
+		}
+	}
+	return out
 }
 
 func (s *world) unfloodMark() {

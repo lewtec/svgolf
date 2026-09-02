@@ -69,6 +69,32 @@ func TestDebugFramesMarksEveryDifference(t *testing.T) {
 	}
 }
 
+func TestDebugFramesPaintsMildDeltaBand(t *testing.T) {
+	light, dark, delta := mildCyanStrip()
+	if delta <= 0 || delta > minErr {
+		t.Fatalf("delta=%.3f want a below-minErr HSV miss", delta)
+	}
+	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got.SetNRGBA(x, y, light)
+			c := light
+			if y >= 8 {
+				c = dark
+			}
+			want.SetNRGBA(x, y, c)
+		}
+	}
+	_, isle := DebugFrames(got, want, nil, nil)
+	if c := isle.NRGBAAt(8, 12); c.R < 200 || c.G < 200 || c.B < 200 {
+		t.Fatalf("mild strip %+v want white leftover mask", c)
+	}
+	if c := isle.NRGBAAt(8, 4); c.R > 40 || c.G > 40 || c.B > 40 {
+		t.Fatalf("matching plate %+v want black", c)
+	}
+}
+
 func TestDebugFramesPaintsFittedTriangle(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	got := image.NewNRGBA(image.Rect(0, 0, 8, 8))

@@ -537,6 +537,22 @@ func ringSubtract(keep, cut [][2]float64, bounds image.Rectangle) []pix {
 	return out
 }
 
+func ringAnd(a, b [][2]float64, bounds image.Rectangle) []pix {
+	if len(a) < 3 || len(b) < 3 || bounds.Empty() {
+		return nil
+	}
+	var out []pix
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			fx, fy := float64(x)+0.5, float64(y)+0.5
+			if pointInRing(a, fx, fy) && pointInRing(b, fx, fy) {
+				out = append(out, pix{x, y})
+			}
+		}
+	}
+	return out
+}
+
 func leftoverIsHole(owned, leftover []pix) bool {
 	drop := pixSet(leftover)
 	defer releaseBits(drop)
@@ -620,9 +636,7 @@ func longerBite(bite [][2]float64, a, b [2]float64) [][2]float64 {
 	walk := func(step int) [][2]float64 {
 		var out [][2]float64
 		for i := ia; i != ib; i = (i + step + n) % n {
-			if i != ia {
-				out = append(out, bite[i])
-			}
+			out = append(out, bite[i])
 		}
 		return out
 	}

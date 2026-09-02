@@ -928,6 +928,66 @@ func TestHottestIncludesCloseTintHalo(t *testing.T) {
 	}
 }
 
+func mildCyanStrip() (light, dark color.NRGBA, delta float64) {
+	light = color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	for _, t := range []float64{0.99, 0.98, 0.97, 0.96, 0.95} {
+		c := color.NRGBA{
+			R: uint8(float64(light.R) * t),
+			G: uint8(float64(light.G) * t),
+			B: uint8(float64(light.B) * t),
+			A: 255,
+		}
+		e := loss.ColorAt(light, c)
+		if e > 0 && e <= minErr {
+			return light, c, e
+		}
+	}
+	return light, light, 0
+}
+
+func TestLeftoverDeltaBandSelectsMildStrip(t *testing.T) {
+	light, dark, delta := mildCyanStrip()
+	if delta <= 0 || delta > minErr {
+		t.Fatalf("ColorAt(light, dark)=%.3f want a (0,minErr] HSV delta", delta)
+	}
+	got := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			got.SetNRGBA(x, y, light)
+			c := light
+			if y >= 8 {
+				c = dark
+			}
+			want.SetNRGBA(x, y, c)
+		}
+	}
+	if _, island := (&world{got: got, want: want, w: 16, h: 16}).hottest(); len(island) != 0 {
+		t.Fatalf("hottest=%d want none; the strip is below minErr", len(island))
+	}
+	lefts := (&world{got: got, want: want, w: 16, h: 16}).leftovers()
+	var strip leftover
+	for _, left := range lefts {
+		if left.region {
+			continue
+		}
+		if len(left.island) > len(strip.island) {
+			strip = left
+		}
+	}
+	if len(strip.island) < 16*8 {
+		t.Fatalf("strip leftover=%d want the darker half so absorb can rank it", len(strip.island))
+	}
+	s := &world{got: got, want: want, w: 16, h: 16, paths: 1}
+	if ops := s.leftoverOperators(strip, 1); len(ops) != 0 {
+		t.Fatal("mild HSV-delta leftover must not add a plate")
+	}
+	ops := s.leftoverOperators(strip, 2)
+	if len(ops) != 1 || ops[0].ID() != OpAbsorb {
+		t.Fatalf("mild band ops=%v want absorb only", ops)
+	}
+}
+
 func TestHottestGlowsColorFromRim(t *testing.T) {
 	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
 	got := image.NewNRGBA(image.Rect(0, 0, 20, 20))
@@ -955,6 +1015,72 @@ func TestHottestGlowsColorFromRim(t *testing.T) {
 	}
 	if len(lefts[0].glow) < 144 {
 		t.Fatalf("glow=%d want the full cyan plate, not only the residual rim", len(lefts[0].glow))
+	}
+	var region leftover
+	for _, left := range lefts {
+		if left.region && len(left.island) > len(region.island) {
+			region = left
+		}
+	}
+	if len(region.island) < 144 {
+		t.Fatalf("region=%d want a ranked cover leftover of the cyan plate", len(region.island))
+	}
+	if !(Triangle{world: s, left: region}).Applies() {
+		t.Fatal("triangle on the color region must be rankable")
+	}
+	if !(&Grow{world: s, left: region}).Applies() {
+		t.Fatal("grow on the color region must be rankable")
+	}
+}
+
+func TestLeftoverColorRegionFromBlendRim(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	blend := color.NRGBA{R: 128, G: 214, B: 235, A: 255}
+	got := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	want := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 16; y++ {
+		for x := 4; x < 16; x++ {
+			want.SetNRGBA(x, y, cyan)
+		}
+	}
+	for y := 4; y < 16; y++ {
+		want.SetNRGBA(4, y, blend)
+		want.SetNRGBA(15, y, blend)
+	}
+	for x := 4; x < 16; x++ {
+		want.SetNRGBA(x, 4, blend)
+		want.SetNRGBA(x, 15, blend)
+	}
+	for y := 6; y < 14; y++ {
+		for x := 6; x < 14; x++ {
+			got.SetNRGBA(x, y, cyan)
+		}
+	}
+	s := &world{got: got, want: want, w: 20, h: 20, fills: []color.NRGBA{cyan}}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	if lefts[0].region {
+		t.Fatal("leftovers[0] must stay the residual miss")
+	}
+	if n := len(lefts[0].island); n >= 144 {
+		t.Fatalf("residual=%d want the blend rim, not the plate", n)
+	}
+	var region leftover
+	for _, left := range lefts {
+		if left.region && len(left.island) > len(region.island) {
+			region = left
+		}
+	}
+	if len(region.island) < 144 {
+		t.Fatalf("region=%d want the cyan plate so cover ops can be ranked", len(region.island))
 	}
 }
 
@@ -1557,6 +1683,9 @@ func TestSubtractDropsPaperNotch(t *testing.T) {
 	if c := s.got.NRGBAAt(8, 20); loss.ColorAt(c, cyan) > minErr {
 		t.Fatalf("body %+v want cyan", c)
 	}
+	if n := pathPts(s.doc.Children()[1]); n > 8 {
+		t.Fatalf("verts=%d want a spliced notch, not a pixel outline", n)
+	}
 }
 
 func TestSwapUncoversMark(t *testing.T) {
@@ -1704,6 +1833,9 @@ func TestShrinkOuterDentsRectNotch(t *testing.T) {
 	}
 	if !pointInRing(got, 4, 12) {
 		t.Fatalf("body lost %v", got)
+	}
+	if !pointInRing(got, 6, 4) {
+		t.Fatalf("one-edge splice cut the body %v", got)
 	}
 }
 

@@ -8,9 +8,9 @@ import (
 )
 
 // DebugFrames is the leftover view. Heat is leftoverHeat 0-1
-// (black match, red miss). Island is every Score miss (white),
-// the color-glow leftover hypothesis (white), and the inscribed
-// triangle (orange).
+// (black match, red miss). Island is every leftover-band residual
+// (white), the color-glow leftover hypothesis (white), and the
+// inscribed triangle (orange).
 func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *image.NRGBA) {
 	if want == nil {
 		return nil, nil
@@ -36,6 +36,17 @@ func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *imag
 				c = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 			}
 			island.SetNRGBA(b.Min.X+x, b.Min.Y+y, c)
+		}
+	}
+	s := &world{got: got, want: want, gotP: gotP, wantP: wantP, w: w, h: h}
+	for _, left := range s.leftovers() {
+		if left.region {
+			continue
+		}
+		for _, p := range left.island {
+			if p.x >= 0 && p.y >= 0 && p.x < w && p.y < h {
+				island.SetNRGBA(b.Min.X+p.x, b.Min.Y+p.y, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+			}
 		}
 	}
 	for _, p := range blob {
