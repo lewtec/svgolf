@@ -639,7 +639,7 @@ func (s Subtract) Run() (formPick, error) {
 			if !hasInterior(rem) {
 				continue
 			}
-			ring := hullRing(rem)
+			ring := coverRing(rem)
 			if len(ring) < 3 {
 				continue
 			}
@@ -648,9 +648,17 @@ func (s Subtract) Run() (formPick, error) {
 				cand = cand.WithLinearFill(lin)
 			}
 			g := w.seedGrow(grow{i: j, work: rem, fill: w.fills[j], ring: ring})
-			pick, err := w.scoreCand(replaceAt(w.doc, j+1, cand.Node()), cand.Node(), g, OpSubtract)
+			next := replaceAt(w.doc, j+1, cand.Node())
+			dropCutter := paperLeftover(w.fills[i])
+			if dropCutter {
+				next = dropAt(next, i+1)
+			}
+			pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
 			if err != nil {
 				return nonePick(), err
+			}
+			if dropCutter {
+				pick.dropIdx = i
 			}
 			if betterPick(pick, best) {
 				best = pick
@@ -794,22 +802,24 @@ func (b Bend) Run() (formPick, error) {
 		if n < 3 {
 			continue
 		}
-		ctr := leftoverCenter(b.left.island)
-		ei, bestD := 0, -1.0
+		ei, bestD := -1, -1.0
+		var pull [2]float64
 		for e := 0; e < n; e++ {
 			a, c := outer.verts[e], outer.verts[(e+1)%n]
 			mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
-			d := (mid[0]-ctr[0])*(mid[0]-ctr[0]) + (mid[1]-ctr[1])*(mid[1]-ctr[1])
+			near := nearest(target, mid)
+			if near[0] == mid[0] && near[1] == mid[1] {
+				continue
+			}
+			d := (mid[0]-near[0])*(mid[0]-near[0]) + (mid[1]-near[1])*(mid[1]-near[1])
 			if bestD < 0 || d < bestD {
-				ei, bestD = e, d
+				ei, bestD, pull = e, d, near
 			}
 		}
-		a, c := outer.verts[ei], outer.verts[(ei+1)%n]
-		mid := [2]float64{(a[0] + c[0]) / 2, (a[1] + c[1]) / 2}
-		pull := nearest(target, mid)
-		if pull[0] == mid[0] && pull[1] == mid[1] {
-			pull = ctr
+		if ei < 0 {
+			continue
 		}
+		a, c := outer.verts[ei], outer.verts[(ei+1)%n]
 		c1 := [2]float64{(a[0] + pull[0]) / 2, (a[1] + pull[1]) / 2}
 		c2 := [2]float64{(c[0] + pull[0]) / 2, (c[1] + pull[1]) / 2}
 		cmd := svg.PathCmd{Kind: svg.CmdCubic, X1: c1[0], Y1: c1[1], X2: c2[0], Y2: c2[1], X: c[0], Y: c[1]}

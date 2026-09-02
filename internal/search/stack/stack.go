@@ -582,6 +582,11 @@ func (s *world) apply(pick formPick) {
 		clearOwner(s.owner, id)
 		claim(s.owner, pick.work, s.w, id)
 		s.fills[pick.replace] = pick.fill
+		if pick.dropIdx >= 0 {
+			dropOwner(s.owner, uint16(pick.dropIdx+1), s.paths)
+			s.fills = append(s.fills[:pick.dropIdx], s.fills[pick.dropIdx+1:]...)
+			s.paths--
+		}
 	} else if pick.insert >= 0 && pick.insert < s.paths {
 		id := uint16(pick.insert + 1)
 		for i, v := range s.owner {

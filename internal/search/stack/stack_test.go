@@ -240,7 +240,7 @@ func TestFolderTabGetsTriangle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab := got.NRGBAAt(16, 5)
+	tab := got.NRGBAAt(17, 6)
 	if loss.ColorAt(tab, cyan) > minErr {
 		t.Fatalf("tab %+v want cyan", tab)
 	}
@@ -1431,6 +1431,76 @@ func TestSubtractPunchesOverlap(t *testing.T) {
 	}
 	if c := s.got.NRGBAAt(24, 8); c.B < 200 {
 		t.Fatalf("blue body lost %+v", c)
+	}
+}
+
+func TestSubtractDropsPaperNotch(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 8; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			if x >= 16 && y < 16 {
+				continue
+			}
+			want.SetNRGBA(x, y, cyan)
+		}
+	}
+	plate := filledPath([][2]float64{{4, 8}, {28, 8}, {28, 28}, {4, 28}}, cyan)
+	cut := filledPath([][2]float64{{16, 8}, {28, 8}, {28, 16}, {16, 16}}, paper)
+	doc := svg.NewDocument(32, 32).WithViewBox(0, 0, 32, 32)
+	doc = doc.Append(whitePane(32, 32).Node()).Append(plate.Node()).Append(cut.Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := make([]uint16, 32*32)
+	for y := 8; y < 28; y++ {
+		for x := 4; x < 28; x++ {
+			if x >= 16 && y < 16 {
+				owner[y*32+x] = 2
+			} else {
+				owner[y*32+x] = 1
+			}
+		}
+	}
+	s := &world{
+		want:   want,
+		got:    got,
+		wantP:  loss.NewPlane(want),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  owner,
+		fills:  []color.NRGBA{cyan, paper},
+		paths:  2,
+		w:      32,
+		h:      32,
+		errSum: Score(got, want),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("subtract=false want paper rectangle punched out of the plate")
+	}
+	s.apply(pick)
+	if n := s.paths; n != 1 {
+		t.Fatalf("paths=%d want 1 (cutter dropped)", n)
+	}
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("plate missing")
+	}
+	if p.FillRule() == svg.FillEvenOdd {
+		t.Fatal("subtract stacked an evenodd hole")
+	}
+	if c := s.got.NRGBAAt(20, 12); c.R < 200 || c.G < 200 {
+		t.Fatalf("notch %+v want paper", c)
+	}
+	if c := s.got.NRGBAAt(8, 20); loss.ColorAt(c, cyan) > minErr {
+		t.Fatalf("body %+v want cyan", c)
 	}
 }
 
