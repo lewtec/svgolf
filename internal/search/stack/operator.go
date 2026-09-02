@@ -108,7 +108,7 @@ type Triangle struct {
 
 func (Triangle) ID() Op { return OpTriangle }
 func (tr Triangle) Applies() bool {
-	return tr.left.big() && tr.world.paths < maxPaths
+	return tr.left.big() && !tr.left.region && tr.world.paths < maxPaths
 }
 
 func (tr Triangle) Run() (formPick, error) {
@@ -123,6 +123,13 @@ func (tr Triangle) Run() (formPick, error) {
 	work := trianglePix(ring)
 	if len(work) < minIsland {
 		return nonePick(), nil
+	}
+	in := pixSet(g.work)
+	defer releaseBits(in)
+	for _, p := range work {
+		if !in.has(p) {
+			return nonePick(), nil
+		}
 	}
 	g.work = work
 	g.ring = ring

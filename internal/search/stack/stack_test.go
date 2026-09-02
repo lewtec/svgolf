@@ -1025,8 +1025,8 @@ func TestHottestGlowsColorFromRim(t *testing.T) {
 	if len(region.island) < 144 {
 		t.Fatalf("region=%d want a ranked cover leftover of the cyan plate", len(region.island))
 	}
-	if !(Triangle{world: s, left: region}).Applies() {
-		t.Fatal("triangle on the color region must be rankable")
+	if (Triangle{world: s, left: region}).Applies() {
+		t.Fatal("triangle on a color-region leftover would paint already-matching pixels")
 	}
 	if !(&Grow{world: s, left: region}).Applies() {
 		t.Fatal("grow on the color region must be rankable")
@@ -1268,6 +1268,57 @@ func TestLargestTriangleManyHolesDoesNotExplode(t *testing.T) {
 	// allocation and kill the process. A triangle is optional;
 	// finishing is not.
 	_ = largestTriangle(island)
+}
+
+func TestLargestTriangleSkipsRoundedBBoxCorner(t *testing.T) {
+	var island []pix
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if (x < 3 && y < 3) || (x >= 13 && y < 3) || (x < 3 && y >= 13) || (x >= 13 && y >= 13) {
+				continue
+			}
+			island = append(island, pix{x, y})
+		}
+	}
+	in := pixSet(island)
+	defer releaseBits(in)
+	ring := largestTriangle(island)
+	if len(ring) != 3 {
+		t.Fatalf("ring=%v want an inscribed triangle", ring)
+	}
+	for _, p := range trianglePix(ring) {
+		if !in.has(p) {
+			t.Fatalf("triangle covered black bbox corner %v", p)
+		}
+	}
+	if in.has(pix{0, 0}) {
+		t.Fatal("setup: bbox corner should be empty")
+	}
+}
+
+func TestLargestTriangleDoesNotFillHollowFrame(t *testing.T) {
+	var island []pix
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			if x < 2 || x >= 18 || y < 2 || y >= 18 {
+				island = append(island, pix{x, y})
+			}
+		}
+	}
+	in := pixSet(island)
+	defer releaseBits(in)
+	ring := largestTriangle(island)
+	if len(ring) == 0 {
+		return
+	}
+	if len(ring) != 3 {
+		t.Fatalf("ring=%v", ring)
+	}
+	for _, p := range trianglePix(ring) {
+		if !in.has(p) {
+			t.Fatalf("triangle covered a hole pixel %v (bbox of the frame, not the filled rim)", p)
+		}
+	}
 }
 
 func TestLargestTriangleStaysInsideL(t *testing.T) {

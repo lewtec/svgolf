@@ -182,15 +182,7 @@ func pointInTriangle(p, a, b, c [2]float64) bool {
 	return u >= 0 && v >= 0 && u+v <= 1
 }
 
-func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
-	if triangleArea2(a, b, c) == 0 {
-		return 0
-	}
-	cx := (a[0] + b[0] + c[0]) / 3
-	cy := (a[1] + b[1] + c[1]) / 3
-	if pointInTriangle([2]float64{cx, cy}, a, b, c) && !set.has(pix{int(cx), int(cy)}) {
-		return 0
-	}
+func triangleBounds(a, b, c [2]float64) (x0, x1, y0, y1 int) {
 	minX, maxX := a[0], a[0]
 	minY, maxY := a[1], a[1]
 	for _, p := range [][2]float64{b, c} {
@@ -207,8 +199,21 @@ func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
 			maxY = p[1]
 		}
 	}
-	x0, x1 := int(minX), int(maxX)
-	y0, y1 := int(minY), int(maxY)
+	x0, x1 = int(minX), int(maxX)
+	y0, y1 = int(minY), int(maxY)
+	return x0, x1, y0, y1
+}
+
+func triangleInsideCount(set *pixBits, a, b, c [2]float64) int {
+	if triangleArea2(a, b, c) == 0 {
+		return 0
+	}
+	cx := (a[0] + b[0] + c[0]) / 3
+	cy := (a[1] + b[1] + c[1]) / 3
+	if pointInTriangle([2]float64{cx, cy}, a, b, c) && !set.has(pix{int(cx), int(cy)}) {
+		return 0
+	}
+	x0, x1, y0, y1 := triangleBounds(a, b, c)
 	n := 0
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
@@ -232,24 +237,7 @@ func trianglePix(ring [][2]float64) []pix {
 	if triangleArea2(a, b, c) == 0 {
 		return nil
 	}
-	minX, maxX := a[0], a[0]
-	minY, maxY := a[1], a[1]
-	for _, p := range [][2]float64{b, c} {
-		if p[0] < minX {
-			minX = p[0]
-		}
-		if p[0] > maxX {
-			maxX = p[0]
-		}
-		if p[1] < minY {
-			minY = p[1]
-		}
-		if p[1] > maxY {
-			maxY = p[1]
-		}
-	}
-	x0, x1 := int(minX), int(maxX)
-	y0, y1 := int(minY), int(maxY)
+	x0, x1, y0, y1 := triangleBounds(a, b, c)
 	var out []pix
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
