@@ -28,6 +28,9 @@ const (
 	// leftoverPicks = 3
 	leftoverPicks = 1
 	survivorPicks = 3
+	// polishBand is simplify-until-stall. Other bands do not
+	// schedule it, so a cheap vertex drop cannot starve join.
+	polishBand = 5
 )
 
 // leftoverDeltaBands are exclusive HSV ColorAt ranges (0..180).
@@ -334,6 +337,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		}
 		archive := []snapshot{s.snap()}
 		band := 1
+		polished := false
+		polishHelped := false
 		yielded := false
 		for {
 			if err := ctx.Err(); err != nil {
@@ -344,18 +349,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			var pool []formPick
 			var rated []search.Rated
-			if band <= 3 {
-				for _, member := range archive {
-					s.load(member)
-					picks, pr, err := s.choose(ctx, s.leftovers(), member, band)
-					if err != nil {
-						yield(search.Epoch{}, err)
-						return
-					}
-					pool = append(pool, picks...)
-					rated = mergeRated(rated, pr)
-				}
-			} else {
+			if band == 4 {
 				miss := make([][]leftover, len(archive))
 				for j, member := range archive {
 					s.load(member)
@@ -376,6 +370,17 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 						rated = mergeRated(rated, pr)
 					}
 				}
+			} else {
+				for _, member := range archive {
+					s.load(member)
+					picks, pr, err := s.choose(ctx, s.leftovers(), member, band)
+					if err != nil {
+						yield(search.Epoch{}, err)
+						return
+					}
+					pool = append(pool, picks...)
+					rated = mergeRated(rated, pr)
+				}
 			}
 			next, improved := s.archiveUpdate(archive, pool, band)
 			if improved {
@@ -387,6 +392,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				if !emit(archive[0].operator, blob, fitted, rated) {
 					return
 				}
+				if band == polishBand {
+					polishHelped = true
+					continue
+				}
+				polished = false
+				polishHelped = false
 				// After a leftover add, score wash/join against
 				// the next ear in the same neighborhood.
 				if leftoverAdd(archive[0].operator) {
@@ -402,6 +413,19 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			if band == 3 {
 				band = 4
+				continue
+			}
+			if band == 4 {
+				if polished {
+					break
+				}
+				band = polishBand
+				polishHelped = false
+				continue
+			}
+			polished = true
+			if polishHelped {
+				band = 1
 				continue
 			}
 			break
@@ -1260,21 +1284,29 @@ func regionWorthTrying(ring [][2]float64, got, want *loss.Plane) bool {
 	return !seen
 }
 
+func (r pathRing) lineColinear(i int) bool {
+	n := len(r.verts)
+	if n < 3 || i < 0 || i >= n || len(r.edges) != n {
+		return false
+	}
+	prev := (i - 1 + n) % n
+	if r.edges[prev].Kind != svg.CmdLine && r.edges[prev].Kind != svg.CmdClose {
+		return false
+	}
+	if r.edges[i].Kind != svg.CmdLine && r.edges[i].Kind != svg.CmdClose {
+		return false
+	}
+	a, b, c := r.verts[prev], r.verts[i], r.verts[(i+1)%n]
+	return (b[0]-a[0])*(c[1]-a[1]) == (b[1]-a[1])*(c[0]-a[0])
+}
+
 func (r pathRing) collapseColinearLines() pathRing {
 	out := r
 	for len(out.verts) > 3 && len(out.edges) == len(out.verts) {
 		n := len(out.verts)
 		drop := -1
 		for i := 0; i < n; i++ {
-			prev := (i - 1 + n) % n
-			if out.edges[prev].Kind != svg.CmdLine && out.edges[prev].Kind != svg.CmdClose {
-				continue
-			}
-			if out.edges[i].Kind != svg.CmdLine && out.edges[i].Kind != svg.CmdClose {
-				continue
-			}
-			a, b, c := out.verts[prev], out.verts[i], out.verts[(i+1)%n]
-			if (b[0]-a[0])*(c[1]-a[1]) == (b[1]-a[1])*(c[0]-a[0]) {
+			if out.lineColinear(i) {
 				drop = i
 				break
 			}

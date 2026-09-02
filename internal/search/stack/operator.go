@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -356,7 +357,8 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-// Simplify drops one vertex.
+// Simplify drops one vertex. A colinear line vertex if any
+// exist, otherwise any vertex. Epochs rank the rest.
 type Simplify struct {
 	world   *world
 	buckets [][]pix
@@ -369,12 +371,12 @@ func (s Simplify) Applies() bool {
 
 func (s Simplify) Run() (formPick, error) {
 	w := s.world
-	type job struct {
-		next svg.Document
-		node svg.Node
-		g    grow
+	type drop struct {
+		i, v  int
+		outer pathRing
+		holes []pathRing
 	}
-	var jobs []job
+	var colinear, any []drop
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
@@ -382,75 +384,47 @@ func (s Simplify) Run() (formPick, error) {
 			continue
 		}
 		rings := parsePathRings(p)
-		if len(rings) == 0 {
+		if len(rings) == 0 || len(rings[0].verts) < 4 {
 			continue
 		}
-		g := w.seedGrow(grow{i: i, work: s.buckets[i], fill: w.fills[i]})
-		lin, hasLin := node.LinearFill()
-		paint := func(outer pathRing, holes []pathRing) svg.Path {
-			cand := filledRings(outer, holes, w.fills[i])
-			if hasLin {
-				cand = cand.WithLinearFill(lin)
-			}
-			return cand
-		}
-		propose := func(outer pathRing, holes []pathRing, dirty image.Rectangle) {
-			if len(outer.verts) < 3 || ringCrosses(outer.points()) {
-				return
-			}
-			cand := paint(outer, holes)
-			lg := g
-			if !dirty.Empty() {
-				lg.dirty0 = dirty
-			}
-			jobs = append(jobs, job{next: replaceAt(w.doc, i+1, cand.Node()), node: cand.Node(), g: lg})
-		}
 		outer := rings[0]
-		work := outer.collapseColinearLines()
-		if len(work.verts) < len(outer.verts) {
-			propose(work, rings[1:], g.dirty0)
-		}
-		if len(work.verts) >= 4 {
-			n := len(work.verts)
-			for v := 0; v < n; v++ {
-				prev := (v - 1 + n) % n
-				next := (v + 1) % n
-				fan := [][2]float64{work.verts[prev], work.verts[v], work.verts[next]}
-				if !regionWorthTrying(fan, w.gotP, w.wantP) {
-					continue
-				}
-				propose(work.dropVertex(v), rings[1:], pointsRect(fan))
+		for v := 0; v < len(outer.verts); v++ {
+			d := drop{i: i, v: v, outer: outer, holes: rings[1:]}
+			any = append(any, d)
+			if outer.lineColinear(v) {
+				colinear = append(colinear, d)
 			}
 		}
 	}
-	if len(jobs) == 0 {
+	pool := any
+	if len(colinear) > 0 {
+		pool = colinear
+	}
+	if len(pool) == 0 {
 		return nonePick(), nil
 	}
-	var mu sync.Mutex
-	best := nonePick()
-	eg := new(errgroup.Group)
-	for _, job := range jobs {
-		job := job
-		eg.Go(func() error {
-			pick, err := w.scoreCand(job.next, job.node, job.g, OpSimplify)
-			if err != nil {
-				return err
-			}
-			if pick.ok && pick.errSum > w.errSum {
-				pick.ok = false
-			}
-			mu.Lock()
-			if betterPick(pick, best) {
-				best = pick
-			}
-			mu.Unlock()
-			return nil
-		})
+	d := pool[rand.IntN(len(pool))]
+	moved := d.outer.dropVertex(d.v)
+	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+		return nonePick(), nil
 	}
-	if err := eg.Wait(); err != nil {
+	node := w.doc.Children()[d.i+1]
+	cand := filledRings(moved, d.holes, w.fills[d.i])
+	if lin, ok := node.LinearFill(); ok {
+		cand = cand.WithLinearFill(lin)
+	}
+	n := len(d.outer.verts)
+	prev, next := (d.v-1+n)%n, (d.v+1)%n
+	fan := [][2]float64{d.outer.verts[prev], d.outer.verts[d.v], d.outer.verts[next]}
+	g := w.seedGrow(grow{i: d.i, work: s.buckets[d.i], fill: w.fills[d.i], dirty0: pointsRect(fan)})
+	pick, err := w.scoreCand(replaceAt(w.doc, d.i+1, cand.Node()), cand.Node(), g, OpSimplify)
+	if err != nil {
 		return nonePick(), err
 	}
-	return best, nil
+	if pick.ok && pick.errSum > w.errSum {
+		pick.ok = false
+	}
+	return pick, nil
 }
 
 // Unhole drops one evenodd hole.
@@ -1023,14 +997,14 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 }
 
 func (s *world) worldOperators(band int) []Operator {
-	if band != 1 && band != 2 {
+	if band != 2 && band != polishBand {
 		return nil
 	}
 	var buckets [][]pix
 	if s.paths > 0 {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
-	if band == 1 {
+	if band == polishBand {
 		return []Operator{
 			op{id: OpSimplify, world: s, buckets: buckets},
 			op{id: OpUnhole, world: s, buckets: buckets},

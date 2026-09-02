@@ -279,26 +279,57 @@ func TestGrowCarveAreLateBand(t *testing.T) {
 	}
 }
 
-func TestSimplifyIsBandOne(t *testing.T) {
+func TestSimplifyIsPolishBand(t *testing.T) {
 	s := &world{paths: 1}
+	for _, band := range []int{1, 2, 3, 4} {
+		for _, o := range s.worldOperators(band) {
+			if o.ID() == OpSimplify || o.ID() == OpUnhole {
+				t.Fatalf("%s scheduled in band %d; polish waits until geometry stalls", o.ID(), band)
+			}
+		}
+	}
 	foundSimplify, foundUnhole := false, false
-	for _, o := range s.worldOperators(1) {
+	for _, o := range s.worldOperators(polishBand) {
 		switch o.ID() {
 		case OpSimplify:
 			foundSimplify = true
 		case OpUnhole:
 			foundUnhole = true
+		default:
+			t.Fatalf("%s scheduled with polish; simplify must be alone", o.ID())
 		}
 	}
 	if !foundSimplify {
-		t.Fatal("simplify not scheduled in band 1")
+		t.Fatal("simplify not scheduled in the polish band")
 	}
 	if !foundUnhole {
-		t.Fatal("unhole not scheduled in band 1")
+		t.Fatal("unhole not scheduled in the polish band")
 	}
-	for _, o := range s.worldOperators(2) {
-		if o.ID() == OpSimplify || o.ID() == OpUnhole {
-			t.Fatalf("%s scheduled in band 2", o.ID())
+}
+
+func TestSimplifyRouteIsAlone(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	for ep, err := range (Stack{}).Search(t.Context(), img) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		polish := false
+		other := false
+		for _, r := range ep.Rated {
+			switch r.Name {
+			case OpSimplify.String(), OpUnhole.String():
+				polish = true
+			default:
+				other = true
+			}
+		}
+		if polish && other {
+			t.Fatalf("simplify shared a neighborhood: %v", ep.Rated)
 		}
 	}
 }
@@ -388,6 +419,53 @@ func TestSimplifyKeepsUntouchedCubic(t *testing.T) {
 	}
 	if n := pathPts(p.Node()); n != 4 {
 		t.Fatalf("verts=%d want 4 after dropping the colinear point", n)
+	}
+}
+
+func TestSimplifyDropsOneColinearVertex(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	ring := [][2]float64{{0, 0}, {4, 0}, {8, 0}, {16, 0}, {16, 16}, {0, 16}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(ring, red).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 16*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("simplify=false want drop one colinear vertex")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if n := pathPts(p.Node()); n != 5 {
+		t.Fatalf("verts=%d want 5; one drop, not the whole colinear run", n)
 	}
 }
 
