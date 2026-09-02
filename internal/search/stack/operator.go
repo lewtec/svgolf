@@ -778,7 +778,11 @@ func (b Bend) Applies() bool {
 
 func (b Bend) Run() (formPick, error) {
 	s := b.world
-	target := outline(b.left.island)
+	shape := b.left.glow
+	if len(shape) == 0 {
+		shape = b.left.island
+	}
+	target := outline(shape)
 	if len(target) < 1 {
 		return nonePick(), nil
 	}
@@ -981,7 +985,10 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 			if p.ok {
 				p.parent = parent
 				if job.bound {
-					p.island = job.left.island
+					p.island = job.left.glow
+					if len(p.island) == 0 {
+						p.island = job.left.island
+					}
 				}
 			}
 			elapsed := time.Since(started)

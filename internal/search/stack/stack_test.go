@@ -928,6 +928,61 @@ func TestHottestIncludesCloseTintHalo(t *testing.T) {
 	}
 }
 
+func TestHottestGlowsColorFromRim(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	got := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	want := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 4; y < 16; y++ {
+		for x := 4; x < 16; x++ {
+			want.SetNRGBA(x, y, cyan)
+		}
+	}
+	for y := 6; y < 14; y++ {
+		for x := 6; x < 14; x++ {
+			got.SetNRGBA(x, y, cyan)
+		}
+	}
+	s := &world{got: got, want: want, w: 20, h: 20}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	if len(lefts[0].glow) < 144 {
+		t.Fatalf("glow=%d want the full cyan plate, not only the residual rim", len(lefts[0].glow))
+	}
+}
+
+func TestHottestDoesNotGlowPaper(t *testing.T) {
+	cyan := color.NRGBA{R: 0, G: 173, B: 216, A: 255}
+	got := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	want := image.NewNRGBA(image.Rect(0, 0, 24, 24))
+	for y := 0; y < 24; y++ {
+		for x := 0; x < 24; x++ {
+			got.SetNRGBA(x, y, paper)
+			want.SetNRGBA(x, y, paper)
+		}
+	}
+	for y := 8; y < 16; y++ {
+		for x := 8; x < 16; x++ {
+			got.SetNRGBA(x, y, cyan)
+		}
+	}
+	s := &world{got: got, want: want, w: 24, h: 24}
+	lefts := s.leftovers()
+	if len(lefts) == 0 {
+		t.Fatal("no leftover")
+	}
+	if n := len(lefts[0].glow); n != 64 {
+		t.Fatalf("glow=%d want the 8x8 overshoot, not the paper background", n)
+	}
+}
+
 func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 	c, w, j, r := 40.0, 10.0, 20.0, 30.0
 	rated := []search.Rated{

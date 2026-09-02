@@ -103,6 +103,7 @@ func LogCandidates(w io.Writer) {
 // fresh is the new-plate grow (work=island, i=-1).
 type leftover struct {
 	island []pix
+	glow   []pix
 	col    color.NRGBA
 	paper  bool
 	grows  []grow
@@ -407,7 +408,14 @@ func (s *world) leftovers() []leftover {
 	blobs := s.hottestN(leftoverPicks)
 	out := make([]leftover, 0, len(blobs))
 	for _, b := range blobs {
-		out = append(out, leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)})
+		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col)}
+		if !left.paper {
+			left.glow = s.glowByColor(b, s.gotP, s.wantP).island
+		}
+		if len(left.glow) == 0 {
+			left.glow = left.island
+		}
+		out = append(out, left)
 	}
 	return s.bindLeftovers(out)
 }

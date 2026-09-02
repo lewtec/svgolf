@@ -331,6 +331,70 @@ func (s *world) stampResidual(gotP, wantP *loss.Plane, w, h int, b image.Rectang
 	return any
 }
 
+func (s *world) glowByColor(b leftoverBlob, gotP, wantP *loss.Plane) leftoverBlob {
+	if paperLeftover(b.col) || len(b.island) == 0 || s.want == nil {
+		return b
+	}
+	w, h := s.w, s.h
+	if w == 0 || h == 0 {
+		r := s.want.Bounds()
+		w, h = r.Dx(), r.Dy()
+	}
+	s.scratch.ensure(w * h)
+	seen := s.scratch.seen
+	clear(seen)
+	bin := coarse(b.col)
+	var pending []pix
+	for _, p := range b.island {
+		if uint(p.x) >= uint(w) || uint(p.y) >= uint(h) {
+			continue
+		}
+		if seen[p.y*w+p.x] != 0 {
+			continue
+		}
+		wc := s.want.NRGBAAt(p.x, p.y)
+		if paperLeftover(wc) || coarse(wc) != bin {
+			continue
+		}
+		seen[p.y*w+p.x] = 1
+		pending = append(pending, p)
+	}
+	if len(pending) == 0 {
+		return b
+	}
+	out := make([]pix, 0, len(b.island))
+	var errSum float64
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for len(pending) > 0 {
+		p := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		out = append(out, p)
+		errSum += errAtHSV(gotP.At(p.x, p.y), wantP.At(p.x, p.y))
+		for _, d := range dirs {
+			nx, ny := p.x+d.x, p.y+d.y
+			if uint(nx) >= uint(w) || uint(ny) >= uint(h) {
+				continue
+			}
+			i := ny*w + nx
+			if seen[i] != 0 {
+				continue
+			}
+			wc := s.want.NRGBAAt(nx, ny)
+			if paperLeftover(wc) || coarse(wc) != bin {
+				continue
+			}
+			seen[i] = 1
+			pending = append(pending, pix{nx, ny})
+		}
+	}
+	if len(out) < len(b.island) {
+		return b
+	}
+	b.island = out
+	b.errSum = errSum
+	return b
+}
+
 func (s *world) unfloodMark() {
 	for i, v := range s.scratch.mark {
 		if v == 2 {
