@@ -1137,7 +1137,7 @@ func collectRated(bestByOp map[Op]*namedPick) []search.Rated {
 		if !ok {
 			continue
 		}
-		r := search.Rated{Name: id.String(), Ok: st.pick.ok}
+		r := search.Rated{Op: id, Ok: st.pick.ok}
 		if st.pick.scored {
 			score := st.pick.errSum
 			r.Score = &score
@@ -1148,23 +1148,23 @@ func collectRated(bestByOp map[Op]*namedPick) []search.Rated {
 }
 
 func mergeRated(dst, src []search.Rated) []search.Rated {
-	by := make(map[string]search.Rated, len(dst)+len(src))
+	by := make(map[Op]search.Rated, len(dst)+len(src))
 	for _, r := range dst {
-		by[r.Name] = r
+		by[r.Op] = r
 	}
 	for _, r := range src {
-		old, ok := by[r.Name]
+		old, ok := by[r.Op]
 		if !ok {
-			by[r.Name] = r
+			by[r.Op] = r
 			continue
 		}
 		if r.Score != nil && (old.Score == nil || *r.Score < *old.Score) {
-			by[r.Name] = r
+			by[r.Op] = r
 		}
 	}
 	var out []search.Rated
 	for id := OpNone + 1; id < opCount; id++ {
-		if r, ok := by[id.String()]; ok {
+		if r, ok := by[id]; ok {
 			out = append(out, r)
 		}
 	}

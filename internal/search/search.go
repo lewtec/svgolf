@@ -32,7 +32,7 @@ type Epoch struct {
 
 // Rated is one operator's best proposal in an epoch.
 type Rated struct {
-	Name   string   `json:"name"`
+	Op     Op       `json:"name"`
 	Score  *float64 `json:"score"`
 	Ok     bool     `json:"ok"`
 	Best   bool     `json:"best,omitempty"`

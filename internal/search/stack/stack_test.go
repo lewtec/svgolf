@@ -202,11 +202,11 @@ func TestLaterEpochRatesTriangle(t *testing.T) {
 		leftover := false
 		add := false
 		for _, r := range ep.Rated {
-			switch r.Name {
-			case OpSlide.String(), OpBend.String(), OpGrow.String(), OpCarve.String(), OpAbsorb.String(), OpTriangle.String(), OpRectangle.String(), OpRing.String():
+			switch r.Op {
+			case OpSlide, OpBend, OpGrow, OpCarve, OpAbsorb, OpTriangle, OpRectangle, OpRing:
 				leftover = true
 			}
-			if r.Name == OpTriangle.String() || r.Name == OpRectangle.String() || r.Name == OpRing.String() {
+			if leftoverAdd(r.Op) {
 				add = true
 			}
 		}
@@ -362,8 +362,8 @@ func TestSimplifyRouteIsAlone(t *testing.T) {
 		polish := false
 		other := false
 		for _, r := range ep.Rated {
-			switch r.Name {
-			case OpSimplify.String(), OpUnhole.String():
+			switch r.Op {
+			case OpSimplify, OpUnhole:
 				polish = true
 			default:
 				other = true
@@ -1308,10 +1308,10 @@ func TestHottestDoesNotGlowPaper(t *testing.T) {
 func TestMarkKeptFlagsThreeBestAndChosen(t *testing.T) {
 	c, w, j, r := 40.0, 10.0, 20.0, 30.0
 	rated := []search.Rated{
-		{Name: OpGrow.String(), Score: &c},
-		{Name: OpWash.String(), Score: &w},
-		{Name: OpJoin.String(), Score: &j},
-		{Name: OpTriangle.String(), Score: &r},
+		{Op: OpGrow, Score: &c},
+		{Op: OpWash, Score: &w},
+		{Op: OpJoin, Score: &j},
+		{Op: OpTriangle, Score: &r},
 	}
 	kept := []formPick{{op: OpWash}, {op: OpJoin}, {op: OpTriangle}}
 	markKept(rated, kept)
@@ -2884,7 +2884,7 @@ func TestStackEpochRatesTriangle(t *testing.T) {
 		}
 		ok := false
 		for _, r := range ep.Rated {
-			if r.Name == OpTriangle.String() && r.Ok && r.Score != nil {
+			if r.Op == OpTriangle && r.Ok && r.Score != nil {
 				ok = true
 			}
 		}
@@ -2904,10 +2904,10 @@ func TestCollectRatedKeepsLosingScore(t *testing.T) {
 	})
 	var del, join *search.Rated
 	for i := range got {
-		switch got[i].Name {
-		case OpDelete.String():
+		switch got[i].Op {
+		case OpDelete:
 			del = &got[i]
-		case OpJoin.String():
+		case OpJoin:
 			join = &got[i]
 		}
 	}
@@ -2937,7 +2937,7 @@ func TestStackEpochOperator(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	var ops []string
+	var ops []Op
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
@@ -2945,9 +2945,9 @@ func TestStackEpochOperator(t *testing.T) {
 		if len(forms(ep.Document)) == 0 {
 			continue
 		}
-		ops = append(ops, ep.Operator.String())
+		ops = append(ops, ep.Operator)
 	}
-	if len(ops) == 0 || (ops[0] != OpTriangle.String() && ops[0] != OpRectangle.String() && ops[0] != OpRing.String()) {
+	if len(ops) == 0 || !leftoverAdd(ops[0]) {
 		t.Fatalf("operators=%v want leftover add first", ops)
 	}
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {

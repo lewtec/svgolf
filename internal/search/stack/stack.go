@@ -564,7 +564,7 @@ func markKept(rated []search.Rated, kept []formPick) {
 		rated[ranked[k].i].Best = true
 	}
 	for i := range rated {
-		if rated[i].Name == chosen.String() {
+		if rated[i].Op == chosen {
 			rated[i].Chosen = true
 		}
 	}
