@@ -2,6 +2,7 @@ package stack
 
 import (
 	"image"
+	"math/rand/v2"
 	"sort"
 )
 
@@ -78,8 +79,9 @@ func convexHull(pts [][2]float64) [][2]float64 {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
-// oneMaskTriangle is three leftover outline corners spaced
-// around the ring. Consecutive stairs are a one-pixel sliver.
+// oneMaskTriangle is one leftover plate. Cheap triples are
+// the ear at 0, n/3, 2n/3 and the leftover-spanning every-third.
+// Rank those by area and pick one of the three biggest.
 func oneMaskTriangle(island []pix) [][2]float64 {
 	ring := coverRing(island)
 	n := len(ring)
@@ -88,6 +90,24 @@ func oneMaskTriangle(island []pix) [][2]float64 {
 	}
 	if n == 3 {
 		return ring
+	}
+	seen := map[[6]float64]bool{}
+	var best []areaTriple
+	consider := func(a, b, c [2]float64) {
+		ar := triangleArea2(a, b, c)
+		if ar == 0 {
+			return
+		}
+		key := tripleKey(a, b, c)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		best = append(best, areaTriple{a, b, c, ar})
+	}
+	for k := 0; k < 3; k++ {
+		i := k * n / 3
+		consider(ring[i], ring[(i+1)%n], ring[(i+2)%n])
 	}
 	step := n / 3
 	if step < 1 {
@@ -100,9 +120,29 @@ func oneMaskTriangle(island []pix) [][2]float64 {
 		if triangleArea2(a, b, c) == 0 {
 			continue
 		}
-		return uncross([][2]float64{a, b, c})
+		consider(a, b, c)
+		break
 	}
-	return nil
+	if len(best) == 0 {
+		return nil
+	}
+	sort.Slice(best, func(i, j int) bool { return best[i].area > best[j].area })
+	if len(best) > survivorPicks {
+		best = best[:survivorPicks]
+	}
+	t := best[rand.IntN(len(best))]
+	return uncross([][2]float64{t.a, t.b, t.c})
+}
+
+func tripleKey(a, b, c [2]float64) [6]float64 {
+	pts := [3][2]float64{a, b, c}
+	sort.Slice(pts[:], func(i, j int) bool {
+		if pts[i][0] != pts[j][0] {
+			return pts[i][0] < pts[j][0]
+		}
+		return pts[i][1] < pts[j][1]
+	})
+	return [6]float64{pts[0][0], pts[0][1], pts[1][0], pts[1][1], pts[2][0], pts[2][1]}
 }
 
 func largestTriangle(island []pix) [][2]float64 {

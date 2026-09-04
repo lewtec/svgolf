@@ -1439,21 +1439,50 @@ func TestOneMaskTriangleSpansStairLeftover(t *testing.T) {
 			island = append(island, pix{x, y})
 		}
 	}
-	ring := oneMaskTriangle(island)
-	if len(ring) != 3 {
-		t.Fatalf("ring=%d want a triangle: %v", len(ring), ring)
-	}
-	minY, maxY := ring[0][1], ring[0][1]
-	for _, q := range ring[1:] {
-		if q[1] < minY {
-			minY = q[1]
+	spanned := false
+	for i := 0; i < 32; i++ {
+		ring := oneMaskTriangle(island)
+		if len(ring) != 3 {
+			t.Fatalf("ring=%d want a triangle: %v", len(ring), ring)
 		}
-		if q[1] > maxY {
-			maxY = q[1]
+		minY, maxY := ring[0][1], ring[0][1]
+		for _, q := range ring[1:] {
+			if q[1] < minY {
+				minY = q[1]
+			}
+			if q[1] > maxY {
+				maxY = q[1]
+			}
+		}
+		if maxY-minY > 1 {
+			spanned = true
+			break
 		}
 	}
-	if maxY-minY <= 1 {
-		t.Fatalf("triangle is a one-pixel stair: %v", ring)
+	if !spanned {
+		t.Fatal("three-best pool never spanned the stair leftover")
+	}
+}
+
+func TestOneMaskTrianglePicksAmongThreeBest(t *testing.T) {
+	var island []pix
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			if y < 8 || x < 4 || x >= 12 {
+				island = append(island, pix{x, y})
+			}
+		}
+	}
+	seen := map[[6]float64]bool{}
+	for i := 0; i < 32; i++ {
+		ring := oneMaskTriangle(island)
+		if len(ring) != 3 {
+			t.Fatalf("ring=%d want a triangle: %v", len(ring), ring)
+		}
+		seen[tripleKey(ring[0], ring[1], ring[2])] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("always the same leftover span: %v", seen)
 	}
 }
 
