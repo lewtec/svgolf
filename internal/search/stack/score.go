@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"sync"
 
 	"github.com/lewtec/svgolf/internal/loss"
 )
@@ -14,11 +15,32 @@ var paper = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 
 var paperHSV = loss.HSVOf(paper)
 
+// scorePair is a dedicated got/want Plane so Score cannot take the
+// last worker planes and deadlock Acquire.
+var (
+	scoreMu   sync.Mutex
+	scoreGot  *loss.Plane
+	scoreWant *loss.Plane
+)
+
+func scorePair() (*loss.Plane, *loss.Plane) {
+	if scoreGot == nil {
+		scoreGot = &loss.Plane{}
+		scoreWant = &loss.Plane{}
+	}
+	return scoreGot, scoreWant
+}
+
 // Score is the sum of per-pixel HSV error. Opaque pixels use ColorAt².
 // A hole (want.A==0) must match paper. Transparent got is 180².
 // Mean would hide letters on a large canvas; sum does not.
 func Score(got, want *image.NRGBA) float64 {
-	return ScoreOn(loss.NewPlane(got), loss.NewPlane(want))
+	scoreMu.Lock()
+	defer scoreMu.Unlock()
+	gp, wp := scorePair()
+	gp.Reset(got)
+	wp.Reset(want)
+	return ScoreOn(gp, wp)
 }
 
 // ScoreOn is Score on HSV planes (want converted once, got after Render).
@@ -42,7 +64,12 @@ func ScoreOn(got, want *loss.Plane) float64 {
 
 // ScoreRect is the errAt sum on r. r is clipped to want.
 func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
-	return ScoreRectOn(loss.NewPlane(got), loss.NewPlane(want), r)
+	scoreMu.Lock()
+	defer scoreMu.Unlock()
+	gp, wp := scorePair()
+	gp.Reset(got)
+	wp.Reset(want)
+	return ScoreRectOn(gp, wp, r)
 }
 
 // ScoreRectOn is ScoreRect on HSV planes.

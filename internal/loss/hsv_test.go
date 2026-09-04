@@ -35,6 +35,23 @@ func TestPlaneEnsureRectLeavesRestUnset(t *testing.T) {
 	}
 }
 
+func TestAcquireReusesBuffer(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for i := 0; i < planeWorkers(); i++ {
+		p := Acquire(img)
+		p.Ensure()
+		Release(p)
+	}
+	allocs := testing.AllocsPerRun(50, func() {
+		p := Acquire(img)
+		p.Ensure()
+		Release(p)
+	})
+	if allocs != 0 {
+		t.Fatalf("Acquire+Ensure allocs=%v want 0 after the pool is warm", allocs)
+	}
+}
+
 func TestPlaneResetReusesBuffer(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	p := NewPlane(img)

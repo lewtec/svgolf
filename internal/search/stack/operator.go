@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -718,10 +719,10 @@ func (d Delete) Run() (formPick, error) {
 		return nonePick(), err
 	}
 	defer render.Release(ngot)
-	gotP := acquirePlane(ngot)
+	gotP := loss.Acquire(ngot)
 	dirty := nodeRect(s.doc.Children()[d.i+1]).Inset(-2)
 	nerr := s.scoreAfter(gotP, dirty)
-	releasePlane(gotP)
+	loss.Release(gotP)
 	npaths := s.paths - 1
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc)) && nerr <= s.errSum
@@ -897,10 +898,10 @@ func (sw Swap) Run() (formPick, error) {
 		return nonePick(), err
 	}
 	defer render.Release(ngot)
-	gotP := acquirePlane(ngot)
+	gotP := loss.Acquire(ngot)
 	dirty := nodeRect(s.doc.Children()[sw.i+1]).Union(nodeRect(s.doc.Children()[sw.j+1])).Inset(-2)
 	nerr := s.scoreAfter(gotP, dirty)
-	releasePlane(gotP)
+	loss.Release(gotP)
 	npaths := s.paths
 	ncmds := docCmdLen(next)
 	ok = acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))

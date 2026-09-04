@@ -9,7 +9,6 @@ import (
 	"iter"
 	"math"
 	"math/rand/v2"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -73,39 +72,6 @@ type world struct {
 }
 
 var candidateLog io.Writer
-
-var (
-	planesOnce sync.Once
-	planes     chan *loss.Plane
-)
-
-func initPlanes() {
-	planesOnce.Do(func() {
-		n := runtime.GOMAXPROCS(0)
-		if n < 1 {
-			n = 1
-		}
-		planes = make(chan *loss.Plane, n)
-		for i := 0; i < n; i++ {
-			planes <- &loss.Plane{}
-		}
-	})
-}
-
-func acquirePlane(img *image.NRGBA) *loss.Plane {
-	initPlanes()
-	p := <-planes
-	p.Reset(img)
-	return p
-}
-
-func releasePlane(p *loss.Plane) {
-	if p == nil {
-		return
-	}
-	p.Reset(nil)
-	planes <- p
-}
 
 // LogCandidates writes one tab-indented line per scored candidate.
 func LogCandidates(w io.Writer) {
@@ -756,8 +722,8 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (form
 		return nonePick(), err
 	}
 	defer render.Release(ngot)
-	gotP := acquirePlane(ngot)
-	defer releasePlane(gotP)
+	gotP := loss.Acquire(ngot)
+	defer loss.Release(gotP)
 	dirty := g.dirty0
 	if dirty.Empty() {
 		dirty = nodeRect(cand)

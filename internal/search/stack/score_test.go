@@ -75,6 +75,18 @@ func TestScoreBlackOnHoleCosts(t *testing.T) {
 	}
 }
 
+func TestScoreReusesPlanes(t *testing.T) {
+	got := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	want := image.NewNRGBA(got.Rect)
+	_ = Score(got, want)
+	allocs := testing.AllocsPerRun(50, func() {
+		_ = Score(got, want)
+	})
+	if allocs != 0 {
+		t.Fatalf("Score allocs=%v want 0 after the pair is warm", allocs)
+	}
+}
+
 func TestScoreRectMatchesScore(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 4, 4))
 	got := image.NewNRGBA(want.Rect)

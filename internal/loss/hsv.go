@@ -3,6 +3,7 @@ package loss
 import (
 	"image"
 	"image/color"
+	"runtime"
 	"sync"
 )
 
@@ -34,6 +35,46 @@ func NewPlane(img *image.NRGBA) *Plane {
 		return nil
 	}
 	return &Plane{img: img}
+}
+
+var (
+	planesOnce sync.Once
+	planes     chan *Plane
+)
+
+func planeWorkers() int {
+	n := runtime.GOMAXPROCS(0)
+	if n < 2 {
+		return 2
+	}
+	return n
+}
+
+func initPlanes() {
+	planesOnce.Do(func() {
+		n := planeWorkers()
+		planes = make(chan *Plane, n)
+		for i := 0; i < n; i++ {
+			planes <- &Plane{}
+		}
+	})
+}
+
+// Acquire is a Plane whose HSV table is reused. Release it.
+func Acquire(img *image.NRGBA) *Plane {
+	initPlanes()
+	p := <-planes
+	p.Reset(img)
+	return p
+}
+
+// Release returns p to the worker pool.
+func Release(p *Plane) {
+	if p == nil {
+		return
+	}
+	p.Reset(nil)
+	planes <- p
 }
 
 // Image is the source pixmap.
