@@ -28,9 +28,10 @@ type Op = search.Op
 const (
 	OpNone     = search.OpNone
 	OpAbsorb   = search.OpAbsorb
-	OpTriangle = search.OpTriangle
-	OpRing     = search.OpRing
-	OpGrow     = search.OpGrow
+	OpTriangle  = search.OpTriangle
+	OpRing      = search.OpRing
+	OpRectangle = search.OpRectangle
+	OpGrow      = search.OpGrow
 	OpCarve    = search.OpCarve
 	OpSlide    = search.OpSlide
 	OpBend     = search.OpBend
@@ -62,6 +63,8 @@ func (o op) impl() Operator {
 		return Triangle{world: o.world, left: o.left}
 	case OpRing:
 		return Ring{world: o.world, left: o.left}
+	case OpRectangle:
+		return Rectangle{world: o.world, left: o.left}
 	case OpGrow:
 		return &Grow{world: o.world, left: o.left}
 	case OpCarve:
@@ -133,6 +136,37 @@ func (tr Triangle) Run() (formPick, error) {
 	g.ring = ring
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
+}
+
+// Rectangle places one leftover plate from the four strongest
+// mask vertices.
+type Rectangle struct {
+	world *world
+	left  leftover
+}
+
+func (Rectangle) ID() Op { return OpRectangle }
+func (rc Rectangle) Applies() bool {
+	return rc.left.big() && !rc.left.region && hasInterior(rc.left.island) && rc.world.paths < maxPaths
+}
+
+func (rc Rectangle) Run() (formPick, error) {
+	s, g := rc.world, rc.left.fresh
+	if len(g.work) < 4 {
+		return nonePick(), nil
+	}
+	ring := oneMaskRectangle(g.work)
+	if len(ring) < 4 {
+		return nonePick(), nil
+	}
+	g.fill = modeFill(s.want, g.work)
+	g.work = rectanglePix(ring)
+	if len(g.work) == 0 {
+		return nonePick(), nil
+	}
+	g.ring = ring
+	g = s.seedGrow(g)
+	return s.addLayer(filledPath(ring, g.fill), g, OpRectangle)
 }
 
 // Ring places a leftover that already surrounds painted pixels.
@@ -916,6 +950,7 @@ func (sw Swap) Run() (formPick, error) {
 func leftoverAddOperators(s *world, left leftover) []Operator {
 	return []Operator{
 		op{id: OpTriangle, world: s, left: left},
+		op{id: OpRectangle, world: s, left: left},
 		op{id: OpRing, world: s, left: left},
 	}
 }

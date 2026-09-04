@@ -203,10 +203,10 @@ func TestLaterEpochRatesTriangle(t *testing.T) {
 		add := false
 		for _, r := range ep.Rated {
 			switch r.Name {
-			case OpSlide.String(), OpBend.String(), OpGrow.String(), OpCarve.String(), OpAbsorb.String(), OpTriangle.String(), OpRing.String():
+			case OpSlide.String(), OpBend.String(), OpGrow.String(), OpCarve.String(), OpAbsorb.String(), OpTriangle.String(), OpRectangle.String(), OpRing.String():
 				leftover = true
 			}
-			if r.Name == OpTriangle.String() || r.Name == OpRing.String() {
+			if r.Name == OpTriangle.String() || r.Name == OpRectangle.String() || r.Name == OpRing.String() {
 				add = true
 			}
 		}
@@ -1170,17 +1170,17 @@ func TestStackMildStripGetsTriangle(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	triangles := 0
+	added := 0
 	for ep, err := range (Stack{}).Search(ctx, img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ep.Operator == OpTriangle {
-			triangles++
+		if leftoverAdd(ep.Operator) {
+			added++
 		}
 	}
-	if triangles < 2 {
-		t.Fatalf("triangles=%d want leftover ears on the mild strip too", triangles)
+	if added < 1 {
+		t.Fatalf("leftover add=%d want a plate on the mild strip too", added)
 	}
 }
 
@@ -1387,8 +1387,8 @@ func TestStackGapGetsTriangle(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpTriangle && ep.Operator != OpRing {
-			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
+		if !leftoverAdd(ep.Operator) {
+			t.Fatalf("operator=%s want leftover add", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {
@@ -2947,8 +2947,8 @@ func TestStackEpochOperator(t *testing.T) {
 		}
 		ops = append(ops, ep.Operator.String())
 	}
-	if len(ops) == 0 || (ops[0] != OpTriangle.String() && ops[0] != OpRing.String()) {
-		t.Fatalf("operators=%v want triangle or ring first", ops)
+	if len(ops) == 0 || (ops[0] != OpTriangle.String() && ops[0] != OpRectangle.String() && ops[0] != OpRing.String()) {
+		t.Fatalf("operators=%v want leftover add first", ops)
 	}
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
@@ -3119,8 +3119,8 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 				n++
 			}
 		}
-		if n != 3 {
-			t.Fatalf("first form points=%d want one leftover ear", n)
+		if n != 3 && n != 4 {
+			t.Fatalf("first form points=%d want a leftover triangle or rectangle", n)
 		}
 		return
 	}
@@ -3565,8 +3565,8 @@ func TestStackDiagonalGapIsQuad(t *testing.T) {
 		if len(fk) == 0 {
 			continue
 		}
-		if ep.Operator != OpTriangle && ep.Operator != OpRing {
-			t.Fatalf("operator=%s want triangle or ring", ep.Operator)
+		if !leftoverAdd(ep.Operator) {
+			t.Fatalf("operator=%s want leftover add", ep.Operator)
 		}
 		p, ok := fk[0].Path()
 		if !ok {

@@ -505,7 +505,7 @@ func (s *world) load(sn snapshot) {
 }
 
 func leftoverAdd(id Op) bool {
-	return id == OpTriangle || id == OpRing
+	return id == OpTriangle || id == OpRectangle || id == OpRing
 }
 
 func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]snapshot, bool) {
@@ -532,7 +532,7 @@ func leftoverView(best snapshot, pool []formPick) (blob, fitted []pix) {
 		}
 	}
 	for _, p := range pool {
-		if p.op == OpTriangle && len(p.work) > 0 {
+		if (p.op == OpTriangle || p.op == OpRectangle) && len(p.work) > 0 {
 			fitted = p.work
 			break
 		}

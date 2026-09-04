@@ -8,6 +8,7 @@ const (
 	OpAbsorb
 	OpTriangle
 	OpRing
+	OpRectangle
 	OpGrow
 	OpCarve
 	OpSlide
@@ -25,9 +26,10 @@ const (
 var operatorNames = [OpCount]string{
 	OpNone:     "",
 	OpAbsorb:   "absorb",
-	OpTriangle: "triangle",
-	OpRing:     "ring",
-	OpGrow:     "grow",
+	OpTriangle:  "triangle",
+	OpRing:      "ring",
+	OpRectangle: "rectangle",
+	OpGrow:      "grow",
 	OpCarve:    "carve",
 	OpSlide:    "slide",
 	OpBend:     "bend",
