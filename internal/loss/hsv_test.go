@@ -89,6 +89,26 @@ func TestPlaneConvertMatchesNRGBAAt(t *testing.T) {
 	}
 }
 
+func TestPlaneConvertLargeMatchesHSV(t *testing.T) {
+	const n = 200
+	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i] = uint8(i)
+		img.Pix[i+1] = uint8(i * 3)
+		img.Pix[i+2] = 80
+		img.Pix[i+3] = 255
+	}
+	p := NewPlane(img)
+	p.Ensure()
+	for i, got := range p.Slice() {
+		x, y := i%n, i/n
+		want := HSVOf(img.NRGBAAt(x, y))
+		if got != want {
+			t.Fatalf("(%d,%d) %+v want %+v", x, y, got, want)
+		}
+	}
+}
+
 func TestPlaneConvertsOnce(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})

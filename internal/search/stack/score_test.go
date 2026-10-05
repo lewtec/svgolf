@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"testing"
 
+	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
@@ -84,6 +85,38 @@ func TestScoreReusesPlanes(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("Score allocs=%v want 0 after the pair is warm", allocs)
+	}
+}
+
+func TestScoreParallelMatchesScalar(t *testing.T) {
+	const n = 200
+	got := image.NewNRGBA(image.Rect(0, 0, n, n))
+	want := image.NewNRGBA(got.Rect)
+	for i := 0; i < len(got.Pix); i += 4 {
+		got.Pix[i] = uint8(i)
+		got.Pix[i+1] = 40
+		got.Pix[i+2] = 90
+		got.Pix[i+3] = 255
+		want.Pix[i] = 12
+		want.Pix[i+1] = 52
+		want.Pix[i+2] = 88
+		want.Pix[i+3] = 255
+		if i%64 == 0 {
+			want.Pix[i+3] = 0
+		}
+	}
+	gp := loss.NewPlane(got)
+	wp := loss.NewPlane(want)
+	gp.Ensure()
+	wp.Ensure()
+	if ScoreOn(gp, wp) != scoreScalar(gp.Slice(), wp.Slice()) {
+		t.Fatalf("parallel=%v scalar=%v", ScoreOn(gp, wp), scoreScalar(gp.Slice(), wp.Slice()))
+	}
+	r := image.Rect(10, 20, 180, 190)
+	gotRect := ScoreRectOn(gp, wp, r)
+	wantRect := scoreScalarRect(gp.Slice(), wp.Slice(), n, r, got.Rect.Min)
+	if gotRect != wantRect {
+		t.Fatalf("rect parallel=%v scalar=%v", gotRect, wantRect)
 	}
 }
 
