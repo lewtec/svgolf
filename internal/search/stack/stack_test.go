@@ -506,7 +506,7 @@ func TestSimplifyDropsOneColinearVertex(t *testing.T) {
 		t.Fatal("not a path")
 	}
 	if n := pathPts(p.Node()); n != 5 {
-		t.Fatalf("verts=%d want 5; one drop, not the whole colinear run", n)
+		t.Fatalf("verts=%d want 5; one straight vertex, the next epoch takes the rest", n)
 	}
 }
 

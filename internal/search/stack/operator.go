@@ -475,8 +475,13 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-// Simplify drops one vertex. A colinear line vertex if any
-// exist, otherwise any vertex. Epochs rank the rest.
+// Simplify drops one vertex that already lies on the line
+// through its neighbors. A mask outline is a staircase, and
+// rewriting that whole ring at once is one shape. Each epoch
+// takes the next straight vertex, Score keeps the step only
+// when the picture does not get worse, and the run shrinks
+// until a corner is left. A bend is not straight, so the
+// corner stays. One walk, no search over pairs of vertices.
 type Simplify struct {
 	world   *world
 	buckets [][]pix
@@ -489,12 +494,6 @@ func (s Simplify) Applies() bool {
 
 func (s Simplify) Run() (formPick, error) {
 	w := s.world
-	type drop struct {
-		i, v  int
-		outer pathRing
-		holes []pathRing
-	}
-	var colinear, any []drop
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
@@ -502,47 +501,38 @@ func (s Simplify) Run() (formPick, error) {
 			continue
 		}
 		rings := parsePathRings(p)
-		if len(rings) == 0 || len(rings[0].verts) < 4 {
-			continue
-		}
-		outer := rings[0]
-		for v := 0; v < len(outer.verts); v++ {
-			d := drop{i: i, v: v, outer: outer, holes: rings[1:]}
-			any = append(any, d)
-			if outer.lineColinear(v) {
-				colinear = append(colinear, d)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			n := len(ring.verts)
+			for v := 0; v < n; v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				moved := ring.dropVertex(v)
+				if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+					continue
+				}
+				next := append([]pathRing{}, rings...)
+				next[ri] = moved
+				cand := filledRings(next[0], next[1:], w.fills[i])
+				if hasLin {
+					cand = cand.WithLinearFill(lin)
+				}
+				g := w.seedGrow(grow{i: i, work: s.buckets[i], fill: w.fills[i]})
+				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, OpSimplify)
+				if err != nil {
+					return nonePick(), err
+				}
+				if pick.ok && pick.errSum > w.errSum {
+					pick.ok = false
+				}
+				if pick.ok {
+					return pick, nil
+				}
 			}
 		}
 	}
-	pool := any
-	if len(colinear) > 0 {
-		pool = colinear
-	}
-	if len(pool) == 0 {
-		return nonePick(), nil
-	}
-	d := pool[rand.IntN(len(pool))]
-	moved := d.outer.dropVertex(d.v)
-	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
-		return nonePick(), nil
-	}
-	node := w.doc.Children()[d.i+1]
-	cand := filledRings(moved, d.holes, w.fills[d.i])
-	if lin, ok := node.LinearFill(); ok {
-		cand = cand.WithLinearFill(lin)
-	}
-	n := len(d.outer.verts)
-	prev, next := (d.v-1+n)%n, (d.v+1)%n
-	fan := [][2]float64{d.outer.verts[prev], d.outer.verts[d.v], d.outer.verts[next]}
-	g := w.seedGrow(grow{i: d.i, work: s.buckets[d.i], fill: w.fills[d.i], dirty0: pointsRect(fan)})
-	pick, err := w.scoreCand(replaceAt(w.doc, d.i+1, cand.Node()), cand.Node(), g, OpSimplify)
-	if err != nil {
-		return nonePick(), err
-	}
-	if pick.ok && pick.errSum > w.errSum {
-		pick.ok = false
-	}
-	return pick, nil
+	return nonePick(), nil
 }
 
 // Unhole drops one evenodd hole.
