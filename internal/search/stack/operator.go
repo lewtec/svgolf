@@ -26,23 +26,24 @@ type Operator interface {
 type Op = search.Op
 
 const (
-	OpNone     = search.OpNone
-	OpAbsorb   = search.OpAbsorb
+	OpNone      = search.OpNone
+	OpAbsorb    = search.OpAbsorb
 	OpTriangle  = search.OpTriangle
 	OpRing      = search.OpRing
 	OpRectangle = search.OpRectangle
 	OpGrow      = search.OpGrow
-	OpCarve    = search.OpCarve
-	OpSlide    = search.OpSlide
-	OpBend     = search.OpBend
-	OpSimplify = search.OpSimplify
-	OpWash     = search.OpWash
-	OpJoin     = search.OpJoin
-	OpSubtract = search.OpSubtract
-	OpSwap     = search.OpSwap
-	OpDelete   = search.OpDelete
-	OpUnhole   = search.OpUnhole
-	opCount    = search.OpCount
+	OpCarve     = search.OpCarve
+	OpSlide     = search.OpSlide
+	OpBend      = search.OpBend
+	OpSimplify  = search.OpSimplify
+	OpWash      = search.OpWash
+	OpJoin      = search.OpJoin
+	OpSubtract  = search.OpSubtract
+	OpSwap      = search.OpSwap
+	OpDelete    = search.OpDelete
+	OpUnhole    = search.OpUnhole
+	OpOutline   = search.OpOutline
+	opCount     = search.OpCount
 )
 
 type op struct {
@@ -87,6 +88,8 @@ func (o op) impl() Operator {
 		return Delete{world: o.world, i: o.i}
 	case OpUnhole:
 		return Unhole{world: o.world, buckets: o.buckets}
+	case OpOutline:
+		return Outline{world: o.world, left: o.left}
 	default:
 		return nil
 	}
@@ -167,6 +170,41 @@ func (rc Rectangle) Run() (formPick, error) {
 	g.ring = ring
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpRectangle)
+}
+
+// Outline paints one leftover mask. The color-region flood is
+// included: despeckle drops axis tips off a disk, and the flood
+// still has them. Triangle and rectangle stay in the neighborhood
+// and win when they cover that mask with fewer commands. A
+// shorter curve that changes pixels loses on Score. Enclosed
+// voids stay solid; carve opens them after the plate exists.
+type Outline struct {
+	world *world
+	left  leftover
+}
+
+func (Outline) ID() Op { return OpOutline }
+func (o Outline) Applies() bool {
+	// Interior is not required. A trace or a fringe has no pixel
+	// with four neighbors, and skipping it leaves a real miss.
+	// Score still rejects a rim whose plate does not help.
+	return o.left.big() && o.world.paths < maxPaths
+}
+
+func (o Outline) Run() (formPick, error) {
+	s := o.world
+	g := o.left.fresh
+	if len(g.work) < 3 {
+		return nonePick(), nil
+	}
+	ring := coverRing(g.work)
+	if len(ring) < 3 {
+		return nonePick(), nil
+	}
+	g.fill = modeFill(s.want, g.work)
+	g.ring = ring
+	g = s.seedGrow(g)
+	return s.addLayer(filledPath(ring, g.fill), g, OpOutline)
 }
 
 // Ring places a leftover that already surrounds painted pixels.
@@ -952,6 +990,7 @@ func leftoverAddOperators(s *world, left leftover) []Operator {
 		op{id: OpTriangle, world: s, left: left},
 		op{id: OpRectangle, world: s, left: left},
 		op{id: OpRing, world: s, left: left},
+		op{id: OpOutline, world: s, left: left},
 	}
 }
 

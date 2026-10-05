@@ -505,7 +505,7 @@ func (s *world) load(sn snapshot) {
 }
 
 func leftoverAdd(id Op) bool {
-	return id == OpTriangle || id == OpRectangle || id == OpRing
+	return id == OpTriangle || id == OpRectangle || id == OpRing || id == OpOutline
 }
 
 func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]snapshot, bool) {
