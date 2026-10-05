@@ -349,8 +349,15 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 			}
 			next, improved := s.archiveUpdate(archive, pool, band)
+			// A short sibling can take another triangle forever
+			// without beating the plate. Restarting on that
+			// nibble never reaches the edge moves. Only a new
+			// lex-best opens the neighborhood again.
+			bestMoved := improved && len(next) > 0 && !samePoint(archive[0], next[0])
 			if improved {
 				archive = next
+			}
+			if bestMoved {
 				s.load(archive[0])
 				yielded = true
 				markKept(rated, []formPick{{op: archive[0].operator}})

@@ -21,9 +21,12 @@ func maskVertices(island []pix) []maskVertex {
 	if len(border) < 4 {
 		return nil
 	}
+	// coverRing takes its own mask. Acquiring one here first deadlocks
+	// when every worker is inside this function: the pool is one mask
+	// per worker, and the second acquire never returns.
+	ring := coverRing(island)
 	set := pixSet(island)
 	defer releaseBits(set)
-	ring := coverRing(island)
 	n := len(border)
 	resp := make([]float64, n)
 	for i, q := range border {
