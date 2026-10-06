@@ -311,6 +311,7 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	if err != nil {
 		return s.stopJob(st, dir, id, err)
 	}
+	ctx = stack.WithJobStatus(ctx, st)
 	stack.ShowFrames(true)
 	n := 0
 	var scores []float64

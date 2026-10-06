@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -78,6 +79,7 @@ type world struct {
 	w, h         int
 	candidateLog io.Writer
 	logMu        sync.Mutex
+	rank         *liveRank
 	snapID       int
 	// simplifyMiss is the straight triples that raised Score on
 	// this picture. The next simplify skips them.
@@ -308,7 +310,20 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			return
 		}
 		s.candidateLog = candidateLog
+		s.rank = &liveRank{}
+		defer s.rank.stop()
 		started := time.Now()
+		yielded := false
+		stop := func(err error) bool {
+			if err == nil {
+				return false
+			}
+			if ctx.Err() != nil && yielded {
+				return true
+			}
+			yield(search.Epoch{}, err)
+			return true
+		}
 		emit := func(id Op, blob, fitted []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
@@ -324,7 +339,6 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		band := 1
 		polished := false
 		polishHelped := false
-		yielded := false
 		for {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
@@ -334,11 +348,22 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			var pool []formPick
 			var rated []search.Rated
+			jobNote(ctx, fmt.Sprintf("%s · archive %d", bandLabel(band), len(archive)))
 			if band == 4 {
 				miss := make([][]leftover, len(archive))
 				for j, member := range archive {
 					s.load(member)
-					miss[j] = s.leftovers()
+					var lefts []leftover
+					watchStep(ctx, fmt.Sprintf("leftovers %d", j+1), func(st *taskgroup.Status) {
+						if st != nil {
+							st.Update(bandLabel(band))
+						}
+						lefts = s.leftovers()
+						if st != nil {
+							st.Update(fmt.Sprintf("%d islands", len(lefts)))
+						}
+					})
+					miss[j] = lefts
 				}
 				for i, member := range archive {
 					for j := range archive {
@@ -346,9 +371,9 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 							continue
 						}
 						s.load(member)
+						jobNote(ctx, fmt.Sprintf("%s · %d on %d", bandLabel(band), i+1, j+1))
 						picks, pr, _, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
-						if err != nil {
-							yield(search.Epoch{}, err)
+						if stop(err) {
 							return
 						}
 						pool = append(pool, picks...)
@@ -362,11 +387,19 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					// leftover flood is not an input to either.
 					var lefts []leftover
 					if band != polishBand {
-						lefts = s.leftovers()
+						watchStep(ctx, "leftovers", func(st *taskgroup.Status) {
+							if st != nil {
+								st.Update(fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
+							}
+							lefts = s.leftovers()
+							if st != nil {
+								st.Update(fmt.Sprintf("%d islands", len(lefts)))
+							}
+						})
 					}
+					jobNote(ctx, fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
 					picks, pr, miss, err := s.choose(ctx, lefts, member, band)
-					if err != nil {
-						yield(search.Epoch{}, err)
+					if stop(err) {
 						return
 					}
 					if miss != nil {
@@ -377,6 +410,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 				}
 			}
 			next, improved := s.archiveUpdate(archive, pool, band)
+			jobNote(ctx, fmt.Sprintf("%s · archive %s", bandLabel(band), archiveLine(next)))
 			// A short sibling can take another triangle forever
 			// without beating the plate. Restarting on that
 			// nibble never reaches the edge moves. Only a new
@@ -750,7 +784,8 @@ func (s *world) logCandidate(id Op, elapsed time.Duration, p formPick) {
 	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", id, elapsed.Seconds(), p.errSum)
 }
 
-func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (formPick, error) {
+func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick formPick, err error) {
+	defer s.noteCandidate(id, &pick, &err)
 	if p, ok := cand.Path(); ok {
 		for _, r := range pathRings(p) {
 			if ringCrosses(r) {

@@ -2,12 +2,14 @@ package stack
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"math/rand/v2"
 	"sync"
 	"time"
 
+	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -1327,71 +1329,68 @@ type namedPick struct {
 }
 
 func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, band int) ([]formPick, []search.Rated, map[straightKey]struct{}, error) {
-	type job struct {
-		op    Operator
-		left  leftover
-		bound bool
-	}
-	var jobs []job
+	var jobs []candJob
 	for _, left := range lefts {
 		for _, op := range s.leftoverOperators(left, band) {
 			if op.Applies() {
-				jobs = append(jobs, job{op: op, left: left, bound: true})
+				jobs = append(jobs, candJob{op: op, left: left, bound: true})
 			}
 		}
 	}
 	for _, op := range s.worldOperators(band) {
 		if op.Applies() {
-			jobs = append(jobs, job{op: op})
+			jobs = append(jobs, candJob{op: op})
 		}
 	}
 	bestByOp := make(map[Op]*namedPick, opCount)
-	var mu sync.Mutex
 	var pool []formPick
-	g, _ := errgroup.WithContext(ctx)
-	for _, job := range jobs {
-		job := job
-		g.Go(func() error {
-			started := time.Now()
-			p, err := job.op.Run()
-			if err != nil {
-				return err
-			}
-			if p.ok {
-				p.parent = parent
-				if job.bound {
-					p.island = job.left.glow
-					if len(p.island) == 0 {
-						p.island = job.left.island
-					}
-				}
-			}
-			elapsed := time.Since(started)
-			mu.Lock()
-			defer mu.Unlock()
-			id := job.op.ID()
-			st := bestByOp[id]
-			if st == nil {
-				st = &namedPick{}
-				bestByOp[id] = st
-			}
-			if elapsed > st.elapsed {
-				st.elapsed = elapsed
-			}
-			if id == OpSimplify {
-				st.miss = p.simplifyMiss
-			}
-			if betterPick(p, st.pick) {
-				st.pick = p
-			}
-			if p.ok {
-				pool = append(pool, p)
-			}
-			return nil
-		})
+	record := func(id Op, p formPick, elapsed time.Duration) {
+		st := bestByOp[id]
+		if st == nil {
+			st = &namedPick{}
+			bestByOp[id] = st
+		}
+		if elapsed > st.elapsed {
+			st.elapsed = elapsed
+		}
+		if id == OpSimplify {
+			st.miss = p.simplifyMiss
+		}
+		if betterPick(p, st.pick) {
+			st.pick = p
+		}
+		if p.ok {
+			pool = append(pool, p)
+		}
 	}
-	if err := g.Wait(); err != nil {
-		return nil, nil, nil, err
+	if taskgroup.FromContext(ctx) == nil {
+		var mu sync.Mutex
+		g, _ := errgroup.WithContext(ctx)
+		for _, job := range jobs {
+			job := job
+			g.Go(func() error {
+				pick, elapsed, err := s.runCandidate(ctx, job, nil, parent)
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				record(job.op.ID(), pick, elapsed)
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
+		jobNote(ctx, fmt.Sprintf("%s · %d generators", bandLabel(band), len(jobs)))
+		rows, err := s.runCandidateTasks(ctx, jobs, parent, band)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, row := range rows {
+			record(row.id, row.pick, row.elapsed)
+		}
 	}
 	for id := OpNone; id < opCount; id++ {
 		if st, ok := bestByOp[id]; ok {
