@@ -41,7 +41,12 @@ func pixSet(island []pix) *pixBits {
 		return emptyBits
 	}
 	initBits()
-	b := <-bitsPool
+	var b *pixBits
+	select {
+	case b = <-bitsPool:
+	default:
+		b = &pixBits{}
+	}
 	b.load(island)
 	return b
 }
@@ -52,7 +57,11 @@ func releaseBits(b *pixBits) {
 	}
 	b.minX, b.minY, b.w, b.h = 0, 0, 0, 0
 	b.bits = b.bits[:0]
-	bitsPool <- b
+	initBits()
+	select {
+	case bitsPool <- b:
+	default:
+	}
 }
 
 func (b *pixBits) load(island []pix) {

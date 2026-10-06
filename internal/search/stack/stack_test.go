@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,27 @@ import (
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
+
+func TestPixSetDoesNotBlockWhenBusy(t *testing.T) {
+	island := []pix{{0, 0}, {1, 0}, {1, 1}}
+	n := runtime.GOMAXPROCS(0)*2 + 2
+	got := make([]*pixBits, n)
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < n; i++ {
+			got[i] = pixSet(island)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pixSet blocked with the bit cache full")
+	}
+	for _, b := range got {
+		releaseBits(b)
+	}
+}
 
 func mustCtx(t *testing.T) context.Context {
 	t.Helper()

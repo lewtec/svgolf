@@ -62,9 +62,16 @@ func initPlanes() {
 }
 
 // Acquire is a Plane whose HSV table is reused. Release it.
+// The channel is a cache: a busy pool allocates instead of waiting,
+// so two searches cannot stall each other on the last plane.
 func Acquire(img *image.NRGBA) *Plane {
 	initPlanes()
-	p := <-planes
+	var p *Plane
+	select {
+	case p = <-planes:
+	default:
+		p = &Plane{}
+	}
 	p.Reset(img)
 	return p
 }
@@ -75,7 +82,11 @@ func Release(p *Plane) {
 		return
 	}
 	p.Reset(nil)
-	planes <- p
+	initPlanes()
+	select {
+	case planes <- p:
+	default:
+	}
 }
 
 // Image is the source pixmap.

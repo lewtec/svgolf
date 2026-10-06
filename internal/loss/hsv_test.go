@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestByteUnitMatchesDivision(t *testing.T) {
@@ -122,6 +123,27 @@ func TestAcquireReusesBuffer(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("Acquire+Ensure allocs=%v want 0 after the pool is warm", allocs)
+	}
+}
+
+func TestAcquireDoesNotBlockWhenBusy(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 2))
+	n := planeWorkers()*2 + 2
+	got := make([]*Plane, n)
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < n; i++ {
+			got[i] = Acquire(img)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Acquire blocked with the plane cache full")
+	}
+	for _, p := range got {
+		Release(p)
 	}
 }
 

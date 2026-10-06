@@ -1,6 +1,7 @@
 package render
 
 import (
+	"image"
 	"image/color"
 	"testing"
 	"time"
@@ -96,6 +97,31 @@ func TestCircleEdgeCount(t *testing.T) {
 	}
 	if len(e) < 2 {
 		t.Fatalf("too few edges")
+	}
+}
+
+func TestAcquireDoesNotBlockWhenBusy(t *testing.T) {
+	n := workerN()*2 + 2
+	pix := make([]*pixmap, n)
+	imgs := make([]*image.NRGBA, n)
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < n; i++ {
+			pix[i] = acquirePixmap(8, 8)
+			imgs[i] = acquireImage(8, 8)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pixmap or image acquire blocked with the cache full")
+	}
+	for _, p := range pix {
+		releasePixmap(p)
+	}
+	for _, img := range imgs {
+		Release(img)
 	}
 }
 
