@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/lewtec/lewkit/x/driver"
 	_ "github.com/lewtec/lewkit/x/driver/ndeval"
 	"github.com/lewtec/lewkit/x/ndarray"
 )
@@ -59,6 +61,9 @@ func gpuEvaluator(ctx context.Context) ndarray.Evaluator {
 	if gpuTried.Load() {
 		return nil
 	}
+	if err := applyLatencyWeights(); err != nil {
+		slog.Info("ndarray driver", "prefer", "integrated", "err", err)
+	}
 	ev, err := ndarray.Open(ctx)
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return nil
@@ -99,7 +104,52 @@ func logNDDriver(ev ndarray.Evaluator, err error) {
 		slog.Info("ndarray driver", "name", name, "score", "float64")
 		return
 	}
-	slog.Info("ndarray driver", "name", name, "score", "device")
+	slog.Info("ndarray driver", "name", name, "score", "device", "prefer", "integrated")
+}
+
+// applyLatencyWeights keeps every factory at its own weight and raises
+// Vulkan's integrated devices above dedicated ones. A score kernel
+// returns before a discrete GPU is busy, so the closer device wins
+// when both are listed. A machine with only a dedicated GPU still uses it.
+func applyLatencyWeights() error {
+	return driver.SetWeights(latencyWeightTable())
+}
+
+func latencyWeightTable() map[string]map[string]int {
+	table := map[string]map[string]int{}
+	for ifaceType, factories := range driver.Drivers {
+		slot := make(map[string]int, len(factories)+1)
+		for id, factory := range factories {
+			slot[id] = clampedWeight(factory)
+		}
+		if _, ok := slot["vulkan"]; ok && ifaceType.Name() == "Device" {
+			slot["vulkan:integrated"] = 80
+		}
+		table[ifaceName(ifaceType)] = slot
+	}
+	return table
+}
+
+func ifaceName(t reflect.Type) string {
+	if t.PkgPath() != "" {
+		return t.PkgPath() + "." + t.Name()
+	}
+	return t.String()
+}
+
+func clampedWeight(factory any) int {
+	w, ok := factory.(driver.Weighter)
+	if !ok {
+		return 0
+	}
+	n := w.Weight()
+	if n < 0 {
+		return 0
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
 }
 
 func loadGPU() ndarray.Evaluator {

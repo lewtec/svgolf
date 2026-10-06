@@ -168,8 +168,31 @@ func TestLogNDDriverNamesGPU(t *testing.T) {
 	buf := captureNDLog(t)
 	logNDDriver(labelEval{name: "vulkan:NVIDIA GeForce RTX 4090"}, nil)
 	got := buf.String()
-	if !strings.Contains(got, "ndarray driver") || !strings.Contains(got, "vulkan:NVIDIA GeForce RTX 4090") || !strings.Contains(got, "score=device") {
+	if !strings.Contains(got, "ndarray driver") || !strings.Contains(got, "vulkan:NVIDIA GeForce RTX 4090") || !strings.Contains(got, "score=device") || !strings.Contains(got, "prefer=integrated") {
 		t.Fatalf("log=%s", got)
+	}
+}
+
+func TestLatencyWeightsPreferIntegrated(t *testing.T) {
+	table := latencyWeightTable()
+	var slot map[string]int
+	for _, weights := range table {
+		if _, ok := weights["vulkan:integrated"]; ok {
+			slot = weights
+			break
+		}
+	}
+	if slot == nil {
+		t.Fatal("vulkan device weights missing")
+	}
+	if slot["vulkan"] != 50 {
+		t.Fatalf("vulkan factory weight=%d", slot["vulkan"])
+	}
+	if slot["vulkan:integrated"] <= 70 {
+		t.Fatalf("integrated weight=%d, dedicated offer stays 70", slot["vulkan:integrated"])
+	}
+	if err := applyLatencyWeights(); err != nil {
+		t.Fatal(err)
 	}
 }
 
