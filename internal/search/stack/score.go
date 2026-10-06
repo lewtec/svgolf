@@ -43,10 +43,14 @@ func Score(got, want *image.NRGBA) float64 {
 	return ScoreOn(gp, wp)
 }
 
-// ScoreOn is Score on HSV planes (want converted once, got after Render).
+// ScoreOn is Score. A device evaluator reads the pixmaps. Otherwise the
+// planes are converted and summed in float64.
 func ScoreOn(got, want *loss.Plane) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
+	}
+	if sum, ok := ndScoreImages(got.Image(), want.Image()); ok {
+		return sum
 	}
 	got.Ensure()
 	want.Ensure()
@@ -61,9 +65,6 @@ func scorePixels(got, want []loss.Pix) float64 {
 	n := len(got)
 	if len(want) < n {
 		n = len(want)
-	}
-	if sum, ok := ndScore(got, want); ok {
-		return sum
 	}
 	parallel, claim := loss.EnterCores(n)
 	if !parallel {
@@ -106,6 +107,9 @@ func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
+	if sum, ok := ndScoreImageRect(got.Image(), want.Image(), r); ok {
+		return sum
+	}
 	want.Ensure()
 	r = r.Intersect(want.Image().Rect)
 	if r.Empty() {
@@ -122,9 +126,6 @@ func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
 
 func scoreRectPixels(got, want []loss.Pix, width int, r image.Rectangle, origin image.Point) float64 {
 	n := r.Dx() * r.Dy()
-	if sum, ok := ndScoreRect(got, want, width, r, origin); ok {
-		return sum
-	}
 	parallel, claim := loss.EnterCores(n)
 	if !parallel {
 		sum := scoreScalarRect(got, want, width, r, origin)

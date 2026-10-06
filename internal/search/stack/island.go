@@ -279,24 +279,32 @@ func (s *world) hottestMarked(k int, lo, hi float64) []leftoverBlob {
 		wantP = loss.NewPlane(want)
 		s.wantP = wantP
 	}
-	gotP.Ensure()
-	wantP.Ensure()
-	if !s.stampResidual(gotP, wantP, w, h, b, lo, hi) {
-		return nil
+	errFromImage := false
+	if ok, any := ndStamp(got, want, lo, hi, s.scratch.mark, s.scratch.family); ok {
+		if !any {
+			return nil
+		}
+		errFromImage = true
+	} else {
+		gotP.Ensure()
+		wantP.Ensure()
+		if !s.stampResidual(gotP, wantP, w, h, b, lo, hi) {
+			return nil
+		}
 	}
 	despeckle(s.scratch.mark, w, h)
-	cores, rest := s.coresFromMark(w, h, gotP, wantP, k)
+	cores, rest := s.coresFromMark(w, h, gotP, wantP, k, errFromImage)
 	if len(cores) > 0 {
 		return cores
 	}
 	if len(rest) > 0 {
 		return rest
 	}
-	return s.floodBlobs(w, h, gotP, wantP, k, false, 1)
+	return s.floodBlobs(w, h, gotP, wantP, k, false, 1, errFromImage)
 }
 
-func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int) (cores, rest []leftoverBlob) {
-	blobs := s.floodBlobs(w, h, gotP, wantP, 0, true, minIsland)
+func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int, errFromImage bool) (cores, rest []leftoverBlob) {
+	blobs := s.floodBlobs(w, h, gotP, wantP, 0, true, minIsland, errFromImage)
 	s.unfloodMark()
 	for _, b := range blobs {
 		if hasCore(b.island) {
@@ -437,7 +445,7 @@ func (s *world) unfloodMark() {
 	}
 }
 
-func (s *world) floodBlobs(w, h int, gotP, wantP *loss.Plane, k int, interior bool, min int) []leftoverBlob {
+func (s *world) floodBlobs(w, h int, gotP, wantP *loss.Plane, k int, interior bool, min int, errFromImage bool) []leftoverBlob {
 	want := s.want
 	mark, family := s.scratch.mark, s.scratch.family
 	best := make([]leftoverBlob, 0, k)
@@ -457,7 +465,11 @@ func (s *world) floodBlobs(w, h int, gotP, wantP *loss.Plane, k int, interior bo
 				p := pending[len(pending)-1]
 				pending = pending[:len(pending)-1]
 				cur = append(cur, p)
-				errSum += errAtHSV(gotP.At(p.x, p.y), wantP.At(p.x, p.y))
+				if errFromImage {
+					errSum += errAt(s.got.NRGBAAt(p.x, p.y), s.want.NRGBAAt(p.x, p.y))
+				} else {
+					errSum += errAtHSV(gotP.At(p.x, p.y), wantP.At(p.x, p.y))
+				}
 				for _, d := range dirs {
 					nx, ny := p.x+d.x, p.y+d.y
 					if nx < 0 || ny < 0 || nx >= w || ny >= h {
