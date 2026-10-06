@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,16 +40,40 @@ func newServerCmd() *cobra.Command {
 			if err := os.MkdirAll(cache, 0o755); err != nil {
 				return err
 			}
-			s := &server{cache: cache, algo: algo}
+			ctx := cmd.Context()
+			if ctx == nil {
+				return fmt.Errorf("server: missing parent context")
+			}
+			s := &server{cache: cache, algo: algo, ctx: ctx}
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /", s.handleHome)
 			mux.HandleFunc("POST /jobs", s.handleCreate)
 			mux.HandleFunc("GET /jobs/{id}", s.handleJob)
 			mux.HandleFunc("GET /jobs/{id}/events", s.handleEvents)
 			mux.HandleFunc("GET /jobs/{id}/files/{name}", s.handleFile)
-			srv := &http.Server{Addr: addr, Handler: mux}
+			srv := &http.Server{
+				Addr:    addr,
+				Handler: mux,
+				BaseContext: func(net.Listener) context.Context {
+					return ctx
+				},
+			}
 			cmd.Println("svgolf server", addr, "cache", cache)
-			return srv.ListenAndServe()
+			errc := make(chan error, 1)
+			go func() { errc <- srv.ListenAndServe() }()
+			select {
+			case <-ctx.Done():
+				shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				err := srv.Shutdown(shut)
+				<-errc
+				return err
+			case err := <-errc:
+				if err == http.ErrServerClosed {
+					return nil
+				}
+				return err
+			}
 		},
 	}
 	cmd.Flags().StringVar(&cache, "cache", "", "folder that stores every job and epoch frame")
@@ -61,6 +86,7 @@ func newServerCmd() *cobra.Command {
 type server struct {
 	cache string
 	algo  string
+	ctx   context.Context
 	mu    sync.Mutex
 	subs  map[string][]chan []byte
 }
@@ -193,6 +219,10 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) runJob(dir, id string, want *image.NRGBA) {
+	if s.ctx == nil {
+		s.fail(dir, id, fmt.Errorf("server: missing parent context"))
+		return
+	}
 	searcher, err := search.New(s.algo)
 	if err != nil {
 		s.fail(dir, id, err)
@@ -204,7 +234,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 	var rounds [][]search.Rated
 	var pathCounts []int
 	var vertexCounts []int
-	for ep, err := range searcher.Search(context.Background(), want) {
+	for ep, err := range searcher.Search(s.ctx, want) {
 		if err != nil {
 			s.fail(dir, id, err)
 			return
@@ -215,7 +245,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 			return
 		}
 		n++
-		sc := stack.Score(got, want)
+		sc := stack.Score(s.ctx, got, want)
 		scores = append(scores, sc)
 		rounds = append(rounds, ep.Rated)
 		paths := documentPaths(ep.Document)

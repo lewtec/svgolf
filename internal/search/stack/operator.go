@@ -221,11 +221,11 @@ func (o Outline) Run() (formPick, error) {
 	// rasters of the same outline. Lex would then keep the extra
 	// path. The full sum is the same Score the archive stores.
 	if s.want != nil && hole.scored && layer.scored {
-		if sum, err := scored(hole.doc, s.want); err == nil {
+		if sum, err := scored(s.ctx, hole.doc, s.want); err == nil {
 			hole.errSum = sum
 			hole.ok = acceptLexicographic(sum, hole.paths, hole.commands, s.errSum, s.paths, docCmdLen(s.doc))
 		}
-		if sum, err := scored(layer.doc, s.want); err == nil {
+		if sum, err := scored(s.ctx, layer.doc, s.want); err == nil {
 			layer.errSum = sum
 			layer.ok = acceptLexicographic(sum, layer.paths, layer.commands, s.errSum, s.paths, docCmdLen(s.doc))
 		}
@@ -236,12 +236,12 @@ func (o Outline) Run() (formPick, error) {
 	return layer, nil
 }
 
-func scored(doc svg.Document, want *image.NRGBA) (float64, error) {
+func scored(ctx context.Context, doc svg.Document, want *image.NRGBA) (float64, error) {
 	got, err := render.Render(doc)
 	if err != nil {
 		return 0, err
 	}
-	return Score(got, want), nil
+	return Score(ctx, got, want), nil
 }
 
 // Ring places a leftover that already surrounds painted pixels.

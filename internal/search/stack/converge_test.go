@@ -94,7 +94,7 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 			if got == nil {
 				t.Fatal("no epoch")
 			}
-			if score := Score(got, img); score != 0 {
+			if score := Score(nil, got, img); score != 0 {
 				t.Fatalf("score=%.3f epochs=%d want 0", score, epochs)
 			}
 			if tc.outline && !outlined {
@@ -122,7 +122,7 @@ func TestPaperLetterConvergesToOneShape(t *testing.T) {
 	}
 	doc := runStack(t, img)
 	got := mustRender(t, doc)
-	if score := Score(got, img); score != 0 {
+	if score := Score(nil, got, img); score != 0 {
 		t.Fatalf("score=%.3f want 0", score)
 	}
 	if n := len(forms(doc)); n != 1 {
@@ -157,7 +157,7 @@ func TestPaperSpeckStaysOnThePlate(t *testing.T) {
 	}
 	doc := runStack(t, img)
 	got := mustRender(t, doc)
-	if score := Score(got, img); score != 0 {
+	if score := Score(nil, got, img); score != 0 {
 		t.Fatalf("score=%.3f want 0", score)
 	}
 	if n := len(forms(doc)); n != 1 {

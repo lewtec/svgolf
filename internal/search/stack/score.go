@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -34,22 +35,22 @@ func scorePair() (*loss.Plane, *loss.Plane) {
 // Score is the sum of per-pixel HSV error. Opaque pixels use ColorAt².
 // A hole (want.A==0) must match paper. Transparent got is 180².
 // Mean would hide letters on a large canvas; sum does not.
-func Score(got, want *image.NRGBA) float64 {
+func Score(ctx context.Context, got, want *image.NRGBA) float64 {
 	scoreMu.Lock()
 	defer scoreMu.Unlock()
 	gp, wp := scorePair()
 	gp.Reset(got)
 	wp.Reset(want)
-	return ScoreOn(gp, wp)
+	return ScoreOn(ctx, gp, wp)
 }
 
-// ScoreOn is Score. A device evaluator reads the pixmaps. Otherwise the
-// planes are converted and summed in float64.
-func ScoreOn(got, want *loss.Plane) float64 {
+// ScoreOn is Score. A device evaluator reads the pixmaps when ctx is
+// live. Otherwise the planes are converted and summed in float64.
+func ScoreOn(ctx context.Context, got, want *loss.Plane) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
-	if sum, ok := ndScoreImages(got.Image(), want.Image()); ok {
+	if sum, ok := ndScoreImages(ctx, got.Image(), want.Image()); ok {
 		return sum
 	}
 	got.Ensure()
@@ -93,21 +94,21 @@ func scoreScalar(got, want []loss.Pix) float64 {
 }
 
 // ScoreRect is the errAt sum on r. r is clipped to want.
-func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
+func ScoreRect(ctx context.Context, got, want *image.NRGBA, r image.Rectangle) float64 {
 	scoreMu.Lock()
 	defer scoreMu.Unlock()
 	gp, wp := scorePair()
 	gp.Reset(got)
 	wp.Reset(want)
-	return ScoreRectOn(gp, wp, r)
+	return ScoreRectOn(ctx, gp, wp, r)
 }
 
 // ScoreRectOn is ScoreRect on HSV planes.
-func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
+func ScoreRectOn(ctx context.Context, got, want *loss.Plane, r image.Rectangle) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
-	if sum, ok := ndScoreImageRect(got.Image(), want.Image(), r); ok {
+	if sum, ok := ndScoreImageRect(ctx, got.Image(), want.Image(), r); ok {
 		return sum
 	}
 	want.Ensure()

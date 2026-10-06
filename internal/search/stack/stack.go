@@ -65,6 +65,8 @@ func ShowFrames(on bool) { showFrames.Store(on) }
 // leftover is this epoch's hottest miss. grow is one existing
 // path union that leftover. formPick is one scored operator.
 type world struct {
+	// ctx is the Search parent. Nil keeps Score on the float64 loop.
+	ctx          context.Context
 	want, got    *image.NRGBA
 	wantP, gotP  *loss.Plane
 	doc          svg.Document
@@ -263,7 +265,7 @@ func archiveChanged(old, next []snapshot) bool {
 	return false
 }
 
-func newWorld(target *image.NRGBA) (*world, error) {
+func newWorld(ctx context.Context, target *image.NRGBA) (*world, error) {
 	if target == nil {
 		return nil, fmt.Errorf("search: nil pixmap")
 	}
@@ -280,6 +282,7 @@ func newWorld(target *image.NRGBA) (*world, error) {
 	wantP.Ensure()
 	gotP.Ensure()
 	return &world{
+		ctx:    ctx,
 		want:   target,
 		got:    got,
 		wantP:  wantP,
@@ -288,7 +291,7 @@ func newWorld(target *image.NRGBA) (*world, error) {
 		owner:  make([]uint16, w*h),
 		w:      w,
 		h:      h,
-		errSum: ScoreOn(gotP, wantP),
+		errSum: ScoreOn(ctx, gotP, wantP),
 	}, nil
 }
 
@@ -298,7 +301,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return
 		}
-		s, err := newWorld(target)
+		s, err := newWorld(ctx, target)
 		if err != nil {
 			yield(search.Epoch{}, err)
 			return
@@ -776,13 +779,13 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (form
 // inside dirty: parent sum minus the old rect plus the new rect.
 func (s *world) scoreAfter(gotP *loss.Plane, dirty image.Rectangle) float64 {
 	if s.want == nil {
-		return ScoreOn(gotP, s.wantP)
+		return ScoreOn(s.ctx, gotP, s.wantP)
 	}
 	dirty = dirty.Intersect(s.want.Bounds())
 	if dirty.Empty() {
-		return ScoreOn(gotP, s.wantP)
+		return ScoreOn(s.ctx, gotP, s.wantP)
 	}
-	return s.errSum - ScoreRectOn(s.gotP, s.wantP, dirty) + ScoreRectOn(gotP, s.wantP, dirty)
+	return s.errSum - ScoreRectOn(s.ctx, s.gotP, s.wantP, dirty) + ScoreRectOn(s.ctx, gotP, s.wantP, dirty)
 }
 
 // addLayer scores a new path on top and at one random existing

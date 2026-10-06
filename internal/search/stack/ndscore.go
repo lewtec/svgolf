@@ -2,6 +2,7 @@ package stack
 
 import (
 	"context"
+	"errors"
 	"image"
 	"sync"
 	"sync/atomic"
@@ -11,32 +12,77 @@ import (
 	"github.com/lewtec/lewkit/x/ndarray"
 )
 
+// gpuHold is the one concrete type stored in gpuEval. atomic.Value
+// panics on a nil interface and on a second concrete type.
+type gpuHold struct{ ev ndarray.Evaluator }
+
 // gpuEval is set when ndarray.Open returns a device evaluator.
 // The CPU tape interprets every pixel and loses to the Go loop, so a
-// dry machine leaves this nil and scoring stays in float64.
+// dry machine leaves this empty and scoring stays in float64.
+// A cancelled Open is not remembered; the next live parent tries again.
+// A cancelled Eval does not set gpuOff.
 var (
-	gpuOnce sync.Once
-	gpuEval ndarray.Evaluator
-	gpuOff  atomic.Bool
-	gpuMu   sync.Mutex
-	gpuTape *errTape
+	gpuEval  atomic.Value // *gpuHold
+	gpuTried atomic.Bool
+	gpuOff   atomic.Bool
+	gpuMu    sync.Mutex
+	gpuTape  *errTape
 )
 
-func gpuEvaluator() ndarray.Evaluator {
-	gpuOnce.Do(func() {
-		ev, err := ndarray.Open(context.Background())
-		if err != nil || ev == nil || ev == ndarray.CPU {
-			return
-		}
-		if named, ok := ev.(interface{ Name() string }); ok && named.Name() == "cpu" {
-			return
-		}
-		gpuEval = ev
-	})
+func gpuEvaluator(ctx context.Context) ndarray.Evaluator {
+	if ctx == nil || ctx.Err() != nil || gpuOff.Load() {
+		return nil
+	}
+	if ev := loadGPU(); ev != nil {
+		return ev
+	}
+	if gpuTried.Load() {
+		return nil
+	}
+	gpuMu.Lock()
+	defer gpuMu.Unlock()
 	if gpuOff.Load() {
 		return nil
 	}
-	return gpuEval
+	if ev := loadGPU(); ev != nil {
+		return ev
+	}
+	if gpuTried.Load() {
+		return nil
+	}
+	ev, err := ndarray.Open(ctx)
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil
+	}
+	gpuTried.Store(true)
+	if err != nil || ev == nil || ev == ndarray.CPU {
+		return nil
+	}
+	if named, ok := ev.(interface{ Name() string }); ok && named.Name() == "cpu" {
+		return nil
+	}
+	gpuEval.Store(&gpuHold{ev: ev})
+	return ev
+}
+
+func loadGPU() ndarray.Evaluator {
+	h, _ := gpuEval.Load().(*gpuHold)
+	if h == nil {
+		return nil
+	}
+	return h.ev
+}
+
+// noteDeviceErr turns the device off after a real failure. Cancel
+// and a missing parent leave it alone so the next score can try again.
+func noteDeviceErr(ctx context.Context, err error) {
+	if err == nil || ctx == nil || ctx.Err() != nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	gpuOff.Store(true)
 }
 
 // errTape is one device kernel pair over packed RGBA.
@@ -312,8 +358,8 @@ func (tape *errTape) load(got, want *image.NRGBA, r image.Rectangle) {
 	tape.wantPacked = true
 }
 
-func (tape *errTape) eval(ev ndarray.Evaluator, n int) (float64, error) {
-	if err := tape.err.Eval(context.Background(), ev, tape.dst[:n]); err != nil {
+func (tape *errTape) eval(ctx context.Context, ev ndarray.Evaluator, n int) (float64, error) {
+	if err := tape.err.Eval(ctx, ev, tape.dst[:n]); err != nil {
 		return 0, err
 	}
 	var sum float64
@@ -323,8 +369,8 @@ func (tape *errTape) eval(ev ndarray.Evaluator, n int) (float64, error) {
 	return sum, nil
 }
 
-func ndScoreImages(got, want *image.NRGBA) (float64, bool) {
-	ev := gpuEvaluator()
+func ndScoreImages(ctx context.Context, got, want *image.NRGBA) (float64, bool) {
+	ev := gpuEvaluator(ctx)
 	if ev == nil || got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return 0, false
 	}
@@ -334,11 +380,11 @@ func ndScoreImages(got, want *image.NRGBA) (float64, bool) {
 	}
 	gpuMu.Lock()
 	defer gpuMu.Unlock()
-	return ndScoreLocked(ev, got, want, got.Rect, n)
+	return ndScoreLocked(ctx, ev, got, want, got.Rect, n)
 }
 
-func ndScoreImageRect(got, want *image.NRGBA, r image.Rectangle) (float64, bool) {
-	ev := gpuEvaluator()
+func ndScoreImageRect(ctx context.Context, got, want *image.NRGBA, r image.Rectangle) (float64, bool) {
+	ev := gpuEvaluator(ctx)
 	if ev == nil || got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return 0, false
 	}
@@ -349,19 +395,19 @@ func ndScoreImageRect(got, want *image.NRGBA, r image.Rectangle) (float64, bool)
 	n := r.Dx() * r.Dy()
 	gpuMu.Lock()
 	defer gpuMu.Unlock()
-	return ndScoreLocked(ev, got, want, r, n)
+	return ndScoreLocked(ctx, ev, got, want, r, n)
 }
 
-func ndScoreLocked(ev ndarray.Evaluator, got, want *image.NRGBA, r image.Rectangle, n int) (float64, bool) {
+func ndScoreLocked(ctx context.Context, ev ndarray.Evaluator, got, want *image.NRGBA, r image.Rectangle, n int) (float64, bool) {
 	tape, err := gpuTapeFor(n)
 	if err != nil {
-		gpuOff.Store(true)
+		noteDeviceErr(ctx, err)
 		return 0, false
 	}
 	tape.load(got, want, r)
-	sum, err := tape.eval(ev, n)
+	sum, err := tape.eval(ctx, ev, n)
 	if err != nil {
-		gpuOff.Store(true)
+		noteDeviceErr(ctx, err)
 		return 0, false
 	}
 	return sum, true
@@ -370,8 +416,8 @@ func ndScoreLocked(ev ndarray.Evaluator, got, want *image.NRGBA, r image.Rectang
 // ndStamp fills mark with the (lo, hi] HSV band and family with the
 // coarse want color of each marked pixel. ok is false when the device
 // path is closed; the caller keeps the float64 walk.
-func ndStamp(got, want *image.NRGBA, lo, hi float64, mark []byte, family []int) (ok, any bool) {
-	ev := gpuEvaluator()
+func ndStamp(ctx context.Context, got, want *image.NRGBA, lo, hi float64, mark []byte, family []int) (ok, any bool) {
+	ev := gpuEvaluator(ctx)
 	if ev == nil || got == nil || want == nil || !got.Rect.Eq(want.Rect) {
 		return false, false
 	}
@@ -383,12 +429,12 @@ func ndStamp(got, want *image.NRGBA, lo, hi float64, mark []byte, family []int) 
 	gpuMu.Lock()
 	tape, err := gpuTapeFor(n)
 	if err != nil {
-		gpuOff.Store(true)
+		noteDeviceErr(ctx, err)
 		gpuMu.Unlock()
 		return false, false
 	}
 	if err := tape.mark.Resize(ndarray.Shape{n}); err != nil {
-		gpuOff.Store(true)
+		noteDeviceErr(ctx, err)
 		gpuMu.Unlock()
 		return false, false
 	}
@@ -399,8 +445,8 @@ func ndStamp(got, want *image.NRGBA, lo, hi float64, mark []byte, family []int) 
 	if buf := tape.hi.Buffer(); len(buf) > 0 {
 		buf[0] = float32(hi)
 	}
-	if err := tape.mark.Eval(context.Background(), ev, tape.mask[:n]); err != nil {
-		gpuOff.Store(true)
+	if err := tape.mark.Eval(ctx, ev, tape.mask[:n]); err != nil {
+		noteDeviceErr(ctx, err)
 		gpuMu.Unlock()
 		return false, false
 	}

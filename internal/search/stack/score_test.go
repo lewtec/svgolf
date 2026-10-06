@@ -49,11 +49,11 @@ func TestScoreHoles(t *testing.T) {
 	tight.SetNRGBA(1, 0, navy)
 	tight.SetNRGBA(0, 1, navy)
 	tight.SetNRGBA(1, 1, paper)
-	if !(Score(allNavy, want) < Score(empty, want)) {
-		t.Fatalf("plate error should beat empty: plate=%v empty=%v", Score(allNavy, want), Score(empty, want))
+	if !(Score(nil, allNavy, want) < Score(nil, empty, want)) {
+		t.Fatalf("plate error should beat empty: plate=%v empty=%v", Score(nil, allNavy, want), Score(nil, empty, want))
 	}
-	if !(Score(tight, want) < Score(allNavy, want)) {
-		t.Fatalf("paper hole should beat filled hole: tight=%v plate=%v", Score(tight, want), Score(allNavy, want))
+	if !(Score(nil, tight, want) < Score(nil, allNavy, want)) {
+		t.Fatalf("paper hole should beat filled hole: tight=%v plate=%v", Score(nil, tight, want), Score(nil, allNavy, want))
 	}
 }
 
@@ -71,17 +71,17 @@ func TestScoreBlackOnHoleCosts(t *testing.T) {
 	black := image.NewNRGBA(want.Rect)
 	copy(black.Pix, tight.Pix)
 	black.SetNRGBA(1, 1, color.NRGBA{A: 255})
-	if !(Score(tight, want) < Score(black, want)) {
-		t.Fatalf("paper hole should beat black fill: tight=%v black=%v", Score(tight, want), Score(black, want))
+	if !(Score(nil, tight, want) < Score(nil, black, want)) {
+		t.Fatalf("paper hole should beat black fill: tight=%v black=%v", Score(nil, tight, want), Score(nil, black, want))
 	}
 }
 
 func TestScoreReusesPlanes(t *testing.T) {
 	got := image.NewNRGBA(image.Rect(0, 0, 32, 32))
 	want := image.NewNRGBA(got.Rect)
-	_ = Score(got, want)
+	_ = Score(nil, got, want)
 	allocs := testing.AllocsPerRun(50, func() {
-		_ = Score(got, want)
+		_ = Score(nil, got, want)
 	})
 	if allocs != 0 {
 		t.Fatalf("Score allocs=%v want 0 after the pair is warm", allocs)
@@ -109,11 +109,11 @@ func TestScoreParallelMatchesScalar(t *testing.T) {
 	wp := loss.NewPlane(want)
 	gp.Ensure()
 	wp.Ensure()
-	if ScoreOn(gp, wp) != scoreScalar(gp.Slice(), wp.Slice()) {
-		t.Fatalf("parallel=%v scalar=%v", ScoreOn(gp, wp), scoreScalar(gp.Slice(), wp.Slice()))
+	if ScoreOn(nil, gp, wp) != scoreScalar(gp.Slice(), wp.Slice()) {
+		t.Fatalf("parallel=%v scalar=%v", ScoreOn(nil, gp, wp), scoreScalar(gp.Slice(), wp.Slice()))
 	}
 	r := image.Rect(10, 20, 180, 190)
-	gotRect := ScoreRectOn(gp, wp, r)
+	gotRect := ScoreRectOn(nil, gp, wp, r)
 	wantRect := scoreScalarRect(gp.Slice(), wp.Slice(), n, r, got.Rect.Min)
 	if gotRect != wantRect {
 		t.Fatalf("rect parallel=%v scalar=%v", gotRect, wantRect)
@@ -124,8 +124,8 @@ func TestScoreRectMatchesScore(t *testing.T) {
 	want := image.NewNRGBA(image.Rect(0, 0, 4, 4))
 	got := image.NewNRGBA(want.Rect)
 	want.SetNRGBA(1, 1, color.NRGBA{R: 255, A: 255})
-	if ScoreRect(got, want, want.Rect) != Score(got, want) {
-		t.Fatalf("rect=%v full=%v", ScoreRect(got, want, want.Rect), Score(got, want))
+	if ScoreRect(nil, got, want, want.Rect) != Score(nil, got, want) {
+		t.Fatalf("rect=%v full=%v", ScoreRect(nil, got, want, want.Rect), Score(nil, got, want))
 	}
 }
 
@@ -159,7 +159,7 @@ func TestScoreSmallMarkPaysOnLargeCanvas(t *testing.T) {
 			fixed.SetNRGBA(x, y, color.NRGBA{A: 255})
 		}
 	}
-	if !(Score(fixed, want) < Score(got, want)) {
-		t.Fatalf("10x10 mark should be visible in the sum: after=%v before=%v", Score(fixed, want), Score(got, want))
+	if !(Score(nil, fixed, want) < Score(nil, got, want)) {
+		t.Fatalf("10x10 mark should be visible in the sum: after=%v before=%v", Score(nil, fixed, want), Score(nil, got, want))
 	}
 }

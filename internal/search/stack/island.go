@@ -280,7 +280,7 @@ func (s *world) hottestMarked(k int, lo, hi float64) []leftoverBlob {
 		s.wantP = wantP
 	}
 	errFromImage := false
-	if ok, any := ndStamp(got, want, lo, hi, s.scratch.mark, s.scratch.family); ok {
+	if ok, any := ndStamp(s.ctx, got, want, lo, hi, s.scratch.mark, s.scratch.family); ok {
 		if !any {
 			return nil
 		}

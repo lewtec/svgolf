@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -38,7 +39,7 @@ func TestErrTapeMatchesScalar(t *testing.T) {
 		t.Fatal(err)
 	}
 	tape.load(got, want, got.Rect)
-	if _, err := tape.eval(ndarray.CPU, n); err != nil {
+	if _, err := tape.eval(t.Context(), ndarray.CPU, n); err != nil {
 		t.Fatal(err)
 	}
 	for i := range n {
@@ -79,7 +80,7 @@ func TestErrTapeRectMatchesScalar(t *testing.T) {
 		t.Fatal(err)
 	}
 	tape.load(got, want, r)
-	sum, err := tape.eval(ndarray.CPU, n)
+	sum, err := tape.eval(t.Context(), ndarray.CPU, n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,5 +140,32 @@ func TestResidualMarkMatchesBand(t *testing.T) {
 		if tape.mask[i] != wantMark {
 			t.Fatalf("pixel %d: err %v mark %d want %d", i, e, tape.mask[i], wantMark)
 		}
+	}
+}
+
+func TestNilContextSkipsDevice(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+	if gpuEvaluator(nil) != nil {
+		t.Fatal("nil context returned a device")
+	}
+	if Score(nil, img, img) != 0 {
+		t.Fatal("nil context changed the float64 score")
+	}
+}
+
+func TestCancelledContextLeavesDeviceAlone(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	before := gpuOff.Load()
+	if gpuEvaluator(ctx) != nil {
+		t.Fatal("cancelled context returned a device")
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	if _, ok := ndScoreImages(ctx, img, img); ok {
+		t.Fatal("cancelled context took the device score")
+	}
+	if gpuOff.Load() != before {
+		t.Fatal("cancelled context changed gpuOff")
 	}
 }

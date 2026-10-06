@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"io"
@@ -27,7 +28,7 @@ func NewTrace(dir string, log io.Writer, want *image.NRGBA) (*Trace, error) {
 	return &Trace{dir: dir, log: log, want: want}, nil
 }
 
-func (t *Trace) Record(ep search.Epoch) error {
+func (t *Trace) Record(ctx context.Context, ep search.Epoch) error {
 	doc := ep.Document
 	scale := ep.Scale
 	if scale < 1 {
@@ -55,7 +56,7 @@ func (t *Trace) Record(ep search.Epoch) error {
 			op = "-"
 		}
 		fmt.Fprintf(t.log, "epoch %d operator=%s scale=%d elapsed=%.3fs paths=%d vertices=%d score=%.3f -> %s\n",
-			t.n, op, scale, ep.Elapsed.Seconds(), documentPaths(doc), documentVertices(doc), stack.Score(got, t.want), svgPath)
+			t.n, op, scale, ep.Elapsed.Seconds(), documentPaths(doc), documentVertices(doc), stack.Score(ctx, got, t.want), svgPath)
 	}
 	t.n++
 	return nil

@@ -113,7 +113,7 @@ func TestSimplifyCollapsesStairToTriangle(t *testing.T) {
 		paths:  1,
 		w:      n,
 		h:      n,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -179,7 +179,7 @@ func TestSimplifyDoesNotFillEll(t *testing.T) {
 		paths:  1,
 		w:      w,
 		h:      h,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -332,7 +332,7 @@ func TestSimplifySkipsRememberedTriple(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()

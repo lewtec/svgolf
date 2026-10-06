@@ -13,7 +13,7 @@ func TestRenderWritesPNG(t *testing.T) {
 	in := filepath.Join("..", "..", "testdata", "svg", "rect-inset.svg")
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"render", in, "-o", out})
-	if err := cmd.Execute(); err != nil {
+	if err := cmd.ExecuteContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f, err := os.Open(out)

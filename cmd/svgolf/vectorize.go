@@ -53,7 +53,7 @@ func newVectorizeCmd() *cobra.Command {
 				}
 				last = ep.Document
 				if trace != nil {
-					if err := trace.Record(ep); err != nil {
+					if err := trace.Record(cmd.Context(), ep); err != nil {
 						return err
 					}
 				}
