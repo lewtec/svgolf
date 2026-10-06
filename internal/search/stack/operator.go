@@ -395,7 +395,7 @@ func (c *Carve) Run() (formPick, error) {
 		cand := withHoles(p, [][][2]float64{hole})
 		work := ownedMinus(s.owner, c.left.island, s.w, uint16(i+1), c.scratch.seen)
 		dirty0 := islandRect(c.left.island).Union(nodeRect(node))
-		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
+		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0}
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
 		if err != nil {
 			return nonePick(), err
@@ -460,7 +460,7 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	if !any {
 		return nonePick(), nil
 	}
-	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
+	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0}
 	pick, err := s.scoreCand(next, last, gr, OpCarve)
 	if err != nil {
 		return nonePick(), err
@@ -494,6 +494,7 @@ func (s Simplify) Applies() bool {
 
 func (s Simplify) Run() (formPick, error) {
 	w := s.world
+	missed := cloneStraightMiss(w.simplifyMiss)
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
@@ -508,6 +509,10 @@ func (s Simplify) Run() (formPick, error) {
 				if !ring.straightVertex(v) {
 					continue
 				}
+				key := ringStraightKey(ring, v)
+				if _, seen := missed[key]; seen {
+					continue
+				}
 				moved := ring.dropVertex(v)
 				if len(moved.verts) < 3 || ringCrosses(moved.points()) {
 					continue
@@ -519,20 +524,35 @@ func (s Simplify) Run() (formPick, error) {
 					cand = cand.WithLinearFill(lin)
 				}
 				g := w.seedGrow(grow{i: i, work: s.buckets[i], fill: w.fills[i]})
+				// seedGrow dirties the whole path. One straight
+				// drop only repaints this triangle; scoreCand
+				// insets the rect.
+				g.dirty0 = key.scoreRect()
 				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, OpSimplify)
 				if err != nil {
 					return nonePick(), err
+				}
+				if !pick.scored {
+					continue
 				}
 				if pick.ok && pick.errSum > w.errSum {
 					pick.ok = false
 				}
 				if pick.ok {
+					forgetTouching(missed, key)
+					pick.simplifyMiss = missed
 					return pick, nil
 				}
+				if missed == nil {
+					missed = map[straightKey]struct{}{}
+				}
+				missed[key] = struct{}{}
 			}
 		}
 	}
-	return nonePick(), nil
+	out := nonePick()
+	out.simplifyMiss = missed
+	return out, nil
 }
 
 // Unhole drops one evenodd hole.
@@ -1303,9 +1323,10 @@ func (s *world) worldOperators(band int) []Operator {
 type namedPick struct {
 	pick    formPick
 	elapsed time.Duration
+	miss    map[straightKey]struct{}
 }
 
-func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, band int) ([]formPick, []search.Rated, error) {
+func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, band int) ([]formPick, []search.Rated, map[straightKey]struct{}, error) {
 	type job struct {
 		op    Operator
 		left  leftover
@@ -1357,6 +1378,9 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 			if elapsed > st.elapsed {
 				st.elapsed = elapsed
 			}
+			if id == OpSimplify {
+				st.miss = p.simplifyMiss
+			}
 			if betterPick(p, st.pick) {
 				st.pick = p
 			}
@@ -1367,14 +1391,18 @@ func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, b
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	for id := OpNone; id < opCount; id++ {
 		if st, ok := bestByOp[id]; ok {
 			s.logCandidate(id, st.elapsed, st.pick)
 		}
 	}
-	return pool, collectRated(bestByOp), nil
+	var miss map[straightKey]struct{}
+	if st := bestByOp[OpSimplify]; st != nil {
+		miss = st.miss
+	}
+	return pool, collectRated(bestByOp), miss, nil
 }
 
 func collectRated(bestByOp map[Op]*namedPick) []search.Rated {

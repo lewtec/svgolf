@@ -3,8 +3,81 @@ package loss
 import (
 	"image"
 	"image/color"
+	"math"
 	"testing"
 )
+
+func TestByteUnitMatchesDivision(t *testing.T) {
+	for i := 0; i < 256; i++ {
+		if byteUnit[i] != float64(i)/255 {
+			t.Fatalf("byteUnit[%d]=%v", i, byteUnit[i])
+		}
+	}
+}
+
+func TestHSVMatchesChannelDivision(t *testing.T) {
+	var c color.NRGBA
+	c.A = 255
+	for r := 0; r < 256; r += 15 {
+		for g := 0; g < 256; g += 15 {
+			for b := 0; b < 256; b += 15 {
+				c.R, c.G, c.B = uint8(r), uint8(g), uint8(b)
+				h, s, v := hsv(c)
+				wh, ws, wv := hsvByDivision(c)
+				if h != wh || s != ws || v != wv {
+					t.Fatalf("%v hsv=%v %v %v division=%v %v %v", c, h, s, v, wh, ws, wv)
+				}
+			}
+		}
+	}
+}
+
+func hsvByDivision(c color.NRGBA) (h, s, v float64) {
+	r := float64(c.R) / 255
+	g := float64(c.G) / 255
+	b := float64(c.B) / 255
+	max := math.Max(r, math.Max(g, b))
+	min := math.Min(r, math.Min(g, b))
+	v = max
+	if max == 0 {
+		return 0, 0, 0
+	}
+	s = (max - min) / max
+	if max == min {
+		return 0, s, v
+	}
+	switch max {
+	case r:
+		h = 60 * (g - b) / (max - min)
+		if h < 0 {
+			h += 360
+		}
+	case g:
+		h = 60*(b-r)/(max-min) + 120
+	default:
+		h = 60*(r-g)/(max-min) + 240
+	}
+	return h, s, v
+}
+
+func TestEnsureRectSkipsConvertedPlane(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 2))
+	img.SetNRGBA(1, 0, color.NRGBA{R: 255, A: 255})
+	p := NewPlane(img)
+	p.Ensure()
+	p.pix[0].H = 123
+	p.EnsureRect(img.Rect)
+	if p.pix[0].H != 123 {
+		t.Fatalf("EnsureRect rewrote a converted plane: %v", p.pix[0].H)
+	}
+	img.SetNRGBA(0, 0, color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+	p.Reset(img)
+	p.EnsureRect(image.Rect(0, 0, 1, 1))
+	want, _, _ := hsv(color.NRGBA{R: 10, G: 20, B: 30, A: 255})
+	if p.pix == nil || p.pix[0].H != want {
+		t.Fatalf("Reset+EnsureRect pix=%v want H=%v", p.pix, want)
+	}
+}
 
 func TestColorAtHSVMatchesColorAt(t *testing.T) {
 	pairs := [][2]color.NRGBA{

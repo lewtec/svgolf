@@ -198,3 +198,171 @@ func TestSimplifyDoesNotFillEll(t *testing.T) {
 		}
 	}
 }
+
+func TestDroppedVertexPixelsStayInTriangle(t *testing.T) {
+	red := color.NRGBA{R: 172, G: 19, B: 13, A: 255}
+	stair := [][2]float64{{2, 2}, {3, 2}, {3, 3}, {12, 3}, {12, 12}, {2, 12}}
+	assertDropsLocal(t, plateDoc(16, filledPath(stair, red)))
+
+	outer := polylineRing([][2]float64{{0, 0}, {32, 0}, {32, 32}, {0, 32}})
+	hole := polylineRing([][2]float64{{6, 6}, {7, 6}, {7, 7}, {8, 7}, {8, 8}, {18, 8}, {18, 22}, {6, 22}})
+	assertDropsLocal(t, plateDoc(32, filledRings(outer, []pathRing{hole}, red)))
+}
+
+func plateDoc(n int, p svg.Path) svg.Document {
+	doc := svg.NewDocument(float64(n), float64(n)).WithViewBox(0, 0, float64(n), float64(n))
+	return doc.Append(whitePane(n, n).Node()).Append(p.Node())
+}
+
+func assertDropsLocal(t *testing.T, doc svg.Document) {
+	t.Helper()
+	before, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, changed := 0, 0
+	for i, node := range doc.Children() {
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		col, ok := p.Fill()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		for ri, ring := range rings {
+			for v := 0; v < len(ring.verts); v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				moved := ring.dropVertex(v)
+				if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+					continue
+				}
+				next := append([]pathRing{}, rings...)
+				next[ri] = moved
+				cand := filledRings(next[0], next[1:], col)
+				if lin, ok := node.LinearFill(); ok {
+					cand = cand.WithLinearFill(lin)
+				}
+				after, err := render.Render(replaceAt(doc, i, cand.Node()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				key := ringStraightKey(ring, v)
+				rect := key.scoreRect().Inset(-2)
+				local := false
+				b := before.Bounds()
+				for y := b.Min.Y; y < b.Max.Y; y++ {
+					for x := b.Min.X; x < b.Max.X; x++ {
+						if before.NRGBAAt(x, y) == after.NRGBAAt(x, y) {
+							continue
+						}
+						if !image.Pt(x, y).In(rect) {
+							t.Fatalf("pixel %d,%d changed outside %v (path %d ring %d vertex %v)", x, y, rect, i, ri, ring.verts[v])
+						}
+						local = true
+					}
+				}
+				gotP := loss.NewPlane(after)
+				wantP := loss.NewPlane(before)
+				gotP.Ensure()
+				wantP.Ensure()
+				full := scoreScalar(gotP.Slice(), wantP.Slice())
+				scored := rect.Intersect(b)
+				part := 0.0
+				if !scored.Empty() {
+					part = scoreScalarRect(gotP.Slice(), wantP.Slice(), b.Dx(), scored, b.Min)
+				}
+				if full != part {
+					t.Fatalf("full score %v != rect score %v for %v", full, part, rect)
+				}
+				checked++
+				if local {
+					changed++
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no straight vertex")
+	}
+	if changed == 0 {
+		t.Fatal("no drop changed a pixel")
+	}
+}
+
+func TestForgetTouchingKeepsDistantTriple(t *testing.T) {
+	near := straightKey{ax: 0, ay: 0, bx: 2, by: 0, cx: 4, cy: 0}
+	far := straightKey{ax: 40, ay: 0, bx: 42, by: 0, cx: 44, cy: 0}
+	miss := map[straightKey]struct{}{near: {}, far: {}}
+	forgetTouching(miss, near)
+	if _, ok := miss[far]; !ok {
+		t.Fatal("distant triple was forgotten")
+	}
+	if _, ok := miss[near]; ok {
+		t.Fatal("the dropped triple stayed remembered")
+	}
+}
+
+func TestSimplifySkipsRememberedTriple(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, red)
+		}
+	}
+	ring := [][2]float64{{0, 0}, {4, 0}, {8, 0}, {16, 0}, {16, 16}, {0, 16}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(ring, red).Node())
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &world{
+		want:   img,
+		got:    got,
+		wantP:  loss.NewPlane(img),
+		gotP:   loss.NewPlane(got),
+		doc:    doc,
+		owner:  make([]uint16, 16*16),
+		fills:  []color.NRGBA{red},
+		paths:  1,
+		w:      16,
+		h:      16,
+		errSum: Score(got, img),
+	}
+	s.wantP.Ensure()
+	s.gotP.Ensure()
+	key := ringStraightKey(polylineRing(ring), 1)
+	s.simplifyMiss = map[straightKey]struct{}{key: {}}
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pick.ok {
+		t.Fatal("simplify skipped every vertex")
+	}
+	s.apply(pick)
+	p, ok := s.doc.Children()[1].Path()
+	if !ok {
+		t.Fatal("not a path")
+	}
+	if !ringHas(pathOuter(p.Node()), 4, 0) {
+		t.Fatal("remembered vertex was dropped")
+	}
+	if ringHas(pathOuter(p.Node()), 8, 0) {
+		t.Fatal("the next straight vertex stayed")
+	}
+}
+
+func ringHas(ring [][2]float64, x, y float64) bool {
+	for _, p := range ring {
+		if p[0] == x && p[1] == y {
+			return true
+		}
+	}
+	return false
+}

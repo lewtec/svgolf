@@ -198,6 +198,7 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 		s.fail(dir, id, err)
 		return
 	}
+	stack.ShowFrames(true)
 	n := 0
 	var scores []float64
 	var rounds [][]search.Rated

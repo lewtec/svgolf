@@ -291,6 +291,10 @@ func (p *pixmap) blend(x, y int, sr, sg, sb, sa uint8) {
 	if x < 0 || y < 0 || x >= p.w || y >= p.h {
 		return
 	}
+	p.blendAt(x, y, sr, sg, sb, sa)
+}
+
+func (p *pixmap) blendAt(x, y int, sr, sg, sb, sa uint8) {
 	i := (y*p.w + x) * 4
 	r, g, b, a := sourceOver(p.pix[i], p.pix[i+1], p.pix[i+2], p.pix[i+3], sr, sg, sb, sa)
 	p.pix[i], p.pix[i+1], p.pix[i+2], p.pix[i+3] = r, g, b, a
@@ -307,28 +311,81 @@ type solidBlitter struct {
 }
 
 func (b *solidBlitter) blitH(x, y, width uint32) {
-	for i := uint32(0); i < width; i++ {
-		b.pm.blend(int(x+i), int(y), b.pr, b.pg, b.pb, b.pa)
+	pm := b.pm
+	yi := int(y)
+	if width == 0 || yi < 0 || yi >= pm.h {
+		return
+	}
+	x0 := int(x)
+	x1 := x0 + int(width)
+	if x0 < 0 {
+		x0 = 0
+	}
+	if x1 > pm.w {
+		x1 = pm.w
+	}
+	if x0 >= x1 {
+		return
+	}
+	if b.pa == 255 {
+		b.fillOpaque(yi, x0, x1)
+		return
+	}
+	for px := x0; px < x1; px++ {
+		pm.blendAt(px, yi, b.pr, b.pg, b.pb, b.pa)
 	}
 }
 
 func (b *solidBlitter) blitAntiH(x, y uint32, alpha []uint8, runs []uint16) {
+	pm := b.pm
+	yi := int(y)
+	if yi < 0 || yi >= pm.h {
+		return
+	}
 	i := 0
-	px := x
+	px := int(x)
+	w := pm.w
 	for {
-		n := runs[i]
+		n := int(runs[i])
 		if n == 0 {
 			return
 		}
 		a := alpha[i]
 		if a != 0 {
-			sr, sg, sb, sa := scalePremul(b.pr, b.pg, b.pb, b.pa, a)
-			for k := uint16(0); k < n; k++ {
-				b.pm.blend(int(px+uint32(k)), int(y), sr, sg, sb, sa)
+			x0 := px
+			x1 := px + n
+			if x0 < 0 {
+				x0 = 0
+			}
+			if x1 > w {
+				x1 = w
+			}
+			if x0 < x1 {
+				if a == 255 && b.pa == 255 {
+					b.fillOpaque(yi, x0, x1)
+				} else {
+					sr, sg, sb, sa := scalePremul(b.pr, b.pg, b.pb, b.pa, a)
+					for x := x0; x < x1; x++ {
+						pm.blendAt(x, yi, sr, sg, sb, sa)
+					}
+				}
 			}
 		}
-		px += uint32(n)
-		i += int(n)
+		px += n
+		i += n
+	}
+}
+
+// fillOpaque is sourceOver of a premul source whose alpha is 255:
+// the destination does not show through.
+func (b *solidBlitter) fillOpaque(y, x0, x1 int) {
+	dst := b.pm.pix[(y*b.pm.w+x0)*4 : (y*b.pm.w+x1)*4]
+	pr, pg, pb := b.pr, b.pg, b.pb
+	for i := 0; i < len(dst); i += 4 {
+		dst[i] = pr
+		dst[i+1] = pg
+		dst[i+2] = pb
+		dst[i+3] = 255
 	}
 }
 

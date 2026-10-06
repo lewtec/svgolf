@@ -34,21 +34,22 @@ func (t *Trace) Record(ep search.Epoch) error {
 		scale = 1
 	}
 	svgPath := filepath.Join(t.dir, fmt.Sprintf("%03d.svg", t.n))
-	for _, r := range []DocumentRenderer{
-		NewSVGFile(svgPath),
-		NewSVGFile(filepath.Join(t.dir, "last.svg")),
-		NewPNGFile(filepath.Join(t.dir, fmt.Sprintf("%03d.png", t.n))),
-		NewPNGFile(filepath.Join(t.dir, "last.png")),
-	} {
-		if err := r.Render(doc); err != nil {
+	for _, path := range []string{svgPath, filepath.Join(t.dir, "last.svg")} {
+		if err := NewSVGFile(path).Render(doc); err != nil {
 			return err
 		}
 	}
+	got, err := render.Render(doc)
+	if err != nil {
+		return err
+	}
+	if err := writePNG(filepath.Join(t.dir, fmt.Sprintf("%03d.png", t.n)), got); err != nil {
+		return err
+	}
+	if err := writePNG(filepath.Join(t.dir, "last.png"), got); err != nil {
+		return err
+	}
 	if t.log != nil {
-		got, err := render.Render(doc)
-		if err != nil {
-			return err
-		}
 		op := ep.Operator.String()
 		if op == "" {
 			op = "-"

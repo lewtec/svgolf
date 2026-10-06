@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lewtec/svgolf/internal/loss"
@@ -53,6 +54,13 @@ func init() {
 	search.Register("stack", func() search.Search { return Stack{} })
 }
 
+// showFrames keeps Heat and Island on each epoch. Vectorize does
+// not read them; building both is a full-pixmap walk.
+var showFrames atomic.Bool
+
+// ShowFrames turns epoch Heat and Island on for the server.
+func ShowFrames(on bool) { showFrames.Store(on) }
+
 // world is the accepted document and the pixmap it paints.
 // leftover is this epoch's hottest miss. grow is one existing
 // path union that leftover. formPick is one scored operator.
@@ -69,6 +77,9 @@ type world struct {
 	candidateLog io.Writer
 	logMu        sync.Mutex
 	snapID       int
+	// simplifyMiss is the straight triples that raised Score on
+	// this picture. The next simplify skips them.
+	simplifyMiss map[straightKey]struct{}
 }
 
 var candidateLog io.Writer
@@ -101,41 +112,42 @@ type grow struct {
 	fill   color.NRGBA
 	ring   [][2]float64
 	dirty0 image.Rectangle
-	oldErr float64
 }
 
 type formPick struct {
-	doc      svg.Document
-	got      *image.NRGBA
-	errSum   float64
-	paths    int
-	commands int
-	replace  int
-	insert   int
-	work     []pix
-	fill     color.NRGBA
-	reclaims [][]pix
-	dropIdx  int
-	mergeJ   int
-	op       Op
-	ok       bool
-	scored   bool
-	island   []pix
-	fills    []color.NRGBA
-	owner    []uint16
-	parent   snapshot
+	doc          svg.Document
+	got          *image.NRGBA
+	errSum       float64
+	paths        int
+	commands     int
+	replace      int
+	insert       int
+	work         []pix
+	fill         color.NRGBA
+	reclaims     [][]pix
+	dropIdx      int
+	mergeJ       int
+	op           Op
+	ok           bool
+	scored       bool
+	island       []pix
+	fills        []color.NRGBA
+	owner        []uint16
+	parent       snapshot
+	simplifyMiss map[straightKey]struct{}
 }
 
 type snapshot struct {
-	id       int
-	doc      svg.Document
-	got      *image.NRGBA
-	fills    []color.NRGBA
-	owner    []uint16
-	errSum   float64
-	paths    int
-	commands int
-	operator Op
+	id           int
+	doc          svg.Document
+	got          *image.NRGBA
+	fills        []color.NRGBA
+	owner        []uint16
+	errSum       float64
+	paths        int
+	commands     int
+	operator     Op
+	simplifyMiss map[straightKey]struct{}
 }
 
 func nonePick() formPick {
@@ -296,10 +308,13 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		emit := func(id Op, blob, fitted []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
-			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
+			if showFrames.Load() {
+				ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
+			}
 			ep.Rated = rated
+			ok := yield(ep, nil)
 			started = time.Now()
-			return yield(ep, nil)
+			return ok
 		}
 		archive := []snapshot{s.snap()}
 		band := 1
@@ -327,7 +342,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 							continue
 						}
 						s.load(member)
-						picks, pr, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
+						picks, pr, _, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
 						if err != nil {
 							yield(search.Epoch{}, err)
 							return
@@ -337,12 +352,21 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					}
 				}
 			} else {
-				for _, member := range archive {
+				for j, member := range archive {
 					s.load(member)
-					picks, pr, err := s.choose(ctx, s.leftovers(), member, band)
+					// Polish only runs simplify and unhole. The
+					// leftover flood is not an input to either.
+					var lefts []leftover
+					if band != polishBand {
+						lefts = s.leftovers()
+					}
+					picks, pr, miss, err := s.choose(ctx, lefts, member, band)
 					if err != nil {
 						yield(search.Epoch{}, err)
 						return
+					}
+					if miss != nil {
+						archive[j].simplifyMiss = miss
 					}
 					pool = append(pool, picks...)
 					rated = mergeRated(rated, pr)
@@ -478,21 +502,21 @@ func (s *world) seedGrow(g grow) grow {
 	if g.i >= 0 {
 		g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[g.i+1]))
 	}
-	g.oldErr = ScoreRectOn(s.gotP, s.wantP, g.dirty0.Inset(-2))
 	return g
 }
 
 func (s *world) snap() snapshot {
 	s.snapID++
 	return snapshot{
-		id:       s.snapID,
-		doc:      s.doc,
-		got:      s.got,
-		fills:    append([]color.NRGBA(nil), s.fills...),
-		owner:    append([]uint16(nil), s.owner...),
-		errSum:   s.errSum,
-		paths:    s.paths,
-		commands: docCmdLen(s.doc),
+		id:           s.snapID,
+		doc:          s.doc,
+		got:          s.got,
+		fills:        append([]color.NRGBA(nil), s.fills...),
+		owner:        append([]uint16(nil), s.owner...),
+		errSum:       s.errSum,
+		paths:        s.paths,
+		commands:     docCmdLen(s.doc),
+		simplifyMiss: s.simplifyMiss,
 	}
 }
 
@@ -503,6 +527,7 @@ func (s *world) load(sn snapshot) {
 	s.owner = append([]uint16(nil), sn.owner...)
 	s.errSum = sn.errSum
 	s.paths = sn.paths
+	s.simplifyMiss = sn.simplifyMiss
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
 	} else {
@@ -644,6 +669,11 @@ func (s *world) apply(pick formPick) {
 		claim(s.owner, pick.work, s.w, uint16(s.paths+1))
 		s.fills = append(s.fills, pick.fill)
 		s.paths++
+	}
+	if pick.op == OpSimplify {
+		s.simplifyMiss = pick.simplifyMiss
+	} else {
+		s.simplifyMiss = nil
 	}
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
@@ -1350,6 +1380,56 @@ func appendRing(p svg.Path, ring [][2]float64) svg.Path {
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
 	return appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
+}
+
+// straightKey is one vertex and its two neighbors. The floats are
+// the path coordinates, so the same triple maps to the same key.
+type straightKey struct {
+	ax, ay, bx, by, cx, cy float64
+}
+
+func ringStraightKey(r pathRing, i int) straightKey {
+	n := len(r.verts)
+	p := (i - 1 + n) % n
+	q := (i + 1) % n
+	return straightKey{
+		ax: r.verts[p][0], ay: r.verts[p][1],
+		bx: r.verts[i][0], by: r.verts[i][1],
+		cx: r.verts[q][0], cy: r.verts[q][1],
+	}
+}
+
+// scoreRect is the bbox scoreCand will measure: pointsRect, and
+// scoreCand insets by 2. Callers that set dirty0 use scoreRect
+// itself and let scoreCand expand it.
+func (k straightKey) scoreRect() image.Rectangle {
+	return pointsRect([][2]float64{{k.ax, k.ay}, {k.bx, k.by}, {k.cx, k.cy}})
+}
+
+func cloneStraightMiss(in map[straightKey]struct{}) map[straightKey]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[straightKey]struct{}, len(in))
+	for k := range in {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// forgetTouching drops remembered triples whose scored rect meets
+// the drop. Pixels outside that rect are unchanged, so a triple
+// that missed there still misses.
+func forgetTouching(miss map[straightKey]struct{}, dropped straightKey) {
+	if len(miss) == 0 {
+		return
+	}
+	zone := dropped.scoreRect().Inset(-2)
+	for k := range miss {
+		if k.scoreRect().Inset(-2).Overlaps(zone) {
+			delete(miss, k)
+		}
+	}
 }
 
 func pointsRect(pts [][2]float64) image.Rectangle {

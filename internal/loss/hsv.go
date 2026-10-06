@@ -23,10 +23,11 @@ func HSVOf(c color.NRGBA) Pix {
 // Plane is an image converted to HSV once. Search holds one for want
 // (immutable) and one for got (Reset after each Render).
 type Plane struct {
-	img  *image.NRGBA
-	once sync.Once
-	pix  []Pix
-	buf  []Pix
+	img       *image.NRGBA
+	once      sync.Once
+	pix       []Pix
+	buf       []Pix
+	converted bool // pix covers the whole image; EnsureRect would rewrite it
 }
 
 // NewPlane wraps img. Convert runs on the first At / Ensure.
@@ -102,6 +103,7 @@ func (p *Plane) Reset(img *image.NRGBA) {
 	p.img = img
 	p.once = sync.Once{}
 	p.pix = nil
+	p.converted = false
 }
 
 // At is the HSV pixel at (x,y) in image coordinates.
@@ -121,7 +123,7 @@ func (p *Plane) At(x, y int) Pix {
 
 // EnsureRect converts r. The rest of the table stays unset until Ensure.
 func (p *Plane) EnsureRect(r image.Rectangle) {
-	if p == nil || p.img == nil {
+	if p == nil || p.img == nil || p.converted {
 		return
 	}
 	b := p.img.Rect
@@ -197,16 +199,17 @@ func (p *Plane) convert() {
 				i++
 			}
 		}
-		return
+	} else {
+		SplitRange(n, func(lo, hi int) {
+			for i := lo; i < hi; i++ {
+				y := i / w
+				x := i - y*w
+				off := y*stride + x*4
+				p.pix[i] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
+			}
+		})
 	}
-	SplitRange(n, func(lo, hi int) {
-		for i := lo; i < hi; i++ {
-			y := i / w
-			x := i - y*w
-			off := y*stride + x*4
-			p.pix[i] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
-		}
-	})
+	p.converted = true
 }
 
 // Slice is the row-major HSV table. Call Ensure or EnsureRect first.
