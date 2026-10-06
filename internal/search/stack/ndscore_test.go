@@ -1,10 +1,14 @@
 package stack
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
+	"log/slog"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/lewtec/lewkit/x/ndarray"
@@ -140,6 +144,46 @@ func TestResidualMarkMatchesBand(t *testing.T) {
 		if tape.mask[i] != wantMark {
 			t.Fatalf("pixel %d: err %v mark %d want %d", i, e, tape.mask[i], wantMark)
 		}
+	}
+}
+
+type labelEval struct{ name string }
+
+func (labelEval) Program(context.Context, *ndarray.Kernel) (ndarray.Program, error) {
+	return nil, nil
+}
+func (labelEval) Close() error   { return nil }
+func (e labelEval) Name() string { return e.name }
+
+func captureNDLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	return &buf
+}
+
+func TestLogNDDriverNamesGPU(t *testing.T) {
+	buf := captureNDLog(t)
+	logNDDriver(labelEval{name: "vulkan:NVIDIA GeForce RTX 4090"}, nil)
+	got := buf.String()
+	if !strings.Contains(got, "ndarray driver") || !strings.Contains(got, "vulkan:NVIDIA GeForce RTX 4090") || !strings.Contains(got, "score=device") {
+		t.Fatalf("log=%s", got)
+	}
+}
+
+func TestLogNDDriverCPUStaysFloat64(t *testing.T) {
+	buf := captureNDLog(t)
+	logNDDriver(ndarray.CPU, nil)
+	got := buf.String()
+	if !strings.Contains(got, "name=cpu") || !strings.Contains(got, "score=float64") {
+		t.Fatalf("log=%s", got)
+	}
+	logNDDriver(nil, errors.New("no device"))
+	got = buf.String()
+	if !strings.Contains(got, "no device") || strings.Count(got, "score=float64") != 2 {
+		t.Fatalf("log=%s", got)
 	}
 }
 

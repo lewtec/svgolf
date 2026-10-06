@@ -3,7 +3,9 @@ package stack
 import (
 	"context"
 	"errors"
+	"fmt"
 	"image"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -28,6 +30,13 @@ var (
 	gpuMu    sync.Mutex
 	gpuTape  *errTape
 )
+
+// OpenDriver opens the ndarray evaluator and logs its device once.
+// The server calls this before it listens. Search calls it again,
+// and that second call reuses the same device without another line.
+func OpenDriver(ctx context.Context) {
+	_ = gpuEvaluator(ctx)
+}
 
 func gpuEvaluator(ctx context.Context) ndarray.Evaluator {
 	if ctx == nil || ctx.Err() != nil || gpuOff.Load() {
@@ -55,14 +64,42 @@ func gpuEvaluator(ctx context.Context) ndarray.Evaluator {
 		return nil
 	}
 	gpuTried.Store(true)
-	if err != nil || ev == nil || ev == ndarray.CPU {
+	if err != nil || evaluatorLabel(ev) == "cpu" {
+		logNDDriver(ev, err)
 		return nil
 	}
-	if named, ok := ev.(interface{ Name() string }); ok && named.Name() == "cpu" {
-		return nil
-	}
+	logNDDriver(ev, nil)
 	gpuEval.Store(&gpuHold{ev: ev})
 	return ev
+}
+
+// evaluatorLabel is the driver name from Open. Metal and Vulkan include
+// the device, as in "metal:Apple M1" or "vulkan:NVIDIA GeForce RTX 4090".
+func evaluatorLabel(ev ndarray.Evaluator) string {
+	if ev == nil || ev == ndarray.CPU {
+		return "cpu"
+	}
+	if named, ok := ev.(interface{ Name() string }); ok {
+		if name := named.Name(); name != "" {
+			return name
+		}
+	}
+	return fmt.Sprintf("%T", ev)
+}
+
+// logNDDriver records the driver once, when Open commits. A later score
+// reuses that choice and stays quiet.
+func logNDDriver(ev ndarray.Evaluator, err error) {
+	name := evaluatorLabel(ev)
+	if err != nil {
+		slog.Info("ndarray driver", "name", name, "err", err, "score", "float64")
+		return
+	}
+	if name == "cpu" {
+		slog.Info("ndarray driver", "name", name, "score", "float64")
+		return
+	}
+	slog.Info("ndarray driver", "name", name, "score", "device")
 }
 
 func loadGPU() ndarray.Evaluator {

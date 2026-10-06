@@ -59,6 +59,9 @@ func newServerCmd() *cobra.Command {
 				},
 			}
 			cmd.Println("svgolf server", addr, "cache", cache)
+			if algo == "stack" {
+				stack.OpenDriver(ctx)
+			}
 			errc := make(chan error, 1)
 			go func() { errc <- srv.ListenAndServe() }()
 			select {

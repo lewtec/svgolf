@@ -301,6 +301,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return
 		}
+		OpenDriver(ctx)
 		s, err := newWorld(ctx, target)
 		if err != nil {
 			yield(search.Epoch{}, err)
