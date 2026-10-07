@@ -26,26 +26,28 @@ const (
 	OpSwap
 	OpDelete
 	OpUnhole
+	OpOutline
 	OpCount
 )
 
 var operatorNames = [OpCount]string{
-	OpNone:     "",
-	OpAbsorb:   "absorb",
+	OpNone:      "",
+	OpAbsorb:    "absorb",
 	OpTriangle:  "triangle",
 	OpRing:      "ring",
 	OpRectangle: "rectangle",
 	OpGrow:      "grow",
-	OpCarve:    "carve",
-	OpSlide:    "slide",
-	OpBend:     "bend",
-	OpSimplify: "simplify",
-	OpWash:     "wash",
-	OpJoin:     "join",
-	OpSubtract: "subtract",
-	OpSwap:     "swap",
-	OpDelete:   "delete",
-	OpUnhole:   "unhole",
+	OpCarve:     "carve",
+	OpSlide:     "slide",
+	OpBend:      "bend",
+	OpSimplify:  "simplify",
+	OpWash:      "wash",
+	OpJoin:      "join",
+	OpSubtract:  "subtract",
+	OpSwap:      "swap",
+	OpDelete:    "delete",
+	OpUnhole:    "unhole",
+	OpOutline:   "outline",
 }
 
 func (id Op) String() string {

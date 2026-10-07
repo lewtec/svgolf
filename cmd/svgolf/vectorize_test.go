@@ -23,10 +23,10 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Operator: search.OpTriangle, Elapsed: time.Second}); err != nil {
+	if err := tr.Record(t.Context(), search.Epoch{Document: d0, Scale: 8, Operator: search.OpTriangle, Elapsed: time.Second}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Operator: search.OpWash}); err != nil {
+	if err := tr.Record(t.Context(), search.Epoch{Document: d1, Scale: 4, Operator: search.OpWash}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(log.String(), "scale=8") {
@@ -74,7 +74,7 @@ func sameFile(t *testing.T, a, b string) {
 func TestVectorizeUnknownSearch(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"vectorize", "x.png", "-o", "y.svg", "--search", "nope"})
-	err := cmd.Execute()
+	err := cmd.ExecuteContext(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "unknown adapter") {
 		t.Fatalf("got %v", err)
 	}

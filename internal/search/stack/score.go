@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -34,48 +35,81 @@ func scorePair() (*loss.Plane, *loss.Plane) {
 // Score is the sum of per-pixel HSV error. Opaque pixels use ColorAt².
 // A hole (want.A==0) must match paper. Transparent got is 180².
 // Mean would hide letters on a large canvas; sum does not.
-func Score(got, want *image.NRGBA) float64 {
+func Score(ctx context.Context, got, want *image.NRGBA) float64 {
 	scoreMu.Lock()
 	defer scoreMu.Unlock()
 	gp, wp := scorePair()
 	gp.Reset(got)
 	wp.Reset(want)
-	return ScoreOn(gp, wp)
+	return ScoreOn(ctx, gp, wp)
 }
 
-// ScoreOn is Score on HSV planes (want converted once, got after Render).
-func ScoreOn(got, want *loss.Plane) float64 {
+// ScoreOn is Score. A device evaluator reads the pixmaps when ctx is
+// live. Otherwise the planes are converted and summed in float64.
+func ScoreOn(ctx context.Context, got, want *loss.Plane) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
 	}
+	if sum, ok := ndScoreImages(ctx, got.Image(), want.Image()); ok {
+		return sum
+	}
 	got.Ensure()
 	want.Ensure()
-	gp, wp := got.Slice(), want.Slice()
-	n := len(gp)
-	if len(wp) < n {
-		n = len(wp)
+	return scorePixels(got.Slice(), want.Slice())
+}
+
+// scratchErr holds per-pixel error for one in-flight parallel sum.
+// The following sequential add keeps Score identical to scoreScalar.
+var scratchErr []float64
+
+func scorePixels(got, want []loss.Pix) float64 {
+	n := len(got)
+	if len(want) < n {
+		n = len(want)
+	}
+	parallel, claim := loss.EnterCores(n)
+	if !parallel {
+		sum := scoreScalar(got[:n], want[:n])
+		claim.Release()
+		return sum
+	}
+	defer claim.Release()
+	return parallelSum(n, func(lo, hi int, dst []float64) {
+		for i := lo; i < hi; i++ {
+			dst[i] = errAtHSV(got[i], want[i])
+		}
+	})
+}
+
+func scoreScalar(got, want []loss.Pix) float64 {
+	n := len(got)
+	if len(want) < n {
+		n = len(want)
 	}
 	var sum float64
 	for i := 0; i < n; i++ {
-		sum += errAtHSV(gp[i], wp[i])
+		sum += errAtHSV(got[i], want[i])
 	}
 	return sum
 }
 
 // ScoreRect is the errAt sum on r. r is clipped to want.
-func ScoreRect(got, want *image.NRGBA, r image.Rectangle) float64 {
+func ScoreRect(ctx context.Context, got, want *image.NRGBA, r image.Rectangle) float64 {
 	scoreMu.Lock()
 	defer scoreMu.Unlock()
 	gp, wp := scorePair()
 	gp.Reset(got)
 	wp.Reset(want)
-	return ScoreRectOn(gp, wp, r)
+	return ScoreRectOn(ctx, gp, wp, r)
 }
 
 // ScoreRectOn is ScoreRect on HSV planes.
-func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
+func ScoreRectOn(ctx context.Context, got, want *loss.Plane, r image.Rectangle) float64 {
 	if got == nil || want == nil || got.Image() == nil || want.Image() == nil || !got.Image().Rect.Eq(want.Image().Rect) {
 		return math.Inf(1)
+	}
+	if sum, ok := ndScoreImageRect(ctx, got.Image(), want.Image(), r); ok {
+		return sum
 	}
 	want.Ensure()
 	r = r.Intersect(want.Image().Rect)
@@ -85,12 +119,51 @@ func ScoreRectOn(got, want *loss.Plane, r image.Rectangle) float64 {
 	got.EnsureRect(r)
 	b := want.Image().Rect
 	gp, wp := got.Slice(), want.Slice()
-	w := b.Dx()
+	if r.Eq(b) {
+		return scorePixels(gp, wp)
+	}
+	return scoreRectPixels(gp, wp, b.Dx(), r, b.Min)
+}
+
+func scoreRectPixels(got, want []loss.Pix, width int, r image.Rectangle, origin image.Point) float64 {
+	n := r.Dx() * r.Dy()
+	parallel, claim := loss.EnterCores(n)
+	if !parallel {
+		sum := scoreScalarRect(got, want, width, r, origin)
+		claim.Release()
+		return sum
+	}
+	defer claim.Release()
+	dx := r.Dx()
+	return parallelSum(n, func(lo, hi int, dst []float64) {
+		for i := lo; i < hi; i++ {
+			y := r.Min.Y + i/dx
+			x := i - (y-r.Min.Y)*dx
+			row := (y-origin.Y)*width + (r.Min.X - origin.X)
+			dst[i] = errAtHSV(got[row+x], want[row+x])
+		}
+	})
+}
+
+func parallelSum(n int, fill func(lo, hi int, dst []float64)) float64 {
+	if cap(scratchErr) < n {
+		scratchErr = make([]float64, n)
+	}
+	dst := scratchErr[:n]
+	loss.SplitRange(n, func(lo, hi int) { fill(lo, hi, dst) })
+	var sum float64
+	for i := 0; i < n; i++ {
+		sum += dst[i]
+	}
+	return sum
+}
+
+func scoreScalarRect(got, want []loss.Pix, width int, r image.Rectangle, origin image.Point) float64 {
 	var sum float64
 	for y := r.Min.Y; y < r.Max.Y; y++ {
-		row := (y-b.Min.Y)*w + (r.Min.X - b.Min.X)
+		row := (y-origin.Y)*width + (r.Min.X - origin.X)
 		for x := 0; x < r.Dx(); x++ {
-			sum += errAtHSV(gp[row+x], wp[row+x])
+			sum += errAtHSV(got[row+x], want[row+x])
 		}
 	}
 	return sum

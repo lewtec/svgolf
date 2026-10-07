@@ -11,8 +11,10 @@ import (
 	"math/rand/v2"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -53,10 +55,19 @@ func init() {
 	search.Register("stack", func() search.Search { return Stack{} })
 }
 
+// showFrames keeps Heat and Island on each epoch. Vectorize does
+// not read them; building both is a full-pixmap walk.
+var showFrames atomic.Bool
+
+// ShowFrames turns epoch Heat and Island on for the server.
+func ShowFrames(on bool) { showFrames.Store(on) }
+
 // world is the accepted document and the pixmap it paints.
 // leftover is this epoch's hottest miss. grow is one existing
 // path union that leftover. formPick is one scored operator.
 type world struct {
+	// ctx is the Search parent. Nil keeps Score on the float64 loop.
+	ctx          context.Context
 	want, got    *image.NRGBA
 	wantP, gotP  *loss.Plane
 	doc          svg.Document
@@ -68,7 +79,11 @@ type world struct {
 	w, h         int
 	candidateLog io.Writer
 	logMu        sync.Mutex
+	rank         *liveRank
 	snapID       int
+	// simplifyMiss is the straight triples that raised Score on
+	// this picture. The next simplify skips them.
+	simplifyMiss map[straightKey]struct{}
 }
 
 var candidateLog io.Writer
@@ -101,41 +116,42 @@ type grow struct {
 	fill   color.NRGBA
 	ring   [][2]float64
 	dirty0 image.Rectangle
-	oldErr float64
 }
 
 type formPick struct {
-	doc      svg.Document
-	got      *image.NRGBA
-	errSum   float64
-	paths    int
-	commands int
-	replace  int
-	insert   int
-	work     []pix
-	fill     color.NRGBA
-	reclaims [][]pix
-	dropIdx  int
-	mergeJ   int
-	op       Op
-	ok       bool
-	scored   bool
-	island   []pix
-	fills    []color.NRGBA
-	owner    []uint16
-	parent   snapshot
+	doc          svg.Document
+	got          *image.NRGBA
+	errSum       float64
+	paths        int
+	commands     int
+	replace      int
+	insert       int
+	work         []pix
+	fill         color.NRGBA
+	reclaims     [][]pix
+	dropIdx      int
+	mergeJ       int
+	op           Op
+	ok           bool
+	scored       bool
+	island       []pix
+	fills        []color.NRGBA
+	owner        []uint16
+	parent       snapshot
+	simplifyMiss map[straightKey]struct{}
 }
 
 type snapshot struct {
-	id       int
-	doc      svg.Document
-	got      *image.NRGBA
-	fills    []color.NRGBA
-	owner    []uint16
-	errSum   float64
-	paths    int
-	commands int
-	operator Op
+	id           int
+	doc          svg.Document
+	got          *image.NRGBA
+	fills        []color.NRGBA
+	owner        []uint16
+	errSum       float64
+	paths        int
+	commands     int
+	operator     Op
+	simplifyMiss map[straightKey]struct{}
 }
 
 func nonePick() formPick {
@@ -251,7 +267,7 @@ func archiveChanged(old, next []snapshot) bool {
 	return false
 }
 
-func newWorld(target *image.NRGBA) (*world, error) {
+func newWorld(ctx context.Context, target *image.NRGBA) (*world, error) {
 	if target == nil {
 		return nil, fmt.Errorf("search: nil pixmap")
 	}
@@ -268,6 +284,7 @@ func newWorld(target *image.NRGBA) (*world, error) {
 	wantP.Ensure()
 	gotP.Ensure()
 	return &world{
+		ctx:    ctx,
 		want:   target,
 		got:    got,
 		wantP:  wantP,
@@ -276,7 +293,7 @@ func newWorld(target *image.NRGBA) (*world, error) {
 		owner:  make([]uint16, w*h),
 		w:      w,
 		h:      h,
-		errSum: ScoreOn(gotP, wantP),
+		errSum: ScoreOn(ctx, gotP, wantP),
 	}, nil
 }
 
@@ -286,26 +303,42 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return
 		}
-		s, err := newWorld(target)
+		OpenDriver(ctx)
+		s, err := newWorld(ctx, target)
 		if err != nil {
 			yield(search.Epoch{}, err)
 			return
 		}
 		s.candidateLog = candidateLog
+		s.rank = &liveRank{}
+		defer s.rank.stop()
 		started := time.Now()
+		yielded := false
+		stop := func(err error) bool {
+			if err == nil {
+				return false
+			}
+			if ctx.Err() != nil && yielded {
+				return true
+			}
+			yield(search.Epoch{}, err)
+			return true
+		}
 		emit := func(id Op, blob, fitted []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
-			ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
+			if showFrames.Load() {
+				ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
+			}
 			ep.Rated = rated
+			ok := yield(ep, nil)
 			started = time.Now()
-			return yield(ep, nil)
+			return ok
 		}
 		archive := []snapshot{s.snap()}
 		band := 1
 		polished := false
 		polishHelped := false
-		yielded := false
 		for {
 			if err := ctx.Err(); err != nil {
 				if !yielded {
@@ -315,11 +348,22 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			var pool []formPick
 			var rated []search.Rated
+			jobNote(ctx, fmt.Sprintf("%s · archive %d", bandLabel(band), len(archive)))
 			if band == 4 {
 				miss := make([][]leftover, len(archive))
 				for j, member := range archive {
 					s.load(member)
-					miss[j] = s.leftovers()
+					var lefts []leftover
+					watchStep(ctx, fmt.Sprintf("leftovers %d", j+1), func(st *taskgroup.Status) {
+						if st != nil {
+							st.Update(bandLabel(band))
+						}
+						lefts = s.leftovers()
+						if st != nil {
+							st.Update(fmt.Sprintf("%d islands", len(lefts)))
+						}
+					})
+					miss[j] = lefts
 				}
 				for i, member := range archive {
 					for j := range archive {
@@ -327,9 +371,9 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 							continue
 						}
 						s.load(member)
-						picks, pr, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
-						if err != nil {
-							yield(search.Epoch{}, err)
+						jobNote(ctx, fmt.Sprintf("%s · %d on %d", bandLabel(band), i+1, j+1))
+						picks, pr, _, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
+						if stop(err) {
 							return
 						}
 						pool = append(pool, picks...)
@@ -337,20 +381,45 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 					}
 				}
 			} else {
-				for _, member := range archive {
+				for j, member := range archive {
 					s.load(member)
-					picks, pr, err := s.choose(ctx, s.leftovers(), member, band)
-					if err != nil {
-						yield(search.Epoch{}, err)
+					// Polish only runs simplify and unhole. The
+					// leftover flood is not an input to either.
+					var lefts []leftover
+					if band != polishBand {
+						watchStep(ctx, "leftovers", func(st *taskgroup.Status) {
+							if st != nil {
+								st.Update(fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
+							}
+							lefts = s.leftovers()
+							if st != nil {
+								st.Update(fmt.Sprintf("%d islands", len(lefts)))
+							}
+						})
+					}
+					jobNote(ctx, fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
+					picks, pr, miss, err := s.choose(ctx, lefts, member, band)
+					if stop(err) {
 						return
+					}
+					if miss != nil {
+						archive[j].simplifyMiss = miss
 					}
 					pool = append(pool, picks...)
 					rated = mergeRated(rated, pr)
 				}
 			}
 			next, improved := s.archiveUpdate(archive, pool, band)
+			jobNote(ctx, fmt.Sprintf("%s · archive %s", bandLabel(band), archiveLine(next)))
+			// A short sibling can take another triangle forever
+			// without beating the plate. Restarting on that
+			// nibble never reaches the edge moves. Only a new
+			// lex-best opens the neighborhood again.
+			bestMoved := improved && len(next) > 0 && !samePoint(archive[0], next[0])
 			if improved {
 				archive = next
+			}
+			if bestMoved {
 				s.load(archive[0])
 				yielded = true
 				markKept(rated, []formPick{{op: archive[0].operator}})
@@ -471,21 +540,21 @@ func (s *world) seedGrow(g grow) grow {
 	if g.i >= 0 {
 		g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[g.i+1]))
 	}
-	g.oldErr = ScoreRectOn(s.gotP, s.wantP, g.dirty0.Inset(-2))
 	return g
 }
 
 func (s *world) snap() snapshot {
 	s.snapID++
 	return snapshot{
-		id:       s.snapID,
-		doc:      s.doc,
-		got:      s.got,
-		fills:    append([]color.NRGBA(nil), s.fills...),
-		owner:    append([]uint16(nil), s.owner...),
-		errSum:   s.errSum,
-		paths:    s.paths,
-		commands: docCmdLen(s.doc),
+		id:           s.snapID,
+		doc:          s.doc,
+		got:          s.got,
+		fills:        append([]color.NRGBA(nil), s.fills...),
+		owner:        append([]uint16(nil), s.owner...),
+		errSum:       s.errSum,
+		paths:        s.paths,
+		commands:     docCmdLen(s.doc),
+		simplifyMiss: s.simplifyMiss,
 	}
 }
 
@@ -496,6 +565,7 @@ func (s *world) load(sn snapshot) {
 	s.owner = append([]uint16(nil), sn.owner...)
 	s.errSum = sn.errSum
 	s.paths = sn.paths
+	s.simplifyMiss = sn.simplifyMiss
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
 	} else {
@@ -505,7 +575,7 @@ func (s *world) load(sn snapshot) {
 }
 
 func leftoverAdd(id Op) bool {
-	return id == OpTriangle || id == OpRectangle || id == OpRing
+	return id == OpTriangle || id == OpRectangle || id == OpRing || id == OpOutline
 }
 
 func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]snapshot, bool) {
@@ -638,6 +708,11 @@ func (s *world) apply(pick formPick) {
 		s.fills = append(s.fills, pick.fill)
 		s.paths++
 	}
+	if pick.op == OpSimplify {
+		s.simplifyMiss = pick.simplifyMiss
+	} else {
+		s.simplifyMiss = nil
+	}
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
 	} else {
@@ -709,7 +784,8 @@ func (s *world) logCandidate(id Op, elapsed time.Duration, p formPick) {
 	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", id, elapsed.Seconds(), p.errSum)
 }
 
-func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (formPick, error) {
+func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick formPick, err error) {
+	defer s.noteCandidate(id, &pick, &err)
 	if p, ok := cand.Path(); ok {
 		for _, r := range pathRings(p) {
 			if ringCrosses(r) {
@@ -739,13 +815,13 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (form
 // inside dirty: parent sum minus the old rect plus the new rect.
 func (s *world) scoreAfter(gotP *loss.Plane, dirty image.Rectangle) float64 {
 	if s.want == nil {
-		return ScoreOn(gotP, s.wantP)
+		return ScoreOn(s.ctx, gotP, s.wantP)
 	}
 	dirty = dirty.Intersect(s.want.Bounds())
 	if dirty.Empty() {
-		return ScoreOn(gotP, s.wantP)
+		return ScoreOn(s.ctx, gotP, s.wantP)
 	}
-	return s.errSum - ScoreRectOn(s.gotP, s.wantP, dirty) + ScoreRectOn(gotP, s.wantP, dirty)
+	return s.errSum - ScoreRectOn(s.ctx, s.gotP, s.wantP, dirty) + ScoreRectOn(s.ctx, gotP, s.wantP, dirty)
 }
 
 // addLayer scores a new path on top and at one random existing
@@ -1343,6 +1419,56 @@ func appendRing(p svg.Path, ring [][2]float64) svg.Path {
 
 func filledPath(ring [][2]float64, col color.NRGBA) svg.Path {
 	return appendRing(svg.NewPath(), ring).WithFill(color.NRGBA{R: col.R, G: col.G, B: col.B, A: 255})
+}
+
+// straightKey is one vertex and its two neighbors. The floats are
+// the path coordinates, so the same triple maps to the same key.
+type straightKey struct {
+	ax, ay, bx, by, cx, cy float64
+}
+
+func ringStraightKey(r pathRing, i int) straightKey {
+	n := len(r.verts)
+	p := (i - 1 + n) % n
+	q := (i + 1) % n
+	return straightKey{
+		ax: r.verts[p][0], ay: r.verts[p][1],
+		bx: r.verts[i][0], by: r.verts[i][1],
+		cx: r.verts[q][0], cy: r.verts[q][1],
+	}
+}
+
+// scoreRect is the bbox scoreCand will measure: pointsRect, and
+// scoreCand insets by 2. Callers that set dirty0 use scoreRect
+// itself and let scoreCand expand it.
+func (k straightKey) scoreRect() image.Rectangle {
+	return pointsRect([][2]float64{{k.ax, k.ay}, {k.bx, k.by}, {k.cx, k.cy}})
+}
+
+func cloneStraightMiss(in map[straightKey]struct{}) map[straightKey]struct{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[straightKey]struct{}, len(in))
+	for k := range in {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
+// forgetTouching drops remembered triples whose scored rect meets
+// the drop. Pixels outside that rect are unchanged, so a triple
+// that missed there still misses.
+func forgetTouching(miss map[straightKey]struct{}, dropped straightKey) {
+	if len(miss) == 0 {
+		return
+	}
+	zone := dropped.scoreRect().Inset(-2)
+	for k := range miss {
+		if k.scoreRect().Inset(-2).Overlaps(zone) {
+			delete(miss, k)
+		}
+	}
 }
 
 func pointsRect(pts [][2]float64) image.Rectangle {

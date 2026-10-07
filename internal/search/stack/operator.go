@@ -2,12 +2,14 @@ package stack
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"math/rand/v2"
 	"sync"
 	"time"
 
+	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -26,23 +28,24 @@ type Operator interface {
 type Op = search.Op
 
 const (
-	OpNone     = search.OpNone
-	OpAbsorb   = search.OpAbsorb
+	OpNone      = search.OpNone
+	OpAbsorb    = search.OpAbsorb
 	OpTriangle  = search.OpTriangle
 	OpRing      = search.OpRing
 	OpRectangle = search.OpRectangle
 	OpGrow      = search.OpGrow
-	OpCarve    = search.OpCarve
-	OpSlide    = search.OpSlide
-	OpBend     = search.OpBend
-	OpSimplify = search.OpSimplify
-	OpWash     = search.OpWash
-	OpJoin     = search.OpJoin
-	OpSubtract = search.OpSubtract
-	OpSwap     = search.OpSwap
-	OpDelete   = search.OpDelete
-	OpUnhole   = search.OpUnhole
-	opCount    = search.OpCount
+	OpCarve     = search.OpCarve
+	OpSlide     = search.OpSlide
+	OpBend      = search.OpBend
+	OpSimplify  = search.OpSimplify
+	OpWash      = search.OpWash
+	OpJoin      = search.OpJoin
+	OpSubtract  = search.OpSubtract
+	OpSwap      = search.OpSwap
+	OpDelete    = search.OpDelete
+	OpUnhole    = search.OpUnhole
+	OpOutline   = search.OpOutline
+	opCount     = search.OpCount
 )
 
 type op struct {
@@ -87,6 +90,8 @@ func (o op) impl() Operator {
 		return Delete{world: o.world, i: o.i}
 	case OpUnhole:
 		return Unhole{world: o.world, buckets: o.buckets}
+	case OpOutline:
+		return Outline{world: o.world, left: o.left}
 	default:
 		return nil
 	}
@@ -167,6 +172,78 @@ func (rc Rectangle) Run() (formPick, error) {
 	g.ring = ring
 	g = s.seedGrow(g)
 	return s.addLayer(filledPath(ring, g.fill), g, OpRectangle)
+}
+
+// Outline paints one leftover mask. The color-region flood is
+// included: despeckle drops axis tips off a disk, and the flood
+// still has them. Triangle and rectangle stay in the neighborhood
+// and win when they cover that mask with fewer commands. A
+// shorter curve that changes pixels loses on Score. Enclosed
+// voids stay solid; carve opens them after the plate exists.
+type Outline struct {
+	world *world
+	left  leftover
+}
+
+func (Outline) ID() Op { return OpOutline }
+func (o Outline) Applies() bool {
+	// Interior is not required. A trace or a fringe has no pixel
+	// with four neighbors, and skipping it leaves a real miss.
+	// Score still rejects a rim whose plate does not help.
+	return o.left.big() && o.world.paths < maxPaths
+}
+
+func (o Outline) Run() (formPick, error) {
+	s := o.world
+	g := o.left.fresh
+	if len(g.work) < 3 {
+		return nonePick(), nil
+	}
+	ring := coverRing(g.work)
+	if len(ring) < 3 {
+		return nonePick(), nil
+	}
+	g.fill = modeFill(s.want, g.work)
+	g.ring = ring
+	g = s.seedGrow(g)
+	layer, err := s.addLayer(filledPath(ring, g.fill), g, OpOutline)
+	if err != nil {
+		return nonePick(), err
+	}
+	if s.paths == 0 || (!o.left.paper && !paperLeftover(g.fill)) {
+		return layer, nil
+	}
+	// The pane already is this color. Punching the same outline out
+	// of the plate matches the stacked white path and stays one shape.
+	hole, err := (&Carve{world: s, left: o.left}).Run()
+	if err != nil {
+		return nonePick(), err
+	}
+	// scoreAfter can leave a fraction of a pixel between two
+	// rasters of the same outline. Lex would then keep the extra
+	// path. The full sum is the same Score the archive stores.
+	if s.want != nil && hole.scored && layer.scored {
+		if sum, err := scored(s.ctx, hole.doc, s.want); err == nil {
+			hole.errSum = sum
+			hole.ok = acceptLexicographic(sum, hole.paths, hole.commands, s.errSum, s.paths, docCmdLen(s.doc))
+		}
+		if sum, err := scored(s.ctx, layer.doc, s.want); err == nil {
+			layer.errSum = sum
+			layer.ok = acceptLexicographic(sum, layer.paths, layer.commands, s.errSum, s.paths, docCmdLen(s.doc))
+		}
+	}
+	if betterPick(hole, layer) {
+		return hole, nil
+	}
+	return layer, nil
+}
+
+func scored(ctx context.Context, doc svg.Document, want *image.NRGBA) (float64, error) {
+	got, err := render.Render(doc)
+	if err != nil {
+		return 0, err
+	}
+	return Score(ctx, got, want), nil
 }
 
 // Ring places a leftover that already surrounds painted pixels.
@@ -320,7 +397,7 @@ func (c *Carve) Run() (formPick, error) {
 		cand := withHoles(p, [][][2]float64{hole})
 		work := ownedMinus(s.owner, c.left.island, s.w, uint16(i+1), c.scratch.seen)
 		dirty0 := islandRect(c.left.island).Union(nodeRect(node))
-		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
+		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0}
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
 		if err != nil {
 			return nonePick(), err
@@ -358,7 +435,10 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 		owned := ownerBucket(s.owner, s.w, uint16(i+1))
 		var cand svg.Path
 		if leftoverIsHole(owned, c.left.island) {
-			hole := hullRing(c.left.island)
+			// The mask outline, not the convex hull. The hull of an
+			// L fills the missing corner, Score rejects the spill,
+			// and the letter stays a second path.
+			hole := coverRing(c.left.island)
 			if len(hole) < 3 {
 				continue
 			}
@@ -382,7 +462,7 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	if !any {
 		return nonePick(), nil
 	}
-	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0, oldErr: ScoreRectOn(s.gotP, s.wantP, dirty0.Inset(-2))}
+	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0}
 	pick, err := s.scoreCand(next, last, gr, OpCarve)
 	if err != nil {
 		return nonePick(), err
@@ -397,8 +477,13 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	return pick, nil
 }
 
-// Simplify drops one vertex. A colinear line vertex if any
-// exist, otherwise any vertex. Epochs rank the rest.
+// Simplify drops one vertex that already lies on the line
+// through its neighbors. A mask outline is a staircase, and
+// rewriting that whole ring at once is one shape. Each epoch
+// takes the next straight vertex, Score keeps the step only
+// when the picture does not get worse, and the run shrinks
+// until a corner is left. A bend is not straight, so the
+// corner stays. One walk, no search over pairs of vertices.
 type Simplify struct {
 	world   *world
 	buckets [][]pix
@@ -411,12 +496,7 @@ func (s Simplify) Applies() bool {
 
 func (s Simplify) Run() (formPick, error) {
 	w := s.world
-	type drop struct {
-		i, v  int
-		outer pathRing
-		holes []pathRing
-	}
-	var colinear, any []drop
+	missed := cloneStraightMiss(w.simplifyMiss)
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
@@ -424,47 +504,57 @@ func (s Simplify) Run() (formPick, error) {
 			continue
 		}
 		rings := parsePathRings(p)
-		if len(rings) == 0 || len(rings[0].verts) < 4 {
-			continue
-		}
-		outer := rings[0]
-		for v := 0; v < len(outer.verts); v++ {
-			d := drop{i: i, v: v, outer: outer, holes: rings[1:]}
-			any = append(any, d)
-			if outer.lineColinear(v) {
-				colinear = append(colinear, d)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			n := len(ring.verts)
+			for v := 0; v < n; v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				key := ringStraightKey(ring, v)
+				if _, seen := missed[key]; seen {
+					continue
+				}
+				moved := ring.dropVertex(v)
+				if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+					continue
+				}
+				next := append([]pathRing{}, rings...)
+				next[ri] = moved
+				cand := filledRings(next[0], next[1:], w.fills[i])
+				if hasLin {
+					cand = cand.WithLinearFill(lin)
+				}
+				g := w.seedGrow(grow{i: i, work: s.buckets[i], fill: w.fills[i]})
+				// seedGrow dirties the whole path. One straight
+				// drop only repaints this triangle; scoreCand
+				// insets the rect.
+				g.dirty0 = key.scoreRect()
+				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, OpSimplify)
+				if err != nil {
+					return nonePick(), err
+				}
+				if !pick.scored {
+					continue
+				}
+				if pick.ok && pick.errSum > w.errSum {
+					pick.ok = false
+				}
+				if pick.ok {
+					forgetTouching(missed, key)
+					pick.simplifyMiss = missed
+					return pick, nil
+				}
+				if missed == nil {
+					missed = map[straightKey]struct{}{}
+				}
+				missed[key] = struct{}{}
 			}
 		}
 	}
-	pool := any
-	if len(colinear) > 0 {
-		pool = colinear
-	}
-	if len(pool) == 0 {
-		return nonePick(), nil
-	}
-	d := pool[rand.IntN(len(pool))]
-	moved := d.outer.dropVertex(d.v)
-	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
-		return nonePick(), nil
-	}
-	node := w.doc.Children()[d.i+1]
-	cand := filledRings(moved, d.holes, w.fills[d.i])
-	if lin, ok := node.LinearFill(); ok {
-		cand = cand.WithLinearFill(lin)
-	}
-	n := len(d.outer.verts)
-	prev, next := (d.v-1+n)%n, (d.v+1)%n
-	fan := [][2]float64{d.outer.verts[prev], d.outer.verts[d.v], d.outer.verts[next]}
-	g := w.seedGrow(grow{i: d.i, work: s.buckets[d.i], fill: w.fills[d.i], dirty0: pointsRect(fan)})
-	pick, err := w.scoreCand(replaceAt(w.doc, d.i+1, cand.Node()), cand.Node(), g, OpSimplify)
-	if err != nil {
-		return nonePick(), err
-	}
-	if pick.ok && pick.errSum > w.errSum {
-		pick.ok = false
-	}
-	return pick, nil
+	out := nonePick()
+	out.simplifyMiss = missed
+	return out, nil
 }
 
 // Unhole drops one evenodd hole.
@@ -947,15 +1037,194 @@ func (sw Swap) Run() (formPick, error) {
 	}, nil
 }
 
+// onBlend reports that c is a mix of two paints, not a third flat.
+// The match is minErr, the residual cutoff the search already uses
+// to decide that a pixel is a paint. ColorAt jumps to 180 when only
+// one side still has hue, so a channel gap of that same size counts
+// too. An endpoint is the paint itself and is not a mix.
+func onBlend(c color.NRGBA, paints []color.NRGBA) bool {
+	for _, paint := range paints {
+		if loss.ColorAt(c, paint) <= float64(minErr) {
+			return false
+		}
+	}
+	limit := minErr * 255 / 180
+	for i := range paints {
+		for j := i + 1; j < len(paints); j++ {
+			t, blend := projectBlend(paints[i], paints[j], c)
+			if t <= 0 || t >= 1 {
+				continue
+			}
+			if loss.ColorAt(c, blend) <= float64(minErr) || channelGap(c, blend) <= limit {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func projectBlend(a, b, c color.NRGBA) (float64, color.NRGBA) {
+	ar, ag, ab := float64(a.R), float64(a.G), float64(a.B)
+	dx := float64(b.R) - ar
+	dy := float64(b.G) - ag
+	dz := float64(b.B) - ab
+	den := dx*dx + dy*dy + dz*dz
+	if den == 0 {
+		return 0, a
+	}
+	t := ((float64(c.R)-ar)*dx + (float64(c.G)-ag)*dy + (float64(c.B)-ab)*dz) / den
+	return t, color.NRGBA{
+		R: roundChannel(ar + t*dx),
+		G: roundChannel(ag + t*dy),
+		B: roundChannel(ab + t*dz),
+		A: 255,
+	}
+}
+
+func roundChannel(v float64) uint8 {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return uint8(v + 0.5)
+}
+
+func channelGap(a, b color.NRGBA) int {
+	gap := channelAbs(a.R, b.R)
+	if n := channelAbs(a.G, b.G); n > gap {
+		gap = n
+	}
+	if n := channelAbs(a.B, b.B); n > gap {
+		gap = n
+	}
+	return gap
+}
+
+func channelAbs(a, b uint8) int {
+	n := int(a) - int(b)
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// seam is a leftover whose color is only the blend between paints
+// already in the document. The letter's soft edge is that blend.
+// A flat that merely sits near a mix is not a seam: onBlend rejects
+// endpoints and colors off the segment.
+// frontierHits counts want pixels just outside the island that already
+// match each paint. Paper is paints[len-1] when the caller appended it.
+func (s *world) frontierHits(island []pix, paints []color.NRGBA) []int {
+	hit := make([]int, len(paints))
+	if s.want == nil || len(island) == 0 {
+		return hit
+	}
+	set := pixSet(island)
+	defer releaseBits(set)
+	w, h := s.worldSize()
+	ox, oy := s.want.Rect.Min.X, s.want.Rect.Min.Y
+	dirs := [4]pix{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}
+	for _, p := range island {
+		for _, d := range dirs {
+			nx, ny := p.x+d.x, p.y+d.y
+			if uint(nx) >= uint(w) || uint(ny) >= uint(h) || set.has(pix{nx, ny}) {
+				continue
+			}
+			c := s.want.NRGBAAt(ox+nx, oy+ny)
+			for i, paint := range paints {
+				if loss.ColorAt(c, paint) <= float64(minErr) {
+					hit[i]++
+				}
+			}
+		}
+	}
+	return hit
+}
+
+// seam is a leftover whose color is only the blend between paints
+// already in the document. An exact mix is a seam anywhere. A JPEG
+// blur sits a little off that line, so a mix that meets the pane (the
+// letter, or the empty field) still counts when it is closer to the
+// segment than to either paint. A ramp that never meets the pane is
+// not that blur: its bands stay plates and Wash can fit them.
+func (s *world) seam(left leftover) bool {
+	if s == nil || s.paths == 0 || len(left.island) < minIsland {
+		return false
+	}
+	mode := left.col
+	if mode.A == 0 {
+		mode = modeFill(s.want, left.island)
+	}
+	paints := make([]color.NRGBA, 0, len(s.fills)+1)
+	paints = append(paints, s.fills...)
+	paints = append(paints, paper)
+	if onBlend(mode, paints) {
+		return true
+	}
+	hit := s.frontierHits(left.island, paints)
+	if hit[len(hit)-1] == 0 {
+		return false
+	}
+	return closerBlend(mode, s.fills, paper)
+}
+
+// closerBlend reports that c lies on the open segment from a plate to
+// the pane and the mix beats either end. The 180 from the hue knee is
+// not a measured miss, so it does not count as "closer".
+func closerBlend(c color.NRGBA, fills []color.NRGBA, pane color.NRGBA) bool {
+	if loss.ColorAt(c, pane) <= float64(minErr) {
+		return false
+	}
+	for _, fill := range fills {
+		if loss.ColorAt(c, fill) <= float64(minErr) {
+			return false
+		}
+		t, blend := projectBlend(fill, pane, c)
+		if t <= 0 || t >= 1 {
+			continue
+		}
+		along := loss.ColorAt(c, blend)
+		if along < 180 && along < loss.ColorAt(c, fill) && along < loss.ColorAt(c, pane) {
+			return true
+		}
+	}
+	return false
+}
+
 func leftoverAddOperators(s *world, left leftover) []Operator {
+	if left.paper && s.paths > 0 {
+		// The pane is already this color. A white rectangle on a
+		// short sibling survives the archive, and the letter
+		// outline on that sibling then beats the hole. Revealing
+		// the pane is a carve, not another path.
+		return []Operator{op{id: OpCarve, world: s, left: left}}
+	}
 	return []Operator{
 		op{id: OpTriangle, world: s, left: left},
 		op{id: OpRectangle, world: s, left: left},
 		op{id: OpRing, world: s, left: left},
+		op{id: OpOutline, world: s, left: left},
 	}
 }
 
 func (s *world) leftoverOperators(left leftover, band int) []Operator {
+	if s.seam(left) {
+		// The leftover color is a mix of two paints already on the
+		// document. A new plate would trace that seam, and a soft
+		// letter would become a stack of rims. Slide and carve can
+		// still seat the edge. Score rejects a move that changes
+		// pixels for the worse.
+		if band != 4 {
+			return nil
+		}
+		return []Operator{
+			op{id: OpSlide, world: s, left: left},
+			op{id: OpBend, world: s, left: left},
+			op{id: OpCarve, world: s, left: left},
+		}
+	}
 	var add []Operator
 	if !left.region && left.big() {
 		add = leftoverAddOperators(s, left)
@@ -1056,78 +1325,83 @@ func (s *world) worldOperators(band int) []Operator {
 type namedPick struct {
 	pick    formPick
 	elapsed time.Duration
+	miss    map[straightKey]struct{}
 }
 
-func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, band int) ([]formPick, []search.Rated, error) {
-	type job struct {
-		op    Operator
-		left  leftover
-		bound bool
-	}
-	var jobs []job
+func (s *world) choose(ctx context.Context, lefts []leftover, parent snapshot, band int) ([]formPick, []search.Rated, map[straightKey]struct{}, error) {
+	var jobs []candJob
 	for _, left := range lefts {
 		for _, op := range s.leftoverOperators(left, band) {
 			if op.Applies() {
-				jobs = append(jobs, job{op: op, left: left, bound: true})
+				jobs = append(jobs, candJob{op: op, left: left, bound: true})
 			}
 		}
 	}
 	for _, op := range s.worldOperators(band) {
 		if op.Applies() {
-			jobs = append(jobs, job{op: op})
+			jobs = append(jobs, candJob{op: op})
 		}
 	}
 	bestByOp := make(map[Op]*namedPick, opCount)
-	var mu sync.Mutex
 	var pool []formPick
-	g, _ := errgroup.WithContext(ctx)
-	for _, job := range jobs {
-		job := job
-		g.Go(func() error {
-			started := time.Now()
-			p, err := job.op.Run()
-			if err != nil {
-				return err
-			}
-			if p.ok {
-				p.parent = parent
-				if job.bound {
-					p.island = job.left.glow
-					if len(p.island) == 0 {
-						p.island = job.left.island
-					}
-				}
-			}
-			elapsed := time.Since(started)
-			mu.Lock()
-			defer mu.Unlock()
-			id := job.op.ID()
-			st := bestByOp[id]
-			if st == nil {
-				st = &namedPick{}
-				bestByOp[id] = st
-			}
-			if elapsed > st.elapsed {
-				st.elapsed = elapsed
-			}
-			if betterPick(p, st.pick) {
-				st.pick = p
-			}
-			if p.ok {
-				pool = append(pool, p)
-			}
-			return nil
-		})
+	record := func(id Op, p formPick, elapsed time.Duration) {
+		st := bestByOp[id]
+		if st == nil {
+			st = &namedPick{}
+			bestByOp[id] = st
+		}
+		if elapsed > st.elapsed {
+			st.elapsed = elapsed
+		}
+		if id == OpSimplify {
+			st.miss = p.simplifyMiss
+		}
+		if betterPick(p, st.pick) {
+			st.pick = p
+		}
+		if p.ok {
+			pool = append(pool, p)
+		}
 	}
-	if err := g.Wait(); err != nil {
-		return nil, nil, err
+	if taskgroup.FromContext(ctx) == nil {
+		var mu sync.Mutex
+		g, _ := errgroup.WithContext(ctx)
+		for _, job := range jobs {
+			job := job
+			g.Go(func() error {
+				pick, elapsed, err := s.runCandidate(ctx, job, nil, parent)
+				if err != nil {
+					return err
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				record(job.op.ID(), pick, elapsed)
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return nil, nil, nil, err
+		}
+	} else {
+		jobNote(ctx, fmt.Sprintf("%s · %d generators", bandLabel(band), len(jobs)))
+		rows, err := s.runCandidateTasks(ctx, jobs, parent, band)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, row := range rows {
+			record(row.id, row.pick, row.elapsed)
+		}
 	}
 	for id := OpNone; id < opCount; id++ {
 		if st, ok := bestByOp[id]; ok {
 			s.logCandidate(id, st.elapsed, st.pick)
 		}
 	}
-	return pool, collectRated(bestByOp), nil
+	var miss map[straightKey]struct{}
+	if st := bestByOp[OpSimplify]; st != nil {
+		miss = st.miss
+	}
+	return pool, collectRated(bestByOp), miss, nil
 }
 
 func collectRated(bestByOp map[Op]*namedPick) []search.Rated {

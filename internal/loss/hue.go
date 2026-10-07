@@ -62,12 +62,33 @@ func hueDelta(a, b float64) float64 {
 // HSV is hue in [0,360), saturation and value in [0,1].
 func HSV(c color.NRGBA) (h, s, v float64) { return hsv(c) }
 
+// byteUnit is float64(i)/255. Channel bytes never produce a NaN,
+// so the table matches the division for every RGB triple.
+var byteUnit = func() (t [256]float64) {
+	for i := range t {
+		t[i] = float64(i) / 255
+	}
+	return t
+}()
+
 func hsv(c color.NRGBA) (h, s, v float64) {
-	r := float64(c.R) / 255
-	g := float64(c.G) / 255
-	b := float64(c.B) / 255
-	max := math.Max(r, math.Max(g, b))
-	min := math.Min(r, math.Min(g, b))
+	r := byteUnit[c.R]
+	g := byteUnit[c.G]
+	b := byteUnit[c.B]
+	max := r
+	if g > max {
+		max = g
+	}
+	if b > max {
+		max = b
+	}
+	min := r
+	if g < min {
+		min = g
+	}
+	if b < min {
+		min = b
+	}
 	v = max
 	if max == 0 {
 		return 0, 0, 0

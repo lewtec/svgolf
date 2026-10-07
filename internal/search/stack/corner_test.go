@@ -87,7 +87,7 @@ func TestRectanglePlacesPlate(t *testing.T) {
 			img.SetNRGBA(x, y, red)
 		}
 	}
-	s, err := newWorld(img)
+	s, err := newWorld(nil, img)
 	if err != nil {
 		t.Fatal(err)
 	}
