@@ -321,7 +321,9 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		meta.Proposals = frame.Proposals
 		if len(frame.Loss) > 0 {
 			meta.Scores = frame.Loss
-			meta.Score = frame.Loss[len(frame.Loss)-1]
+		}
+		if len(frame.Beam) > 0 {
+			meta.Score = frame.Beam[0].Score
 		}
 		_ = writeMeta(dir, meta)
 		s.publish(id, "frame", meta)
@@ -347,8 +349,8 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		meta.Search = s.algo
 		meta.Epochs = n
 		meta.Operator = ep.Operator.String()
-		if len(meta.Scores) > 0 {
-			meta.Score = meta.Scores[len(meta.Scores)-1]
+		if len(meta.Beam) > 0 {
+			meta.Score = meta.Beam[0].Score
 		}
 		meta.Rounds = rounds
 		meta.Paths = paths
