@@ -149,7 +149,23 @@ func (s *world) scoreGroup(ctx context.Context, drafts []formPick, out []formPic
 	if ctx != nil && ctx.Err() != nil {
 		return
 	}
+	s.finishScore(ctx, drafts, rendered, out)
+}
 
+// scoreRendered scores drafts whose pixmaps were painted by another actor.
+func (s *world) scoreRendered(ctx context.Context, drafts []formPick, rendered []*image.NRGBA) []formPick {
+	out := make([]formPick, len(drafts))
+	if ctx != nil && ctx.Err() != nil {
+		return out
+	}
+	s.finishScore(ctx, drafts, rendered, out)
+	return out
+}
+
+func (s *world) finishScore(ctx context.Context, drafts []formPick, rendered []*image.NRGBA, out []formPick) {
+	if ctx != nil && ctx.Err() != nil {
+		return
+	}
 	type part struct {
 		got *image.NRGBA
 		r   image.Rectangle

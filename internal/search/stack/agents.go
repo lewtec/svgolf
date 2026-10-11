@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"runtime"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
@@ -225,36 +227,55 @@ type agentNote struct {
 	elapsed time.Duration
 }
 
-// proposalBuffer is the queue between proposers and the ranker. A proposer
-// sends and returns to the next parent. The ranker scores proposalBatch
-// notes and leaves the rest queued.
+// proposalBuffer is the queue between proposers and the painters.
+// renderAhead is the queue between the painters and the ranker.
+// Painters fill the next batch while the ranker scores the previous one.
 const (
 	proposalBuffer = 1024
 	proposalBatch  = 32
+	renderAhead    = proposalBatch
 )
 
-// runAgents starts one proposer per operator. Each proposer claims the
-// least-busy parent it has not served and sends proposals on the channel.
-// This goroutine is the only consumer: it scores, keeps the beam, and the
-// proposers claim any parent that offer publishes.
+type pixmapNote struct {
+	note agentNote
+	img  *image.NRGBA
+}
+
+// runAgents runs three actors. Proposers claim a parent and send geometry.
+// Painters turn that geometry into pixmaps. This goroutine is the ranker:
+// it scores, keeps the beam, and the proposers claim any parent that offer publishes.
 func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []search.Rated) bool) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	first := s.snap()
 	first.lefts = s.watchLeftovers(ctx)
 	board := newBeam(first)
 	proposals := make(chan agentNote, proposalBuffer)
-	var wg sync.WaitGroup
+	pixmaps := make(chan pixmapNote, renderAhead)
+	var proposers, painters sync.WaitGroup
 	defer func() {
+		cancel()
 		board.close()
-		wg.Wait()
+		proposers.Wait()
+		painters.Wait()
 	}()
 	for _, kind := range agentKinds() {
-		s.startProposer(ctx, &wg, board, kind, proposals)
+		s.startProposer(ctx, &proposers, board, kind, proposals)
 	}
 	go func() {
-		wg.Wait()
+		proposers.Wait()
 		close(proposals)
+	}()
+	paintersN := runtime.GOMAXPROCS(0)
+	if paintersN < 1 {
+		paintersN = 1
+	}
+	for range paintersN {
+		painters.Add(1)
+		go paintProposals(ctx, proposals, pixmaps, &painters)
+	}
+	go func() {
+		painters.Wait()
+		close(pixmaps)
 	}()
 
 	st := rankState{head: first.id, bestByOp: map[Op]*namedPick{}}
@@ -264,36 +285,42 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	}()
 loop:
 	for {
-		var note agentNote
+		var painted pixmapNote
 		var ok bool
 		select {
 		case <-ctx.Done():
 			board.close()
 			break loop
-		case note, ok = <-proposals:
+		case painted, ok = <-pixmaps:
 			if !ok {
 				break loop
 			}
 		}
-		notes := []agentNote{note}
+		batch := []pixmapNote{painted}
 		closed := false
 	drain:
-		for len(notes) < proposalBatch {
+		for len(batch) < proposalBatch {
 			select {
 			case <-ctx.Done():
 				board.close()
 				break loop
-			case next, ok := <-proposals:
+			case next, ok := <-pixmaps:
 				if !ok {
 					closed = true
 					break drain
 				}
-				notes = append(notes, next)
+				batch = append(batch, next)
 			default:
 				break drain
 			}
 		}
-		s.rankNotes(ctx, board, &st, notes, emit)
+		notes := make([]agentNote, len(batch))
+		imgs := make([]*image.NRGBA, len(batch))
+		for i, item := range batch {
+			notes[i] = item.note
+			imgs[i] = item.img
+		}
+		s.rankNotes(ctx, board, &st, notes, imgs, emit)
 		if closed || ctx.Err() != nil {
 			board.close()
 			break loop
@@ -324,7 +351,40 @@ type rankState struct {
 	stop     bool
 }
 
-func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, emit func(Op, []pix, []pix, []search.Rated) bool) {
+func paintNote(note agentNote) *image.NRGBA {
+	if note.err != nil || note.pick.scored || note.pick.doc.Width() == 0 {
+		return nil
+	}
+	img, err := render.Render(note.pick.doc)
+	if err != nil {
+		return nil
+	}
+	return img
+}
+
+func paintProposals(ctx context.Context, in <-chan agentNote, out chan<- pixmapNote, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		var note agentNote
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return
+		case note, ok = <-in:
+			if !ok {
+				return
+			}
+		}
+		painted := pixmapNote{note: note, img: paintNote(note)}
+		select {
+		case <-ctx.Done():
+			return
+		case out <- painted:
+		}
+	}
+}
+
+func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, imgs []*image.NRGBA, emit func(Op, []pix, []pix, []search.Rated) bool) {
 	board.beginChoose()
 	defer board.endChoose()
 	for range notes {
@@ -344,7 +404,12 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 	for i, note := range notes {
 		drafts[i] = note.pick
 	}
-	scored := s.scoreBatch(ctx, drafts)
+	var scored []formPick
+	if imgs != nil {
+		scored = s.scoreRendered(ctx, drafts, imgs)
+	} else {
+		scored = s.scoreBatch(ctx, drafts)
+	}
 	if ctx.Err() != nil {
 		return
 	}

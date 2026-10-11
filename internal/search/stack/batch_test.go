@@ -90,6 +90,30 @@ func TestScoreBatchMatchesScoreDraft(t *testing.T) {
 	require.InDelta(t, batch[0].errSum, batch[1].errSum, 1e-3)
 }
 
+func TestScoreRenderedMatchesScoreBatch(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 180, A: 255})
+		}
+	}
+	s, err := newWorld(t.Context(), img)
+	require.NoError(t, err)
+	parent := s.snap()
+	draft := formPick{
+		doc: parent.doc, dirty: img.Bounds(), op: OpWash, parent: parent,
+		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
+	}
+	batch := s.scoreBatch(t.Context(), []formPick{draft})
+	painted := paintNote(agentNote{pick: draft})
+	rendered := s.scoreRendered(t.Context(), []formPick{draft}, []*image.NRGBA{painted})
+	require.Len(t, batch, 1)
+	require.Len(t, rendered, 1)
+	require.Equal(t, batch[0].scored, rendered[0].scored)
+	require.Equal(t, batch[0].ok, rendered[0].ok)
+	require.InDelta(t, batch[0].errSum, rendered[0].errSum, 1e-3)
+}
+
 func TestFinishProposeKeepsTheDocumentUnscored(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
