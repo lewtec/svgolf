@@ -53,14 +53,16 @@ func (c *serverCmd) Run(ctx context.Context) error {
 	algo := c.Search.Value()
 	sess, sctx := taskgroup.New(ctx, taskgroup.DefaultLimits())
 	return progress.Run(sess, sctx, func(ctx context.Context) error {
-		s := &server{cache: cache, algo: algo, ctx: ctx, all: event.New[jobEvent]()}
+		s := &server{cache: cache, algo: algo, all: event.New[jobEvent]()}
 		mux := http.NewServeMux()
-		mux.HandleFunc("GET /", s.watch(s.handleHome))
-		mux.HandleFunc("POST /jobs", s.watch(s.handleCreate))
-		mux.HandleFunc("GET /events", s.watch(s.handleAllEvents))
-		mux.HandleFunc("GET /jobs/{id}", s.watch(s.handleJob))
-		mux.HandleFunc("GET /jobs/{id}/events", s.watch(s.handleEvents))
-		mux.HandleFunc("GET /jobs/{id}/files/{name}", s.watch(s.handleFile))
+		mux.HandleFunc("GET /", s.watch(ctx, s.handleHome))
+		mux.HandleFunc("POST /jobs", s.watch(ctx, func(w http.ResponseWriter, r *http.Request) {
+			s.handleCreate(ctx, w, r)
+		}))
+		mux.HandleFunc("GET /events", s.watch(ctx, s.handleAllEvents))
+		mux.HandleFunc("GET /jobs/{id}", s.watch(ctx, s.handleJob))
+		mux.HandleFunc("GET /jobs/{id}/events", s.watch(ctx, s.handleEvents))
+		mux.HandleFunc("GET /jobs/{id}/files/{name}", s.watch(ctx, s.handleFile))
 		srv := &http.Server{
 			Addr:    addr,
 			Handler: mux,
@@ -93,7 +95,6 @@ func (c *serverCmd) Run(ctx context.Context) error {
 type server struct {
 	cache string
 	algo  string
-	ctx   context.Context
 	mu    sync.Mutex
 	buses map[string]*event.Bus[jobEvent]
 	all   *event.Bus[jobEvent]
@@ -148,7 +149,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	_ = web.Home(toViews(jobs)).Render(r.Context(), w)
 }
 
-func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleCreate(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -186,18 +187,18 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jobBus(id)
-	s.startJob(dir, id, want)
+	s.startJob(ctx, dir, id, want)
 	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
-func (s *server) watch(h http.HandlerFunc) http.HandlerFunc {
+func (s *server) watch(parent context.Context, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.ctx == nil || taskgroup.FromContext(s.ctx) == nil {
+		if parent == nil || taskgroup.FromContext(parent) == nil {
 			h(w, r)
 			return
 		}
 		finished := make(chan struct{})
-		taskgroup.Go(s.ctx, r.Method+" "+r.URL.Path, taskgroup.Control, func(ctx context.Context, st *taskgroup.Status) error {
+		taskgroup.Go(parent, r.Method+" "+r.URL.Path, taskgroup.Control, func(ctx context.Context, st *taskgroup.Status) error {
 			st.Update(r.Method)
 			select {
 			case <-finished:
@@ -284,8 +285,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.cache, id, name))
 }
 
-func (s *server) startJob(dir, id string, want *image.NRGBA) {
-	parent := s.ctx
+func (s *server) startJob(parent context.Context, dir, id string, want *image.NRGBA) {
 	go func() {
 		if parent == nil || taskgroup.FromContext(parent) == nil {
 			_ = s.runJob(parent, nil, dir, id, want)
@@ -327,7 +327,10 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		if err != nil {
 			return s.stopJob(st, dir, id, err)
 		}
-		got, err := writeEpoch(dir, n, ep, want)
+		if err := ctx.Err(); err != nil {
+			return s.stopJob(st, dir, id, context.Cause(ctx))
+		}
+		got, err := writeEpoch(ctx, dir, n, ep, want)
 		if err != nil {
 			return s.stopJob(st, dir, id, err)
 		}
@@ -359,6 +362,9 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 			st.Progress(int64(n), -1)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return s.stopJob(st, dir, id, context.Cause(ctx))
+	}
 	meta.ID = id
 	meta.Status = "done"
 	_ = writeMeta(dir, meta)
@@ -372,7 +378,7 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	return nil
 }
 
-func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.NRGBA, error) {
+func writeEpoch(ctx context.Context, dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.NRGBA, error) {
 	pad := fmt.Sprintf("%03d", n)
 	if err := NewSVGFile(filepath.Join(dir, pad+".svg")).Render(ep.Document); err != nil {
 		return nil, err
@@ -392,7 +398,7 @@ func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.N
 	}
 	heat, island := ep.Heat, ep.Island
 	if heat == nil || island == nil {
-		heat, island = stack.DebugFrames(got, want, nil, nil)
+		heat, island = stack.DebugFrames(ctx, got, want, nil, nil)
 	}
 	if err := writePNG(filepath.Join(dir, pad+"-error.png"), heat); err != nil {
 		return nil, err

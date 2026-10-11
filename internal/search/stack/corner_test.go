@@ -91,11 +91,11 @@ func TestRectanglePlacesPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lefts := s.leftovers()
+	lefts := s.leftovers(nil)
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Rectangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Rectangle{world: s, left: lefts[0]}).Run(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,11 +11,20 @@ import (
 // scoreJobs is one device evaluation for every rectangle, or the
 // float64 loop when the device path is closed.
 func scoreJobs(ctx context.Context, want *image.NRGBA, gots []*image.NRGBA, rects []image.Rectangle) []float64 {
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
 	if sums, ok := ndScoreMany(ctx, want, gots, rects); ok {
 		return sums
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
 	out := make([]float64, len(rects))
 	for i := range rects {
+		if ctx != nil && ctx.Err() != nil {
+			return nil
+		}
 		if gots[i] == nil || want == nil || rects[i].Empty() {
 			continue
 		}
@@ -31,17 +40,26 @@ func scoreJobs(ctx context.Context, want *image.NRGBA, gots []*image.NRGBA, rect
 // scoreBatch renders every unscored proposition and scores the batch
 // with one device call. A full proposition uses the whole pixmap.
 // The others use the parent sum minus the old dirty rect plus the new one.
-func (s *world) scoreBatch(drafts []formPick) []formPick {
+func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 	out := make([]formPick, len(drafts))
+	if ctx != nil && ctx.Err() != nil {
+		return out
+	}
 	rendered := make([]*image.NRGBA, len(drafts))
 	var wg sync.WaitGroup
 	for i := range drafts {
+		if ctx != nil && ctx.Err() != nil {
+			break
+		}
 		if drafts[i].scored || drafts[i].doc.Width() == 0 {
 			continue
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			if ctx != nil && ctx.Err() != nil {
+				return
+			}
 			img, err := render.Render(drafts[i].doc)
 			if err != nil {
 				return
@@ -50,6 +68,9 @@ func (s *world) scoreBatch(drafts []formPick) []formPick {
 		}(i)
 	}
 	wg.Wait()
+	if ctx != nil && ctx.Err() != nil {
+		return out
+	}
 
 	type part struct {
 		got *image.NRGBA
@@ -93,7 +114,10 @@ func (s *world) scoreBatch(drafts []formPick) []formPick {
 		gots[i] = job.got
 		rects[i] = job.r
 	}
-	sums := scoreJobs(s.ctx, s.want, gots, rects)
+	sums := scoreJobs(ctx, s.want, gots, rects)
+	if ctx != nil && ctx.Err() != nil {
+		return out
+	}
 	for i, d := range drafts {
 		if d.scored {
 			out[i] = d

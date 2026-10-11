@@ -25,11 +25,11 @@ func TestScoreBatchMatchesScoreDraft(t *testing.T) {
 		doc: parent.doc, dirty: img.Bounds(), op: OpWash, parent: parent,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
 	}
-	one, err := s.scoreDraft(draft)
+	one, err := s.scoreDraft(t.Context(), draft)
 	if err != nil {
 		t.Fatal(err)
 	}
-	batch := s.scoreBatch([]formPick{draft, draft})
+	batch := s.scoreBatch(t.Context(), []formPick{draft, draft})
 	if len(batch) != 2 || !batch[0].scored || !batch[1].scored {
 		t.Fatalf("batch=%v", batch)
 	}

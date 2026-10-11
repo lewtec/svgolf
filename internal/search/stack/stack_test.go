@@ -93,7 +93,7 @@ func TestUnholeDropsUselessHole(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Unhole{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Unhole{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestSimplifySkipsLoadBearingEars(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +457,7 @@ func TestSimplifyKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestSimplifyDropsOneColinearVertex(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,14 +567,14 @@ func TestSlideKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Slide{world: s, left: lefts[0]}).Run()
+		pick, err = (Slide{world: s, left: lefts[0]}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -606,11 +606,11 @@ func TestScoreCandStoresFullError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lefts := s.leftovers()
+	lefts := s.leftovers(nil)
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +669,7 @@ func TestTryDropRedundant(t *testing.T) {
 		h:      16,
 		errSum: Score(nil, got, img),
 	}
-	pick, err := (Delete{world: s, i: 1}).Run()
+	pick, err := (Delete{world: s, i: 1}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,7 +716,7 @@ func TestDeleteEmitsLosingScore(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Delete{world: s, i: 0}).Run()
+	pick, err := (Delete{world: s, i: 0}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1144,7 +1144,7 @@ func TestLeftoverDeltaBandSelectsMildStrip(t *testing.T) {
 	if _, island := (&world{got: got, want: want, w: 16, h: 16}).hottest(); len(island) != 0 {
 		t.Fatalf("hottest=%d want none; the strip is below minErr", len(island))
 	}
-	lefts := (&world{got: got, want: want, w: 16, h: 16}).leftovers()
+	lefts := (&world{got: got, want: want, w: 16, h: 16}).leftovers(nil)
 	var strip leftover
 	for _, left := range lefts {
 		if left.region {
@@ -1219,7 +1219,7 @@ func TestHottestGlowsColorFromRim(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 20, h: 20}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1273,7 +1273,7 @@ func TestLeftoverColorRegionFromBlendRim(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 20, h: 20, fills: []color.NRGBA{cyan}}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1310,7 +1310,7 @@ func TestHottestDoesNotGlowPaper(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 24, h: 24}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1528,11 +1528,11 @@ func TestTrianglePlacesInscribedPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lefts := s.leftovers()
+	lefts := s.leftovers(nil)
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1668,7 +1668,7 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 	s.wantP.Ensure()
 	s.gotP.Ensure()
 	buckets := fillBuckets(s.owner, s.w, s.paths, nil)
-	pick, err := (&Join{world: s, buckets: buckets}).Run()
+	pick, err := (&Join{world: s, buckets: buckets}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1725,7 +1725,7 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1859,7 +1859,7 @@ func TestJoinKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1972,7 +1972,7 @@ func TestSubtractPunchesOverlap(t *testing.T) {
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2049,7 +2049,7 @@ func TestSubtractDropsPaperNotch(t *testing.T) {
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2131,7 +2131,7 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Swap{world: s, i: 0, j: 1}).Run()
+	pick, err := (Swap{world: s, i: 0, j: 1}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2190,11 +2190,11 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2272,7 +2272,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 	s.wantP.Ensure()
 	s.gotP.Ensure()
 	var paperLeft leftover
-	for _, left := range s.leftovers() {
+	for _, left := range s.leftovers(t.Context()) {
 		if left.paper {
 			paperLeft = left
 			break
@@ -2281,7 +2281,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 	if !paperLeft.big() {
 		t.Fatal("no paper leftover")
 	}
-	pick, err := (&Carve{world: s, left: paperLeft}).Run()
+	pick, err := (&Carve{world: s, left: paperLeft}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2334,14 +2334,14 @@ func TestSlidePullsTowardLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Slide{world: s, left: lefts[0]}).Run()
+		pick, err = (Slide{world: s, left: lefts[0]}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2384,11 +2384,11 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Bend{world: s, left: lefts[0]}).Run()
+	pick, err := (Bend{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2448,7 +2448,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 || !lefts[0].big() {
 		t.Fatal("sibling leftover empty")
 	}
@@ -2463,7 +2463,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

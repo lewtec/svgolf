@@ -246,9 +246,9 @@ func TestWatchShowsRequest(t *testing.T) {
 		sess.Cancel(context.Canceled)
 		_ = sess.Wait()
 	})
-	s := &server{ctx: ctx}
+	s := &server{}
 	saw := make(chan struct{})
-	h := s.watch(func(w http.ResponseWriter, r *http.Request) {
+	h := s.watch(ctx, func(w http.ResponseWriter, r *http.Request) {
 		deadline := time.Now().Add(time.Second)
 		for time.Now().Before(deadline) {
 			for _, n := range sess.List(16) {

@@ -120,7 +120,7 @@ func TestSimplifyCollapsesStairToTriangle(t *testing.T) {
 	before := s.errSum
 	var last svg.Path
 	for step := 0; step < len(outline); step++ {
-		pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+		pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +183,7 @@ func TestSimplifyDoesNotFillEll(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestSimplifySkipsRememberedTriple(t *testing.T) {
 	s.gotP.Ensure()
 	key := ringStraightKey(polylineRing(ring), 1)
 	s.simplifyMiss = map[straightKey]struct{}{key: {}}
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

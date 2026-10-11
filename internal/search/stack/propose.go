@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"math/rand/v2"
 
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -16,17 +17,20 @@ func (Suggest) ID() Op { return OpSuggest }
 
 func (g Suggest) Applies() bool { return g.world != nil && g.world.paths > 0 }
 
-func (g Suggest) Run() (formPick, error) {
-	return firstPick(g.Stream)
+func (g Suggest) Run(ctx context.Context) (formPick, error) {
+	return firstPick(ctx, g.Stream)
 }
 
-func (g Suggest) Stream(emit func(formPick)) error {
+func (g Suggest) Stream(ctx context.Context, emit func(formPick)) error {
 	s := g.world
 	buckets := g.buckets
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
 		node := s.doc.Children()[i+1]
 		path, ok := node.Path()
 		if !ok {
@@ -64,17 +68,20 @@ func (Squash) ID() Op { return OpSquash }
 
 func (q Squash) Applies() bool { return q.world != nil && q.world.paths >= 2 }
 
-func (q Squash) Run() (formPick, error) {
-	return firstPick(q.Stream)
+func (q Squash) Run(ctx context.Context) (formPick, error) {
+	return firstPick(ctx, q.Stream)
 }
 
-func (q Squash) Stream(emit func(formPick)) error {
+func (q Squash) Stream(ctx context.Context, emit func(formPick)) error {
 	s := q.world
 	buckets := q.buckets
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
 		for j := i + 1; j < s.paths; j++ {
 			pa, oka := s.doc.Children()[i+1].Path()
 			pb, okb := s.doc.Children()[j+1].Path()
@@ -118,17 +125,20 @@ func (Spline) ID() Op { return OpSpline }
 
 func (sp Spline) Applies() bool { return sp.world != nil && sp.world.paths > 0 }
 
-func (sp Spline) Run() (formPick, error) {
-	return firstPick(sp.Stream)
+func (sp Spline) Run(ctx context.Context) (formPick, error) {
+	return firstPick(ctx, sp.Stream)
 }
 
-func (sp Spline) Stream(emit func(formPick)) error {
+func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 	s := sp.world
 	buckets := sp.buckets
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
 		node := s.doc.Children()[i+1]
 		path, ok := node.Path()
 		if !ok {
@@ -181,9 +191,9 @@ func (sp Spline) emitRing(emit func(formPick), s *world, i int, node svg.Node, r
 	})
 }
 
-func firstPick(stream func(func(formPick)) error) (formPick, error) {
+func firstPick(ctx context.Context, stream func(context.Context, func(formPick)) error) (formPick, error) {
 	best := nonePick()
-	err := stream(func(p formPick) {
+	err := stream(ctx, func(p formPick) {
 		if !best.scored {
 			best = p
 		}
@@ -191,17 +201,20 @@ func firstPick(stream func(func(formPick)) error) (formPick, error) {
 	return best, err
 }
 
-func (s *world) emitKind(kind Op, lefts []leftover, emit func(formPick)) error {
+func (s *world) emitKind(ctx context.Context, kind Op, lefts []leftover, emit func(formPick)) error {
+	if err := live(ctx); err != nil {
+		return err
+	}
 	buckets := fillBuckets(s.owner, s.w, s.paths, nil)
 	switch kind {
 	case OpSuggest:
-		return Suggest{world: s, buckets: buckets}.Stream(emit)
+		return Suggest{world: s, buckets: buckets}.Stream(ctx, emit)
 	case OpSquash:
-		return Squash{world: s, buckets: buckets}.Stream(emit)
+		return Squash{world: s, buckets: buckets}.Stream(ctx, emit)
 	case OpSpline:
-		return Spline{world: s, buckets: buckets}.Stream(emit)
+		return Spline{world: s, buckets: buckets}.Stream(ctx, emit)
 	case OpWash, OpJoin, OpSubtract, OpSimplify, OpUnhole:
-		return proposeOne(op{id: kind, world: s, buckets: buckets}, emit)
+		return proposeOne(ctx, op{id: kind, world: s, buckets: buckets}, emit)
 	case OpSwap:
 		if s.paths < 2 {
 			return nil
@@ -214,19 +227,22 @@ func (s *world) emitKind(kind Op, lefts []leftover, emit func(formPick)) error {
 		if i > j {
 			i, j = j, i
 		}
-		return proposeOne(op{id: OpSwap, world: s, i: i, j: j}, emit)
+		return proposeOne(ctx, op{id: OpSwap, world: s, i: i, j: j}, emit)
 	case OpDelete:
 		if s.paths < 2 {
 			return nil
 		}
-		return proposeOne(op{id: OpDelete, world: s, i: rand.IntN(s.paths)}, emit)
+		return proposeOne(ctx, op{id: OpDelete, world: s, i: rand.IntN(s.paths)}, emit)
 	default:
 		for _, left := range lefts {
+			if err := live(ctx); err != nil {
+				return err
+			}
 			for _, oper := range s.leftoverOperators(left, 4) {
 				if oper.ID() != kind {
 					continue
 				}
-				if err := proposeOne(oper, emit); err != nil {
+				if err := proposeOne(ctx, oper, emit); err != nil {
 					return err
 				}
 			}
@@ -235,17 +251,19 @@ func (s *world) emitKind(kind Op, lefts []leftover, emit func(formPick)) error {
 	}
 }
 
-func proposeOne(oper Operator, emit func(formPick)) error {
+func proposeOne(ctx context.Context, oper Operator, emit func(formPick)) error {
 	if !oper.Applies() {
 		return nil
 	}
-	if stream, ok := oper.(interface{ Stream(func(formPick)) error }); ok {
-		return stream.Stream(emit)
+	if stream, ok := oper.(interface {
+		Stream(context.Context, func(formPick)) error
+	}); ok {
+		return stream.Stream(ctx, emit)
 	}
 	if holder, ok := oper.(interface{ proposeWorld() *world }); ok {
 		if w := holder.proposeWorld(); w != nil && w.stashOn {
 			w.stash = w.stash[:0]
-			if _, err := oper.Run(); err != nil {
+			if _, err := oper.Run(ctx); err != nil {
 				return err
 			}
 			for _, p := range w.stash {
@@ -255,7 +273,7 @@ func proposeOne(oper Operator, emit func(formPick)) error {
 			return nil
 		}
 	}
-	pick, err := oper.Run()
+	pick, err := oper.Run(ctx)
 	if err != nil {
 		return err
 	}

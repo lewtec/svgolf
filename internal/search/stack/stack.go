@@ -67,8 +67,6 @@ func ShowFrames(on bool) { showFrames.Store(on) }
 // leftover is this epoch's hottest miss. grow is one existing
 // path union that leftover. formPick is one scored operator.
 type world struct {
-	// ctx is the Search parent. Nil keeps Score on the float64 loop.
-	ctx          context.Context
 	want, got    *image.NRGBA
 	wantP, gotP  *loss.Plane
 	doc          svg.Document
@@ -166,6 +164,18 @@ type snapshot struct {
 
 func nonePick() formPick {
 	return formPick{replace: -1, insert: -1, dropIdx: -1, mergeJ: -1}
+}
+
+// live reports a cancelled context. A nil context is a direct call that
+// has no parent to cancel.
+func live(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return context.Cause(ctx)
+	}
+	return nil
 }
 
 // betterPick is lexicographic (errSum, paths, commands). Accepts beat
@@ -294,7 +304,6 @@ func newWorld(ctx context.Context, target *image.NRGBA) (*world, error) {
 	wantP.Ensure()
 	gotP.Ensure()
 	return &world{
-		ctx:    ctx,
 		want:   target,
 		got:    got,
 		wantP:  wantP,
@@ -337,7 +346,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
 			if showFrames.Load() {
-				ep.Heat, ep.Island = DebugFrames(s.got, s.want, blob, fitted)
+				ep.Heat, ep.Island = DebugFrames(ctx, s.got, s.want, blob, fitted)
 			}
 			ep.Rated = rated
 			ok := yield(ep, nil)
@@ -365,10 +374,10 @@ func (left leftover) big() bool {
 	return len(left.island) >= minIsland
 }
 
-func (s *world) leftovers() []leftover {
+func (s *world) leftovers(ctx context.Context) []leftover {
 	var out []leftover
 	for _, band := range leftoverDeltaBands {
-		out = append(out, s.leftoversFrom(s.hottestMarked(leftoverPicks, band[0], band[1]), band[0], band[1])...)
+		out = append(out, s.leftoversFrom(s.hottestMarked(ctx, leftoverPicks, band[0], band[1]), band[0], band[1])...)
 	}
 	return s.bindLeftovers(out)
 }
@@ -670,8 +679,11 @@ func (s *world) logCandidate(id Op, elapsed time.Duration, p formPick) {
 	fmt.Fprintf(s.candidateLog, "\t%s elapsed=%.3fs score=%.3f\n", id, elapsed.Seconds(), p.errSum)
 }
 
-func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick formPick, err error) {
-	defer s.noteCandidate(id, &pick, &err)
+func (s *world) scoreCand(ctx context.Context, next svg.Document, cand svg.Node, g grow, id Op) (pick formPick, err error) {
+	defer s.noteCandidate(ctx, id, &pick, &err)
+	if err = live(ctx); err != nil {
+		return nonePick(), err
+	}
 	if s != nil && s.stashOn {
 		pick = s.draft(next, cand, g, id)
 		return pick, nil
@@ -694,7 +706,7 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick
 	if dirty.Empty() {
 		dirty = nodeRect(cand)
 	}
-	nerr := s.scoreAfter(gotP, dirty.Inset(-2))
+	nerr := s.scoreAfter(ctx, gotP, dirty.Inset(-2))
 	npaths := docPaths(next)
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
@@ -740,21 +752,21 @@ func (s *world) finishPropose(p formPick) formPick {
 
 // scoreAfter is ScoreOn of a candidate whose paint only changed
 // inside dirty: parent sum minus the old rect plus the new rect.
-func (s *world) scoreAfter(gotP *loss.Plane, dirty image.Rectangle) float64 {
+func (s *world) scoreAfter(ctx context.Context, gotP *loss.Plane, dirty image.Rectangle) float64 {
 	if s.want == nil {
-		return ScoreOn(s.ctx, gotP, s.wantP)
+		return ScoreOn(ctx, gotP, s.wantP)
 	}
 	dirty = dirty.Intersect(s.want.Bounds())
 	if dirty.Empty() {
-		return ScoreOn(s.ctx, gotP, s.wantP)
+		return ScoreOn(ctx, gotP, s.wantP)
 	}
-	return s.errSum - ScoreRectOn(s.ctx, s.gotP, s.wantP, dirty) + ScoreRectOn(s.ctx, gotP, s.wantP, dirty)
+	return s.errSum - ScoreRectOn(ctx, s.gotP, s.wantP, dirty) + ScoreRectOn(ctx, gotP, s.wantP, dirty)
 }
 
 // addLayer scores a new path on top and at one random existing
 // slot. A background plate loses on top; Score keeps it if the
 // random slot is behind the thing it must not cover.
-func (s *world) addLayer(cand svg.Path, g grow, id Op) (formPick, error) {
+func (s *world) addLayer(ctx context.Context, cand svg.Path, g grow, id Op) (formPick, error) {
 	node := cand.Node()
 	best := nonePick()
 	slots := []int{s.paths}
@@ -762,13 +774,16 @@ func (s *world) addLayer(cand svg.Path, g grow, id Op) (formPick, error) {
 		slots = append(slots, rand.IntN(s.paths))
 	}
 	for _, at := range slots {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		var next svg.Document
 		if at >= s.paths {
 			next = s.doc.Append(node)
 		} else {
 			next = insertAt(s.doc, at+1, node)
 		}
-		pick, err := s.scoreCand(next, node, g, id)
+		pick, err := s.scoreCand(ctx, next, node, g, id)
 		if err != nil {
 			return nonePick(), err
 		}

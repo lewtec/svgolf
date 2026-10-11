@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"runtime"
@@ -268,10 +269,10 @@ func (s *world) hottest() (color.NRGBA, []pix) {
 }
 
 func (s *world) hottestN(k int) []leftoverBlob {
-	return s.hottestMarked(k, minErr, 180)
+	return s.hottestMarked(nil, k, minErr, 180)
 }
 
-func (s *world) hottestMarked(k int, lo, hi float64) []leftoverBlob {
+func (s *world) hottestMarked(ctx context.Context, k int, lo, hi float64) []leftoverBlob {
 	if k <= 0 || s.want == nil {
 		return nil
 	}
@@ -289,7 +290,7 @@ func (s *world) hottestMarked(k int, lo, hi float64) []leftoverBlob {
 		s.wantP = wantP
 	}
 	errFromImage := false
-	if ok, any := ndStamp(s.ctx, got, want, lo, hi, s.scratch.mark, s.scratch.family); ok {
+	if ok, any := ndStamp(ctx, got, want, lo, hi, s.scratch.mark, s.scratch.family); ok {
 		if !any {
 			return nil
 		}

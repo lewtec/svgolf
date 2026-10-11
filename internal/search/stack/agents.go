@@ -237,6 +237,10 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	board := newBeam(first)
 	proposals := make(chan agentNote, 64)
 	var wg sync.WaitGroup
+	defer func() {
+		board.close()
+		wg.Wait()
+	}()
 	for _, kind := range agentKinds() {
 		s.startProposer(ctx, &wg, board, kind, proposals)
 	}
@@ -250,16 +254,27 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		<-ctx.Done()
 		board.close()
 	}()
+loop:
 	for {
-		note, ok := <-proposals
-		if !ok {
-			break
+		var note agentNote
+		var ok bool
+		select {
+		case <-ctx.Done():
+			board.close()
+			break loop
+		case note, ok = <-proposals:
+			if !ok {
+				break loop
+			}
 		}
 		notes := []agentNote{note}
 		closed := false
 	drain:
 		for {
 			select {
+			case <-ctx.Done():
+				board.close()
+				break loop
 			case next, ok := <-proposals:
 				if !ok {
 					closed = true
@@ -271,8 +286,9 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 			}
 		}
 		s.rankNotes(ctx, board, &st, notes, emit)
-		if closed {
-			break
+		if closed || ctx.Err() != nil {
+			board.close()
+			break loop
 		}
 	}
 	if !st.stop && st.yielded && len(st.bestByOp) > st.flushed {
@@ -319,9 +335,15 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 	for i, note := range notes {
 		drafts[i] = note.pick
 	}
-	scored := s.scoreBatch(drafts)
+	scored := s.scoreBatch(ctx, drafts)
+	if ctx.Err() != nil {
+		return
+	}
 	proposals := make([]search.Proposal, 0, len(scored))
 	for i, pick := range scored {
+		if ctx.Err() != nil {
+			return
+		}
 		note := notes[i]
 		if !pick.scored {
 			continue
@@ -420,12 +442,14 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 	}
 	started := time.Now()
 	fork := parent.fork(s.want, s.wantP, s.w, s.h)
-	fork.ctx = ctx
 	fork.rank = s.rank
 	fork.candidateLog = s.candidateLog
 	fork.stashOn = true
 	sent := false
-	err := fork.emitKind(kind, parent.lefts, func(p formPick) {
+	err := fork.emitKind(ctx, kind, parent.lefts, func(p formPick) {
+		if ctx.Err() != nil {
+			return
+		}
 		p.parent = parent
 		sent = true
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
@@ -434,6 +458,9 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		}
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return true
+		}
 		if st != nil {
 			st.Update(err.Error())
 		}
@@ -488,9 +515,12 @@ func (b *beam) send(ctx context.Context, proposals chan<- agentNote, note agentN
 }
 
 func (s *world) watchLeftovers(ctx context.Context) []leftover {
+	if ctx != nil && ctx.Err() != nil {
+		return nil
+	}
 	var lefts []leftover
 	watchStep(ctx, "leftovers", func(st *taskgroup.Status) {
-		lefts = s.leftovers()
+		lefts = s.leftovers(ctx)
 		if st != nil {
 			st.Update(fmt.Sprintf("%d islands", len(lefts)))
 		}
@@ -498,14 +528,14 @@ func (s *world) watchLeftovers(ctx context.Context) []leftover {
 	return lefts
 }
 
-func (s *world) scoreDraft(p formPick) (formPick, error) {
+func (s *world) scoreDraft(ctx context.Context, p formPick) (formPick, error) {
 	s.load(p.parent)
 	node := svgNodeAt(p.doc, p.replace)
 	g := grow{i: p.replace, work: p.work, fill: p.fill, dirty0: p.dirty}
 	if g.dirty0.Empty() && len(p.work) > 0 {
 		g.dirty0 = islandRect(p.work)
 	}
-	scored, err := s.scoreCand(p.doc, node, g, p.op)
+	scored, err := s.scoreCand(ctx, p.doc, node, g, p.op)
 	if err != nil {
 		return nonePick(), err
 	}
