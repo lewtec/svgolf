@@ -548,8 +548,81 @@ func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
 
+func (w *world) fanSimplify(ctx context.Context, buckets [][]pix) error {
+	missed := w.simplifyMiss
+	type task struct {
+		i, ri, v int
+		rings    []pathRing
+		lin      svg.LinearFill
+		hasLin   bool
+	}
+	var tasks []task
+	for i := 0; i < w.paths; i++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
+		node := w.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			for v := 0; v < len(ring.verts); v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				if _, seen := missed[ringStraightKey(ring, v)]; seen {
+					continue
+				}
+				tasks = append(tasks, task{i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin})
+			}
+		}
+	}
+	return parallelEach(ctx, len(tasks), func(ctx context.Context, k int) error {
+		if err := live(ctx); err != nil {
+			return err
+		}
+		t := tasks[k]
+		ring := t.rings[t.ri]
+		key := ringStraightKey(ring, t.v)
+		moved := ring.dropVertex(t.v)
+		if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+			return nil
+		}
+		nextRings := append([]pathRing{}, t.rings...)
+		nextRings[t.ri] = moved
+		cand := filledRings(nextRings[0], nextRings[1:], w.fills[t.i])
+		if t.hasLin {
+			cand = cand.WithLinearFill(t.lin)
+		}
+		var work []pix
+		if t.i < len(buckets) {
+			work = buckets[t.i]
+		}
+		g := w.seedGrow(grow{i: t.i, work: work, fill: w.fills[t.i]})
+		g.dirty0 = key.scoreRect()
+		pick := w.draft(replaceAt(w.doc, t.i+1, cand.Node()), cand.Node(), g, OpSimplify)
+		if pick.doc.Width() == 0 {
+			return nil
+		}
+		kept := cloneStraightMiss(missed)
+		forgetTouching(kept, key)
+		pick.simplifyMiss = kept
+		w.finishPropose(pick)
+		return nil
+	})
+}
+
 func (s Simplify) Run(ctx context.Context) (formPick, error) {
 	w := s.world
+	if w != nil && w.stashOn && w.emitNow != nil {
+		if err := w.fanSimplify(ctx, s.buckets); err != nil {
+			return nonePick(), err
+		}
+		return nonePick(), nil
+	}
 	missed := cloneStraightMiss(w.simplifyMiss)
 	for i := 0; i < w.paths; i++ {
 		if err := live(ctx); err != nil {

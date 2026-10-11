@@ -3,9 +3,34 @@ package stack
 import (
 	"context"
 	"math/rand/v2"
+	"runtime"
 
 	"github.com/lewtec/svgolf/pkg/svg"
+	"golang.org/x/sync/errgroup"
 )
+
+// parallelEach runs fn across n items on GOMAXPROCS workers.
+// One returned error stops the rest. n is a fan-out, not a quality cutoff.
+func parallelEach(ctx context.Context, n int, fn func(context.Context, int) error) error {
+	if n <= 0 {
+		return nil
+	}
+	if n == 1 {
+		return fn(ctx, 0)
+	}
+	group, ctx := errgroup.WithContext(ctx)
+	limit := runtime.GOMAXPROCS(0)
+	if limit < 1 {
+		limit = 1
+	}
+	group.SetLimit(limit)
+	for i := range n {
+		group.Go(func() error {
+			return fn(ctx, i)
+		})
+	}
+	return group.Wait()
+}
 
 // Suggest submits one fill per path: the solid mean and each covariance axis.
 type Suggest struct {
@@ -27,18 +52,18 @@ func (g Suggest) Stream(ctx context.Context, emit func(formPick)) error {
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
-	for i := 0; i < s.paths; i++ {
+	one := func(ctx context.Context, i int) error {
 		if err := live(ctx); err != nil {
 			return err
 		}
 		node := s.doc.Children()[i+1]
 		path, ok := node.Path()
 		if !ok {
-			continue
+			return nil
 		}
 		work := buckets[i]
 		if len(work) == 0 {
-			continue
+			return nil
 		}
 		for _, choice := range paintChoices(work, s.want) {
 			cand := path
@@ -52,6 +77,15 @@ func (g Suggest) Stream(ctx context.Context, emit func(formPick)) error {
 				dropIdx: -1, mergeJ: -1, insert: -1, op: OpSuggest,
 				dirty: nodeRect(node),
 			})
+		}
+		return nil
+	}
+	if s.emitNow != nil && s.paths > 1 {
+		return parallelEach(ctx, s.paths, one)
+	}
+	for i := 0; i < s.paths; i++ {
+		if err := one(ctx, i); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -78,37 +112,52 @@ func (q Squash) Stream(ctx context.Context, emit func(formPick)) error {
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
+	type pair struct{ i, j int }
+	var pairs []pair
 	for i := 0; i < s.paths; i++ {
+		for j := i + 1; j < s.paths; j++ {
+			pairs = append(pairs, pair{i, j})
+		}
+	}
+	one := func(ctx context.Context, k int) error {
 		if err := live(ctx); err != nil {
 			return err
 		}
-		for j := i + 1; j < s.paths; j++ {
-			pa, oka := s.doc.Children()[i+1].Path()
-			pb, okb := s.doc.Children()[j+1].Path()
-			if !oka || !okb {
-				continue
+		i, j := pairs[k].i, pairs[k].j
+		pa, oka := s.doc.Children()[i+1].Path()
+		pb, okb := s.doc.Children()[j+1].Path()
+		if !oka || !okb {
+			return nil
+		}
+		ra, rb := parsePathRings(pa), parsePathRings(pb)
+		if len(ra) == 0 || len(rb) == 0 {
+			return nil
+		}
+		stitched, ok := stitchNearEdge(ra[0], rb[0])
+		if !ok {
+			return nil
+		}
+		work := append(append([]pix{}, buckets[i]...), buckets[j]...)
+		dirty := nodeRect(s.doc.Children()[i+1]).Union(nodeRect(s.doc.Children()[j+1]))
+		for _, choice := range paintChoices(work, s.want) {
+			cand := filledRings(stitched, nil, choice.solid)
+			if choice.linear {
+				cand = cand.WithLinearFill(choice.grad)
 			}
-			ra, rb := parsePathRings(pa), parsePathRings(pb)
-			if len(ra) == 0 || len(rb) == 0 {
-				continue
-			}
-			stitched, ok := stitchNearEdge(ra[0], rb[0])
-			if !ok {
-				continue
-			}
-			work := append(append([]pix{}, buckets[i]...), buckets[j]...)
-			dirty := nodeRect(s.doc.Children()[i+1]).Union(nodeRect(s.doc.Children()[j+1]))
-			for _, choice := range paintChoices(work, s.want) {
-				cand := filledRings(stitched, nil, choice.solid)
-				if choice.linear {
-					cand = cand.WithLinearFill(choice.grad)
-				}
-				next := dropAt(replaceAt(s.doc, i+1, cand.Node()), j+1)
-				emit(formPick{
-					doc: next, replace: i, mergeJ: j, work: work, fill: choice.solid,
-					dropIdx: -1, insert: -1, op: OpSquash, dirty: dirty,
-				})
-			}
+			next := dropAt(replaceAt(s.doc, i+1, cand.Node()), j+1)
+			emit(formPick{
+				doc: next, replace: i, mergeJ: j, work: work, fill: choice.solid,
+				dropIdx: -1, insert: -1, op: OpSquash, dirty: dirty,
+			})
+		}
+		return nil
+	}
+	if s.emitNow != nil && len(pairs) > 1 {
+		return parallelEach(ctx, len(pairs), one)
+	}
+	for k := range pairs {
+		if err := one(ctx, k); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -135,18 +184,18 @@ func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 	if buckets == nil {
 		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
 	}
-	for i := 0; i < s.paths; i++ {
+	one := func(ctx context.Context, i int) error {
 		if err := live(ctx); err != nil {
 			return err
 		}
 		node := s.doc.Children()[i+1]
 		path, ok := node.Path()
 		if !ok {
-			continue
+			return nil
 		}
 		rings := parsePathRings(path)
 		if len(rings) == 0 {
-			continue
+			return nil
 		}
 		work := buckets[i]
 		for ri, ring := range rings {
@@ -164,6 +213,15 @@ func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 					}
 				}
 			}
+		}
+		return nil
+	}
+	if s.emitNow != nil && s.paths > 1 {
+		return parallelEach(ctx, s.paths, one)
+	}
+	for i := 0; i < s.paths; i++ {
+		if err := one(ctx, i); err != nil {
+			return err
 		}
 	}
 	return nil

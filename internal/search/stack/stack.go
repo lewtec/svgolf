@@ -89,6 +89,9 @@ type world struct {
 	stashOn  bool
 	markFull bool
 	stash    []formPick
+	// emitNow hands a proposition to the painters immediately.
+	// The operator can keep generating on the other cores.
+	emitNow func(formPick)
 }
 
 var candidateLog io.Writer
@@ -746,6 +749,10 @@ func (s *world) finishPropose(p formPick) formPick {
 	p.ok = false
 	p.errSum = 0
 	p.got = nil
+	if s.emitNow != nil {
+		s.emitNow(p)
+		return nonePick()
+	}
 	s.stash = append(s.stash, p)
 	return nonePick()
 }

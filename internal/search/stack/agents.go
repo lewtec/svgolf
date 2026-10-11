@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/lewtec/lewkit/x/driver/ndeval/vulkan"
@@ -529,18 +530,17 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 	fork.rank = s.rank
 	fork.candidateLog = s.candidateLog
 	fork.stashOn = true
-	sent := false
-	err := fork.emitKind(ctx, kind, parent.lefts, func(p formPick) {
+	var sent atomic.Bool
+	send := func(p formPick) {
 		if ctx.Err() != nil {
 			return
 		}
 		p.parent = parent
-		sent = true
+		sent.Store(true)
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
-		if st != nil {
-			st.Update("proposed")
-		}
-	})
+	}
+	fork.emitNow = send
+	err := fork.emitKind(ctx, kind, parent.lefts, send)
 	if err != nil {
 		if ctx.Err() != nil {
 			return true
@@ -551,8 +551,12 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		board.send(ctx, proposals, agentNote{err: err})
 		return true
 	}
-	if st != nil && !sent {
-		st.Update("waiting")
+	if st != nil {
+		if sent.Load() {
+			st.Update("proposed")
+		} else {
+			st.Update("waiting")
+		}
 	}
 	return false
 }
