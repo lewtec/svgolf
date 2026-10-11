@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
@@ -72,9 +73,11 @@ func sameFile(t *testing.T, a, b string) {
 }
 
 func TestVectorizeUnknownSearch(t *testing.T) {
-	cmd := newRootCmd()
-	cmd.SetArgs([]string{"vectorize", "x.png", "-o", "y.svg", "--search", "nope"})
-	err := cmd.Execute()
+	app, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search", "nope")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = app.Args.Vectorize.Run(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "unknown adapter") {
 		t.Fatalf("got %v", err)
 	}

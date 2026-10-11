@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/lewtec/lewkit/x/cmd"
 )
 
 // Processor is the kind of graphics processor Search should use.
@@ -79,8 +81,12 @@ func WithGraphicsProcessor(ctx context.Context, kind Processor) context.Context 
 }
 
 // GraphicsProcessor is the processor named on ctx, or the process default.
+// An x/cmd value under "gpu" wins. That is what EnumArg stores.
 func GraphicsProcessor(ctx context.Context) Processor {
 	if ctx != nil {
+		if kind, ok := cmd.Lookup[Processor](ctx, "gpu"); ok {
+			return kind
+		}
 		if kind, ok := ctx.Value(processorKey{}).(Processor); ok {
 			return kind
 		}

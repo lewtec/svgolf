@@ -1,42 +1,44 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image/png"
 	"os"
 
+	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
-	"github.com/spf13/cobra"
 )
 
-func newRenderCmd() *cobra.Command {
-	var out string
-	cmd := &cobra.Command{
-		Use:   "render in.svg",
-		Short: "Rasterize an SVG to PNG with the in-process renderer",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			doc, err := svg.ParseFile(args[0])
-			if err != nil {
-				return err
-			}
-			img, err := render.Render(doc)
-			if err != nil {
-				return err
-			}
-			f, err := os.Create(out)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			if err := png.Encode(f, img); err != nil {
-				return fmt.Errorf("png: %w", err)
-			}
-			return nil
-		},
+type renderCmd struct {
+	In  cmd.StringArg
+	Out cmd.StringArg `short:"o" long:"out" help:"output PNG path"`
+}
+
+func (renderCmd) Description() string {
+	return "Rasterize an SVG to PNG with the in-process renderer"
+}
+
+func (c *renderCmd) Run(context.Context) error {
+	if c.Out.Value() == "" {
+		return fmt.Errorf("render: --out is required")
 	}
-	cmd.Flags().StringVarP(&out, "out", "o", "", "output PNG path")
-	_ = cmd.MarkFlagRequired("out")
-	return cmd
+	doc, err := svg.ParseFile(c.In.Value())
+	if err != nil {
+		return err
+	}
+	img, err := render.Render(doc)
+	if err != nil {
+		return err
+	}
+	f, err := os.Create(c.Out.Value())
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		return fmt.Errorf("png: %w", err)
+	}
+	return nil
 }

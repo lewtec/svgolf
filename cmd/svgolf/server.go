@@ -16,51 +16,47 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/cmd/svgolf/web"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/internal/search/stack"
 	"github.com/lewtec/svgolf/pkg/render"
-	"github.com/spf13/cobra"
 )
 
-func newServerCmd() *cobra.Command {
-	var (
-		cache string
-		addr  string
-		algo  string
-	)
-	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "Watch Search converge from a cache folder",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if cache == "" {
-				return fmt.Errorf("server: --cache is required")
-			}
-			if err := os.MkdirAll(cache, 0o755); err != nil {
-				return err
-			}
-			s := &server{cache: cache, algo: algo}
-			mux := http.NewServeMux()
-			mux.HandleFunc("GET /", s.handleHome)
-			mux.HandleFunc("POST /jobs", s.handleCreate)
-			mux.HandleFunc("GET /jobs/{id}", s.handleJob)
-			mux.HandleFunc("GET /jobs/{id}/events", s.handleEvents)
-			mux.HandleFunc("GET /jobs/{id}/files/{name}", s.handleFile)
-			srv := &http.Server{Addr: addr, Handler: mux}
-			cmd.Println("svgolf server", addr, "cache", cache)
-			return srv.ListenAndServe()
-		},
+type serverCmd struct {
+	Cache  cmd.StringArg `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
+	Addr   cmd.StringArg `long:"addr" default:":8080" help:"listen address"`
+	Search cmd.StringArg `long:"search" default:"stack" help:"Search adapter"`
+}
+
+func (serverCmd) Description() string {
+	return "Watch Search converge from a cache folder"
+}
+
+func (c *serverCmd) Run(ctx context.Context) error {
+	cache := c.Cache.Value()
+	if cache == "" {
+		return fmt.Errorf("server: --cache is required")
 	}
-	cmd.Flags().StringVar(&cache, "cache", "", "folder that stores every job and epoch frame")
-	cmd.Flags().StringVar(&addr, "addr", ":8080", "listen address")
-	cmd.Flags().StringVar(&algo, "search", "stack", "Search adapter")
-	_ = cmd.MarkFlagRequired("cache")
-	return cmd
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return err
+	}
+	s := &server{cache: cache, algo: c.Search.Value(), ctx: ctx}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", s.handleHome)
+	mux.HandleFunc("POST /jobs", s.handleCreate)
+	mux.HandleFunc("GET /jobs/{id}", s.handleJob)
+	mux.HandleFunc("GET /jobs/{id}/events", s.handleEvents)
+	mux.HandleFunc("GET /jobs/{id}/files/{name}", s.handleFile)
+	srv := &http.Server{Addr: c.Addr.Value(), Handler: mux}
+	fmt.Println("svgolf server", c.Addr.Value(), "cache", cache)
+	return srv.ListenAndServe()
 }
 
 type server struct {
 	cache string
 	algo  string
+	ctx   context.Context
 	mu    sync.Mutex
 	subs  map[string][]chan []byte
 }
@@ -203,7 +199,11 @@ func (s *server) runJob(dir, id string, want *image.NRGBA) {
 	var rounds [][]search.Rated
 	var pathCounts []int
 	var vertexCounts []int
-	for ep, err := range searcher.Search(context.Background(), want) {
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for ep, err := range searcher.Search(ctx, want) {
 		if err != nil {
 			s.fail(dir, id, err)
 			return

@@ -49,3 +49,30 @@ func TestProcessorEnumArg(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+type gpuLeaf struct {
+	seen Processor
+}
+
+func (l *gpuLeaf) Run(ctx context.Context) error {
+	l.seen = GraphicsProcessor(ctx)
+	return nil
+}
+
+type gpuRoot struct {
+	GPU  cmd.EnumArg[Processor] `long:"gpu" default:"integrated" ctx:"gpu"`
+	Leaf *gpuLeaf
+}
+
+func TestGraphicsProcessorFromCommand(t *testing.T) {
+	app, err := cmd.Parse[cmd.App[gpuRoot]]("leaf", "--gpu", "dedicated")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if app.Args.Leaf.seen != ProcessorDedicated {
+		t.Fatalf("processor=%s", app.Args.Leaf.seen)
+	}
+}
