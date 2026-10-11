@@ -28,6 +28,44 @@ func TestScoreJobsBandsMatchWholeRect(t *testing.T) {
 	require.InDelta(t, whole, device[0], math.Max(1e-3*math.Abs(whole), 1e-3))
 }
 
+func TestScoreJobsPacksRectangles(t *testing.T) {
+	want := image.NewNRGBA(image.Rect(0, 0, 16, 8))
+	gots := make([]*image.NRGBA, 3)
+	rects := []image.Rectangle{
+		image.Rect(0, 0, 16, 4),
+		image.Rect(0, 4, 16, 8),
+		image.Rect(2, 1, 10, 7),
+	}
+	for i := range gots {
+		gots[i] = image.NewNRGBA(want.Bounds())
+		for y := 0; y < 8; y++ {
+			for x := 0; x < 16; x++ {
+				gots[i].SetNRGBA(x, y, color.NRGBA{R: uint8(20*i + x), G: uint8(y * 30), A: 255})
+				if i == 0 {
+					want.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+				}
+			}
+		}
+	}
+	wantSums := make([]float64, len(rects))
+	for i, r := range rects {
+		wantSums[i] = ScoreRect(nil, gots[i], want, r)
+	}
+	for _, limit := range []int{16, 64, maxDevicePixels} {
+		packed := scoreJobsLimited(nil, want, gots, append([]image.Rectangle(nil), rects...), limit)
+		require.Len(t, packed, len(wantSums))
+		for i := range wantSums {
+			require.InDelta(t, wantSums[i], packed[i], 1e-6*math.Abs(wantSums[i]), "limit %d job %d", limit, i)
+		}
+		device := scoreJobsLimited(t.Context(), want, gots, append([]image.Rectangle(nil), rects...), limit)
+		require.Len(t, device, len(wantSums))
+		for i := range wantSums {
+			tol := math.Max(1e-3*math.Abs(wantSums[i]), 1e-3)
+			require.InDelta(t, wantSums[i], device[i], tol, "device limit %d job %d", limit, i)
+		}
+	}
+}
+
 func TestScoreBatchMatchesScoreDraft(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	for y := 0; y < 8; y++ {

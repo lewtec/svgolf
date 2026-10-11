@@ -106,40 +106,16 @@ func scoreJobsLimited(ctx context.Context, want *image.NRGBA, gots []*image.NRGB
 	return out
 }
 
-// scoreBatch renders every unscored proposition and scores the batch
-// with one device call. A full proposition uses the whole pixmap.
-// The others use the parent sum minus the old dirty rect plus the new one.
+// scoreBatch renders the drained propositions and scores them together.
+// A full proposition uses the whole pixmap. The others use the parent
+// sum minus the old dirty rectangle plus the new one. scoreJobs packs
+// those rectangles into kernels of at most maxDevicePixels.
 func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 	out := make([]formPick, len(drafts))
-	if ctx != nil && ctx.Err() != nil {
+	if ctx != nil && ctx.Err() != nil || len(drafts) == 0 {
 		return out
 	}
-	frame := 1
-	if s.want != nil {
-		b := s.want.Bounds()
-		if n := b.Dx() * b.Dy(); n > 0 {
-			frame = n
-		}
-	}
-	for start := 0; start < len(drafts); {
-		if ctx != nil && ctx.Err() != nil {
-			return out
-		}
-		used := 0
-		end := start
-		for end < len(drafts) {
-			if used > 0 && used+frame > maxDevicePixels {
-				break
-			}
-			used += frame
-			end++
-			if used >= maxDevicePixels {
-				break
-			}
-		}
-		s.scoreGroup(ctx, drafts[start:end], out[start:end])
-		start = end
-	}
+	s.scoreGroup(ctx, drafts, out)
 	return out
 }
 
