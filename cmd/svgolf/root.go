@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log/slog"
+
 	_ "github.com/lewtec/svgolf/internal/search/prelude"
 
 	"github.com/lewtec/lewkit/x/cmd"
@@ -32,6 +34,9 @@ v1 ships Dumb via prelude. Run tests with: mise run test`
 }
 
 func (r *root) Setup() error {
+	if r.GPU.Value() != nil {
+		slog.Info("ndarray device", "name", r.GPU.Device(), "expr", r.GPU.Expression())
+	}
 	if r.Profile.Value() == "" {
 		return nil
 	}
