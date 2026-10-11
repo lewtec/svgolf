@@ -225,6 +225,14 @@ type agentNote struct {
 	elapsed time.Duration
 }
 
+// proposalBuffer is the queue between proposers and the ranker. A proposer
+// sends and returns to the next parent. The ranker scores proposalBatch
+// notes and leaves the rest queued.
+const (
+	proposalBuffer = 1024
+	proposalBatch  = 32
+)
+
 // runAgents starts one proposer per operator. Each proposer claims the
 // least-busy parent it has not served and sends proposals on the channel.
 // This goroutine is the only consumer: it scores, keeps the beam, and the
@@ -235,7 +243,7 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	first := s.snap()
 	first.lefts = s.watchLeftovers(ctx)
 	board := newBeam(first)
-	proposals := make(chan agentNote, 64)
+	proposals := make(chan agentNote, proposalBuffer)
 	var wg sync.WaitGroup
 	defer func() {
 		board.close()
@@ -270,7 +278,7 @@ loop:
 		notes := []agentNote{note}
 		closed := false
 	drain:
-		for {
+		for len(notes) < proposalBatch {
 			select {
 			case <-ctx.Done():
 				board.close()
