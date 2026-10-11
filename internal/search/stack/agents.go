@@ -31,6 +31,7 @@ type beam struct {
 	holding int
 	closed  bool
 	head    int
+	trying  map[int]map[straightKey]struct{}
 }
 
 func newBeam(first snapshot) *beam {
@@ -38,6 +39,7 @@ func newBeam(first snapshot) *beam {
 		best:   []snapshot{first},
 		served: map[Op]map[int]bool{},
 		busy:   map[int]int{},
+		trying: map[int]map[straightKey]struct{}{},
 		head:   first.id,
 	}
 	b.cond = sync.NewCond(&b.mu)
@@ -97,6 +99,81 @@ func (b *beam) finish(op Op, id int) {
 	}
 	b.mu.Unlock()
 	b.cond.Broadcast()
+}
+
+func (b *beam) abandon(id int) {
+	b.mu.Lock()
+	if b.busy[id] > 0 {
+		b.busy[id]--
+	}
+	b.mu.Unlock()
+	b.cond.Broadcast()
+}
+
+func (b *beam) waitStraight(id int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for len(b.trying[id]) > 0 && !b.closed {
+		b.cond.Wait()
+	}
+}
+
+// reserveStraight claims up to n keys that this document has not
+// already refused or sent. The caller shuffles keys first.
+func (b *beam) reserveStraight(id int, keys []straightKey, n int) []straightKey {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var miss map[straightKey]struct{}
+	for _, sn := range b.best {
+		if sn.id == id {
+			miss = sn.simplifyMiss
+			break
+		}
+	}
+	if b.trying[id] == nil {
+		b.trying[id] = map[straightKey]struct{}{}
+	}
+	var out []straightKey
+	for _, key := range keys {
+		if _, skip := miss[key]; skip {
+			continue
+		}
+		if _, skip := b.trying[id][key]; skip {
+			continue
+		}
+		b.trying[id][key] = struct{}{}
+		out = append(out, key)
+		if len(out) == n {
+			break
+		}
+	}
+	return out
+}
+
+func (b *beam) settleStraight(id int, key straightKey, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.trying[id] != nil {
+		delete(b.trying[id], key)
+	}
+	for i := range b.best {
+		if ok && b.best[i].id != id {
+			continue
+		}
+		miss := cloneStraightMiss(b.best[i].simplifyMiss)
+		if miss == nil {
+			miss = map[straightKey]struct{}{}
+		}
+		miss[key] = struct{}{}
+		b.best[i].simplifyMiss = miss
+	}
+	b.cond.Broadcast()
+}
+
+func (b *beam) straightBusy(id int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.trying[id]) > 0
 }
 
 func (b *beam) noteMiss(keys ...straightKey) {
@@ -688,6 +765,40 @@ func (s *world) publishRank(ctx context.Context, board *beam, st *rankState, pro
 	})
 }
 
+func (s *world) fuzzSimplifyParent(ctx context.Context, st *taskgroup.Status, board *beam, parent snapshot, proposals chan<- agentNote) (stop bool) {
+	if st != nil {
+		st.Update("running")
+	}
+	fork := parent.fork(s.want, s.wantP, s.w, s.h)
+	sent, busy, err := fork.fuzzSimplify(ctx, board, parent, proposals, time.Now())
+	if err != nil {
+		board.finish(OpSimplify, parent.id)
+		if ctx.Err() != nil {
+			return true
+		}
+		if st != nil {
+			st.Update(err.Error())
+		}
+		board.send(ctx, proposals, agentNote{err: err})
+		return true
+	}
+	if sent == 0 && !busy {
+		board.finish(OpSimplify, parent.id)
+		if st != nil {
+			st.Update("waiting")
+		}
+		return false
+	}
+	board.abandon(parent.id)
+	if sent == 0 && busy {
+		board.waitStraight(parent.id)
+	}
+	if st != nil {
+		st.Update("proposed")
+	}
+	return false
+}
+
 func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote) {
 	wg.Add(1)
 	go func() {
@@ -717,6 +828,9 @@ func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *be
 }
 
 func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *beam, kind Op, parent snapshot, proposals chan<- agentNote) (stop bool) {
+	if kind == OpSimplify {
+		return s.fuzzSimplifyParent(ctx, st, board, parent, proposals)
+	}
 	defer board.finish(kind, parent.id)
 	if st != nil {
 		st.Update("running")
@@ -736,30 +850,6 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
 	}
 	fork.emitNow = send
-	if kind == OpSimplify {
-		sentCount, err := fork.simplifyWindows(ctx, board, parent, proposals, started)
-		if sentCount > 0 {
-			sent.Store(true)
-		}
-		if err != nil {
-			if ctx.Err() != nil {
-				return true
-			}
-			if st != nil {
-				st.Update(err.Error())
-			}
-			board.send(ctx, proposals, agentNote{err: err})
-			return true
-		}
-		if st != nil {
-			if sent.Load() {
-				st.Update("proposed")
-			} else {
-				st.Update("waiting")
-			}
-		}
-		return false
-	}
 	err := fork.emitKind(ctx, kind, parent.lefts, send)
 	if err != nil {
 		if ctx.Err() != nil {

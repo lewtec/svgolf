@@ -331,13 +331,26 @@ func TestSimplifyWindowSkipsRefusedVertices(t *testing.T) {
 			}
 		}
 	}()
-	sent, err := s.simplifyWindows(t.Context(), board, parent, proposals, time.Now())
-	require.NoError(t, err)
+	var sent int
+	for {
+		fork := board.list()[0].fork(nil, nil, 16, 16)
+		n, busy, err := fork.fuzzSimplify(t.Context(), board, board.list()[0], proposals, time.Now())
+		require.NoError(t, err)
+		require.LessOrEqual(t, n, simplifyWindow)
+		sent += n
+		if n == 0 && !busy {
+			break
+		}
+		if n == 0 && busy {
+			board.waitStraight(board.list()[0].id)
+		}
+	}
 	require.NotZero(t, sent)
-	again := board.list()[0].fork(nil, nil, 16, 16)
-	sent, err = again.simplifyWindows(t.Context(), board, board.list()[0], proposals, time.Now())
+	fork := board.list()[0].fork(nil, nil, 16, 16)
+	n, busy, err := fork.fuzzSimplify(t.Context(), board, board.list()[0], proposals, time.Now())
 	require.NoError(t, err)
-	require.Zero(t, sent)
+	require.Zero(t, n)
+	require.False(t, busy)
 }
 
 func TestSimplifySkipsRememberedTriple(t *testing.T) {

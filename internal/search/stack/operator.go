@@ -548,71 +548,57 @@ func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
 
-func (w *world) simplifyWindows(ctx context.Context, board *beam, parent snapshot, proposals chan<- agentNote, started time.Time) (int, error) {
+// fuzzSimplify throws a random handful of vertex drops at the ranker
+// and returns. It does not wait for the decisions. Refusals land on
+// the beam later and the next draw skips them.
+func (w *world) fuzzSimplify(ctx context.Context, board *beam, parent snapshot, proposals chan<- agentNote, started time.Time) (int, bool, error) {
+	if err := live(ctx); err != nil {
+		return 0, false, err
+	}
 	buckets := fillBuckets(w.owner, w.w, w.paths, nil)
-	missed := cloneStraightMiss(w.simplifyMiss)
-	if missed == nil {
-		missed = map[straightKey]struct{}{}
+	tasks := w.straightTasks(buckets, nil)
+	if len(tasks) == 0 {
+		return 0, false, nil
+	}
+	rand.Shuffle(len(tasks), func(i, j int) {
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+	})
+	keys := make([]straightKey, len(tasks))
+	by := make(map[straightKey]straightTask, len(tasks))
+	for i, task := range tasks {
+		keys[i] = task.key
+		by[task.key] = task
+	}
+	chosen := board.reserveStraight(parent.id, keys, simplifyWindow)
+	if len(chosen) == 0 {
+		return 0, board.straightBusy(parent.id), nil
 	}
 	sent := 0
-	for {
-		if err := live(ctx); err != nil {
-			return sent, err
+	for _, key := range chosen {
+		pick := w.simplifyPick(buckets, by[key], w.simplifyMiss)
+		if pick.doc.Width() == 0 {
+			board.settleStraight(parent.id, key, false)
+			continue
 		}
-		tasks := w.straightTasks(buckets, missed)
-		if len(tasks) == 0 {
-			return sent, nil
-		}
-		n := simplifyWindow
-		if n > len(tasks) {
-			n = len(tasks)
-		}
-		picks := make([]formPick, n)
-		if err := parallelEach(ctx, n, func(ctx context.Context, i int) error {
-			picks[i] = w.simplifyPick(buckets, tasks[i], missed)
-			return nil
-		}); err != nil {
-			return sent, err
-		}
-		type pending struct {
-			key straightKey
-			ch  chan bool
-		}
-		var wait []pending
-		for i := range n {
-			key := tasks[i].key
-			if picks[i].doc.Width() == 0 {
-				missed[key] = struct{}{}
-				continue
-			}
-			picks[i].parent = parent
-			ch := make(chan bool, 1)
-			board.send(ctx, proposals, agentNote{
-				pick:    picks[i],
-				elapsed: time.Since(started),
-				verdict: ch,
-			})
-			sent++
-			wait = append(wait, pending{key: key, ch: ch})
-		}
-		for _, item := range wait {
+		pick.parent = parent
+		ch := make(chan bool, 1)
+		id := parent.id
+		go func(key straightKey, ch chan bool) {
+			ok := false
 			select {
 			case <-ctx.Done():
-				return sent, ctx.Err()
-			case ok := <-item.ch:
-				if !ok {
-					missed[item.key] = struct{}{}
-				} else {
-					missed[item.key] = struct{}{}
-				}
+			case ok = <-ch:
 			}
-		}
-		keys := make([]straightKey, 0, len(missed))
-		for key := range missed {
-			keys = append(keys, key)
-		}
-		board.noteMiss(keys...)
+			board.settleStraight(id, key, ok)
+		}(key, ch)
+		board.send(ctx, proposals, agentNote{
+			pick:    pick,
+			elapsed: time.Since(started),
+			verdict: ch,
+		})
+		sent++
 	}
+	return sent, true, nil
 }
 
 type straightTask struct {
