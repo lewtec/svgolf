@@ -85,6 +85,12 @@ type world struct {
 	// simplifyMiss is the straight triples that raised Score on
 	// this picture. The next simplify skips them.
 	simplifyMiss map[straightKey]struct{}
+	// stashOn tells scoreCand to return a proposition. The operator
+	// finishes the structural fields and finishPropose stores it.
+	// The ranker scores the stash. Workers do not.
+	stashOn  bool
+	markFull bool
+	stash    []formPick
 }
 
 var candidateLog io.Writer
@@ -135,6 +141,7 @@ type formPick struct {
 	op           Op
 	ok           bool
 	scored       bool
+	full         bool
 	island       []pix
 	fills        []color.NRGBA
 	owner        []uint16
@@ -665,6 +672,10 @@ func (s *world) logCandidate(id Op, elapsed time.Duration, p formPick) {
 
 func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick formPick, err error) {
 	defer s.noteCandidate(id, &pick, &err)
+	if s != nil && s.stashOn {
+		pick = s.draft(next, cand, g, id)
+		return pick, nil
+	}
 	if p, ok := cand.Path(); ok {
 		for _, r := range pathRings(p) {
 			if ringCrosses(r) {
@@ -688,6 +699,43 @@ func (s *world) scoreCand(next svg.Document, cand svg.Node, g grow, id Op) (pick
 	ncmds := docCmdLen(next)
 	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
+}
+
+// draft is a proposition. It carries the document and the dirty rect.
+// The ranker fills the score.
+func (s *world) draft(next svg.Document, cand svg.Node, g grow, id Op) formPick {
+	if p, ok := cand.Path(); ok {
+		for _, r := range pathRings(p) {
+			if ringCrosses(r) {
+				return nonePick()
+			}
+		}
+	}
+	dirty := g.dirty0
+	if dirty.Empty() {
+		dirty = nodeRect(cand)
+	}
+	return formPick{
+		doc: next, replace: g.i, insert: -1, work: g.work, fill: g.fill,
+		dropIdx: -1, mergeJ: -1, op: id, dirty: dirty, full: s.markFull,
+	}
+}
+
+// finishPropose stores one proposition for the caller to send.
+// A direct Run scores and returns the pick instead.
+func (s *world) finishPropose(p formPick) formPick {
+	if s == nil || !s.stashOn {
+		return p
+	}
+	if p.doc.Width() == 0 && p.dropIdx < 0 && len(p.owner) == 0 && len(p.fills) == 0 {
+		return nonePick()
+	}
+	p.scored = false
+	p.ok = false
+	p.errSum = 0
+	p.got = nil
+	s.stash = append(s.stash, p)
+	return nonePick()
 }
 
 // scoreAfter is ScoreOn of a candidate whose paint only changed
@@ -724,8 +772,12 @@ func (s *world) addLayer(cand svg.Path, g grow, id Op) (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
-		if pick.ok && at < s.paths {
+		if at < s.paths && (s.stashOn || pick.ok) {
 			pick.insert = at
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick

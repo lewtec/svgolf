@@ -116,20 +116,22 @@ func newJobID(name string) string {
 }
 
 type jobMeta struct {
-	ID           string           `json:"id"`
-	Status       string           `json:"status"`
-	Search       string           `json:"search"`
-	Epochs       int              `json:"epochs"`
-	Operator     string           `json:"operator"`
-	Score        float64          `json:"score"`
-	Scores       []float64        `json:"scores,omitempty"`
-	Rounds       [][]search.Rated `json:"rounds,omitempty"`
-	Paths        int              `json:"paths"`
-	Vertices     int              `json:"vertices"`
-	PathCounts   []int            `json:"pathCounts,omitempty"`
-	VertexCounts []int            `json:"vertexCounts,omitempty"`
-	Elapsed      string           `json:"elapsed"`
-	Err          string           `json:"error,omitempty"`
+	ID           string            `json:"id"`
+	Status       string            `json:"status"`
+	Search       string            `json:"search"`
+	Epochs       int               `json:"epochs"`
+	Operator     string            `json:"operator"`
+	Score        float64           `json:"score"`
+	Scores       []float64         `json:"scores,omitempty"`
+	Rounds       [][]search.Rated  `json:"rounds,omitempty"`
+	Beam         []search.Slot     `json:"beam,omitempty"`
+	Proposals    []search.Proposal `json:"proposals,omitempty"`
+	Paths        int               `json:"paths"`
+	Vertices     int               `json:"vertices"`
+	PathCounts   []int             `json:"pathCounts,omitempty"`
+	VertexCounts []int             `json:"vertexCounts,omitempty"`
+	Elapsed      string            `json:"elapsed"`
+	Err          string            `json:"error,omitempty"`
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -314,6 +316,13 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	var rounds [][]search.Rated
 	var pathCounts []int
 	var vertexCounts []int
+	meta := jobMeta{ID: id, Status: "running", Search: s.algo}
+	ctx = stack.WithFrames(ctx, func(frame search.Frame) {
+		meta.Beam = frame.Beam
+		meta.Proposals = frame.Proposals
+		_ = writeMeta(dir, meta)
+		s.publish(id, "frame", meta)
+	})
 	for ep, err := range searcher.Search(ctx, want) {
 		if err != nil {
 			return s.stopJob(st, dir, id, err)
@@ -330,21 +339,19 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		vertices := documentVertices(ep.Document)
 		pathCounts = append(pathCounts, paths)
 		vertexCounts = append(vertexCounts, vertices)
-		meta := jobMeta{
-			ID:           id,
-			Status:       "running",
-			Search:       s.algo,
-			Epochs:       n,
-			Operator:     ep.Operator.String(),
-			Score:        sc,
-			Scores:       scores,
-			Rounds:       rounds,
-			Paths:        paths,
-			Vertices:     vertices,
-			PathCounts:   pathCounts,
-			VertexCounts: vertexCounts,
-			Elapsed:      ep.Elapsed.String(),
-		}
+		meta.ID = id
+		meta.Status = "running"
+		meta.Search = s.algo
+		meta.Epochs = n
+		meta.Operator = ep.Operator.String()
+		meta.Score = sc
+		meta.Scores = scores
+		meta.Rounds = rounds
+		meta.Paths = paths
+		meta.Vertices = vertices
+		meta.PathCounts = pathCounts
+		meta.VertexCounts = vertexCounts
+		meta.Elapsed = ep.Elapsed.String()
 		_ = writeMeta(dir, meta)
 		s.publish(id, "epoch", meta)
 		if st != nil {
@@ -352,7 +359,6 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 			st.Progress(int64(n), -1)
 		}
 	}
-	meta, _ := readMeta(dir)
 	meta.ID = id
 	meta.Status = "done"
 	_ = writeMeta(dir, meta)
@@ -451,6 +457,7 @@ func (s *server) publish(id, name string, meta jobMeta) {
 
 type queuedJob struct {
 	epoch *jobEvent
+	frame *jobEvent
 	done  *jobEvent
 }
 
@@ -490,6 +497,10 @@ func streamEvents(ctx context.Context, w http.ResponseWriter, fl http.Flusher, s
 		if slot.done != nil {
 			return
 		}
+		if ev.Name == "frame" {
+			slot.frame = &cp
+			return
+		}
 		slot.epoch = &cp
 	}
 	live := make(chan struct{})
@@ -516,6 +527,10 @@ func streamEvents(ctx context.Context, w http.ResponseWriter, fl http.Flusher, s
 	writeSlot := func(slot *queuedJob) bool {
 		if slot.epoch != nil {
 			writeSSE(w, slot.epoch.Name, slot.epoch.Meta)
+			fl.Flush()
+		}
+		if slot.frame != nil {
+			writeSSE(w, slot.frame.Name, slot.frame.Meta)
 			fl.Flush()
 		}
 		if slot.done != nil {
@@ -597,6 +612,8 @@ func epochPayload(m jobMeta) map[string]any {
 		"pathCounts":   pathCounts,
 		"vertexCounts": vertexCounts,
 		"elapsed":      m.Elapsed,
+		"beam":         m.Beam,
+		"proposals":    m.Proposals,
 	}
 }
 
@@ -704,6 +721,22 @@ func toView(m jobMeta) web.JobView {
 	if err != nil {
 		rb = []byte("[]")
 	}
+	beam := m.Beam
+	if beam == nil {
+		beam = []search.Slot{}
+	}
+	bb, err := json.Marshal(beam)
+	if err != nil {
+		bb = []byte("[]")
+	}
+	proposals := m.Proposals
+	if proposals == nil {
+		proposals = []search.Proposal{}
+	}
+	qb, err := json.Marshal(proposals)
+	if err != nil {
+		qb = []byte("[]")
+	}
 	pathCounts := m.PathCounts
 	if pathCounts == nil {
 		pathCounts = []int{}
@@ -729,6 +762,8 @@ func toView(m jobMeta) web.JobView {
 		Score:            strconv.FormatFloat(m.Score, 'f', 3, 64),
 		ScoresJSON:       string(b),
 		RoundsJSON:       string(rb),
+		BeamJSON:         string(bb),
+		ProposalsJSON:    string(qb),
 		PathCountsJSON:   string(pb),
 		VertexCountsJSON: string(vb),
 		Paths:            m.Paths,

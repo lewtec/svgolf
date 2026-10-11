@@ -245,65 +245,117 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		close(proposals)
 	}()
 
-	yielded := false
-	head := first.id
-	bestByOp := map[Op]*namedPick{}
-	flushed := 0
-	var pool []formPick
-	var recent []candResult
-	stop := false
+	st := rankState{head: first.id, bestByOp: map[Op]*namedPick{}}
 	go func() {
 		<-ctx.Done()
 		board.close()
 	}()
-	for note := range proposals {
-		board.beginChoose()
-		board.account(-1)
-		if stop || ctx.Err() != nil {
-			board.endChoose()
-			continue
+	for {
+		note, ok := <-proposals
+		if !ok {
+			break
 		}
+		notes := []agentNote{note}
+		closed := false
+	drain:
+		for {
+			select {
+			case next, ok := <-proposals:
+				if !ok {
+					closed = true
+					break drain
+				}
+				notes = append(notes, next)
+			default:
+				break drain
+			}
+		}
+		s.rankNotes(ctx, board, &st, notes, emit)
+		if closed {
+			break
+		}
+	}
+	if !st.stop && st.yielded && len(st.bestByOp) > st.flushed {
+		top := board.top()
+		s.load(top)
+		rated := collectRated(st.bestByOp)
+		markKept(rated, []formPick{{op: top.operator}})
+		blob, fitted := leftoverView(top, st.pool)
+		emit(top.operator, blob, fitted, rated)
+	}
+	if err := ctx.Err(); err != nil && !st.yielded {
+		return false, err
+	}
+	return st.yielded, nil
+}
+
+type rankState struct {
+	yielded  bool
+	head     int
+	bestByOp map[Op]*namedPick
+	flushed  int
+	pool     []formPick
+	recent   []candResult
+	stop     bool
+}
+
+func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, emit func(Op, []pix, []pix, []search.Rated) bool) {
+	board.beginChoose()
+	defer board.endChoose()
+	for range notes {
+		board.account(-1)
+	}
+	if st.stop || ctx.Err() != nil {
+		return
+	}
+	for _, note := range notes {
 		if note.err != nil {
 			board.close()
-			stop = true
-			board.endChoose()
+			st.stop = true
+			return
+		}
+	}
+	drafts := make([]formPick, len(notes))
+	for i, note := range notes {
+		drafts[i] = note.pick
+	}
+	scored := s.scoreBatch(drafts)
+	proposals := make([]search.Proposal, 0, len(scored))
+	for i, pick := range scored {
+		note := notes[i]
+		if !pick.scored {
 			continue
 		}
-		pick := note.pick
-		var err error
-		if !pick.scored {
-			pick, err = s.scoreDraft(pick)
-			if err != nil {
-				board.endChoose()
-				continue
-			}
-		}
 		id := pick.op
-		st := bestByOp[id]
-		if st == nil {
-			st = &namedPick{}
-			bestByOp[id] = st
+		row := st.bestByOp[id]
+		if row == nil {
+			row = &namedPick{}
+			st.bestByOp[id] = row
 		}
-		if note.elapsed > st.elapsed {
-			st.elapsed = note.elapsed
+		if note.elapsed > row.elapsed {
+			row.elapsed = note.elapsed
 		}
-		if betterPick(pick, st.pick) {
-			st.pick = pick
+		if betterPick(pick, row.pick) {
+			row.pick = pick
 		}
 		s.logCandidate(id, note.elapsed, pick)
-		if pick.scored {
-			recent = append(recent, candResult{name: id.String(), pick: pick})
-			if len(recent) > 12 {
-				recent = recent[len(recent)-12:]
-			}
-			if s.rank != nil {
-				rows := append([]candResult(nil), recent...)
-				sortCandResults(rows)
-				s.rank.show(ctx, rankSummary(rows, beamWidth))
-			}
+		st.recent = append(st.recent, candResult{name: id.String(), pick: pick})
+		if len(st.recent) > 12 {
+			st.recent = st.recent[len(st.recent)-12:]
 		}
-		if !pick.ok {
-			board.endChoose()
+		if s.rank != nil {
+			rows := append([]candResult(nil), st.recent...)
+			sortCandResults(rows)
+			s.rank.show(ctx, rankSummary(rows, beamWidth))
+		}
+		proposals = append(proposals, search.Proposal{
+			Operator: id.String(),
+			Score:    pick.errSum,
+			Paths:    pick.paths,
+			Commands: pick.commands,
+			Keep:     pick.ok,
+		})
+		if !pick.ok || st.stop {
 			continue
 		}
 		s.load(pick.parent)
@@ -312,40 +364,25 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		sn.operator = pick.op
 		sn.lefts = s.watchLeftovers(ctx)
 		if !board.offer(sn) {
-			board.endChoose()
 			continue
 		}
 		jobNote(ctx, archiveLine(board.list()))
-		pool = append(pool, pick)
-		if top, changed := board.takeHead(head); changed {
-			head = top.id
+		st.pool = append(st.pool, pick)
+		if top, changed := board.takeHead(st.head); changed {
+			st.head = top.id
 			s.load(top)
-			rated := collectRated(bestByOp)
-			flushed = len(bestByOp)
+			rated := collectRated(st.bestByOp)
+			st.flushed = len(st.bestByOp)
 			markKept(rated, []formPick{{op: top.operator}})
-			blob, fitted := leftoverView(top, pool)
-			yielded = true
+			blob, fitted := leftoverView(top, st.pool)
+			st.yielded = true
 			if !emit(top.operator, blob, fitted, rated) {
 				board.close()
-				stop = true
-				board.endChoose()
-				continue
+				st.stop = true
 			}
 		}
-		board.endChoose()
 	}
-	if !stop && yielded && len(bestByOp) > flushed {
-		top := board.top()
-		s.load(top)
-		rated := collectRated(bestByOp)
-		markKept(rated, []formPick{{op: top.operator}})
-		blob, fitted := leftoverView(top, pool)
-		emit(top.operator, blob, fitted, rated)
-	}
-	if err := ctx.Err(); err != nil && !yielded {
-		return false, err
-	}
-	return yielded, nil
+	emitFrame(ctx, search.Frame{Beam: beamSlots(board.list()), Proposals: proposals})
 }
 
 func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote) {
@@ -386,13 +423,14 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 	fork.ctx = ctx
 	fork.rank = s.rank
 	fork.candidateLog = s.candidateLog
+	fork.stashOn = true
 	sent := false
 	err := fork.emitKind(kind, parent.lefts, func(p formPick) {
 		p.parent = parent
 		sent = true
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
 		if st != nil {
-			st.Update(pickLine(p))
+			st.Update("proposed")
 		}
 	})
 	if err != nil {
@@ -406,6 +444,38 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		st.Update("waiting")
 	}
 	return false
+}
+
+func beamSlots(list []snapshot) []search.Slot {
+	out := make([]search.Slot, len(list))
+	for i, sn := range list {
+		name := sn.operator.String()
+		if name == "" {
+			name = "plate"
+		}
+		out[i] = search.Slot{Operator: name, Score: sn.errSum, Paths: sn.paths, Commands: sn.commands}
+	}
+	return out
+}
+
+type frameKey struct{}
+
+// WithFrames publishes the beam and the latest scored batch.
+func WithFrames(ctx context.Context, fn func(search.Frame)) context.Context {
+	if ctx == nil || fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, frameKey{}, fn)
+}
+
+func emitFrame(ctx context.Context, frame search.Frame) {
+	if ctx == nil {
+		return
+	}
+	fn, ok := ctx.Value(frameKey{}).(func(search.Frame))
+	if ok && fn != nil {
+		fn(frame)
+	}
 }
 
 func (b *beam) send(ctx context.Context, proposals chan<- agentNote, note agentNote) {

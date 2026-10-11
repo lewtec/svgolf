@@ -489,6 +489,65 @@ func ndScoreImages(ctx context.Context, got, want *image.NRGBA) (float64, bool) 
 	return ndScoreLocked(ctx, ev, got, want, got.Rect, n)
 }
 
+// ndScoreMany packs every rectangle into one kernel. sums[i] is the
+// squared HSV error of gots[i] against want on rects[i]. An empty
+// rectangle sums to 0. ok is false when the device path is closed.
+func ndScoreMany(ctx context.Context, want *image.NRGBA, gots []*image.NRGBA, rects []image.Rectangle) ([]float64, bool) {
+	ev := gpuEvaluator(ctx)
+	if ev == nil || want == nil || len(gots) != len(rects) {
+		return nil, false
+	}
+	ns := make([]int, len(rects))
+	total := 0
+	for i, r := range rects {
+		r = r.Intersect(want.Rect)
+		if gots[i] != nil {
+			r = r.Intersect(gots[i].Rect)
+		}
+		rects[i] = r
+		if r.Empty() || gots[i] == nil {
+			continue
+		}
+		ns[i] = r.Dx() * r.Dy()
+		total += ns[i]
+	}
+	out := make([]float64, len(rects))
+	if total == 0 {
+		return out, true
+	}
+	gpuMu.Lock()
+	defer gpuMu.Unlock()
+	tape, err := gpuTapeFor(total)
+	if err != nil {
+		noteDeviceErr(ctx, err)
+		return nil, false
+	}
+	off := 0
+	for i, r := range rects {
+		if ns[i] == 0 {
+			continue
+		}
+		packImage(tape.got.Buffer()[off*4:], gots[i], r)
+		packImage(tape.want.Buffer()[off*4:], want, r)
+		off += ns[i]
+	}
+	tape.wantPacked = false
+	if _, err := tape.eval(ctx, ev, total); err != nil {
+		noteDeviceErr(ctx, err)
+		return nil, false
+	}
+	off = 0
+	for i, n := range ns {
+		var sum float64
+		for _, v := range tape.dst[off : off+n] {
+			sum += float64(v)
+		}
+		out[i] = sum
+		off += n
+	}
+	return out, true
+}
+
 func ndScoreImageRect(ctx context.Context, got, want *image.NRGBA, r image.Rectangle) (float64, bool) {
 	ev := gpuEvaluator(ctx)
 	if ev == nil || got == nil || want == nil || !got.Rect.Eq(want.Rect) {

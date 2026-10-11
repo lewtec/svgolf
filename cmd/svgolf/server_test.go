@@ -63,8 +63,8 @@ func TestServerJobFromCache(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "20") || !strings.Contains(rec.Body.String(), "12.5") {
 		t.Fatalf("missing score series: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="epochs"`) || !strings.Contains(rec.Body.String(), "<table") {
-		t.Fatalf("missing epochs table: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `id="beam"`) || !strings.Contains(rec.Body.String(), `id="proposals"`) || !strings.Contains(rec.Body.String(), "<table") {
+		t.Fatalf("missing beam and rank tables: %s", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "3 paths") || !strings.Contains(rec.Body.String(), "12 vertices") {
 		t.Fatalf("missing path and vertex counts: %s", rec.Body.String())

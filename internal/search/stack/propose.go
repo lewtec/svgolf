@@ -242,6 +242,19 @@ func proposeOne(oper Operator, emit func(formPick)) error {
 	if stream, ok := oper.(interface{ Stream(func(formPick)) error }); ok {
 		return stream.Stream(emit)
 	}
+	if holder, ok := oper.(interface{ proposeWorld() *world }); ok {
+		if w := holder.proposeWorld(); w != nil && w.stashOn {
+			w.stash = w.stash[:0]
+			if _, err := oper.Run(); err != nil {
+				return err
+			}
+			for _, p := range w.stash {
+				emit(p)
+			}
+			w.stash = w.stash[:0]
+			return nil
+		}
+	}
 	pick, err := oper.Run()
 	if err != nil {
 		return err

@@ -122,6 +122,8 @@ func (o op) Run() (formPick, error) {
 	return im.Run()
 }
 
+func (o op) proposeWorld() *world { return o.world }
+
 // Triangle places one leftover ear.
 type Triangle struct {
 	world *world
@@ -215,6 +217,19 @@ func (o Outline) Run() (formPick, error) {
 	g.fill = modeFill(s.want, g.work)
 	g.ring = ring
 	g = s.seedGrow(g)
+	if s.stashOn {
+		s.markFull = true
+		defer func() { s.markFull = false }()
+		if _, err := s.addLayer(filledPath(ring, g.fill), g, OpOutline); err != nil {
+			return nonePick(), err
+		}
+		if s.paths != 0 && (o.left.paper || paperLeftover(g.fill)) {
+			if _, err := (&Carve{world: s, left: o.left}).Run(); err != nil {
+				return nonePick(), err
+			}
+		}
+		return nonePick(), nil
+	}
 	layer, err := s.addLayer(filledPath(ring, g.fill), g, OpOutline)
 	if err != nil {
 		return nonePick(), err
@@ -321,6 +336,10 @@ func (a *Absorb) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
+		}
 		if betterPick(pick, best) {
 			best = pick
 		}
@@ -360,6 +379,10 @@ func (g *Grow) Run() (formPick, error) {
 		pick, err := s.scoreCand(replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, OpGrow)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -410,6 +433,10 @@ func (c *Carve) Run() (formPick, error) {
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if pick.ok && pick.errSum > s.errSum {
 			pick.ok = false
@@ -475,6 +502,12 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	pick, err := s.scoreCand(next, last, gr, OpCarve)
 	if err != nil {
 		return nonePick(), err
+	}
+	if s.stashOn {
+		pick.reclaims = reclaims
+		pick.replace = -1
+		s.finishPropose(pick)
+		return nonePick(), nil
 	}
 	if pick.ok && pick.errSum > s.errSum {
 		pick.ok = false
@@ -543,6 +576,13 @@ func (s Simplify) Run() (formPick, error) {
 				if err != nil {
 					return nonePick(), err
 				}
+				if w.stashOn {
+					kept := cloneStraightMiss(missed)
+					forgetTouching(kept, key)
+					pick.simplifyMiss = kept
+					w.finishPropose(pick)
+					continue
+				}
 				if !pick.scored {
 					continue
 				}
@@ -608,6 +648,10 @@ func (u Unhole) Run() (formPick, error) {
 			if err != nil {
 				return nonePick(), err
 			}
+			if w.stashOn {
+				w.finishPropose(pick)
+				continue
+			}
 			if pick.ok && pick.errSum > w.errSum {
 				pick.ok = false
 			}
@@ -648,6 +692,10 @@ func (w Wash) Run() (formPick, error) {
 		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpWash)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -740,6 +788,12 @@ func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes 
 		if err != nil {
 			return nonePick(), err
 		}
+		if s.stashOn {
+			pick.mergeJ = jn
+			pick.work = work
+			s.finishPropose(pick)
+			continue
+		}
 		if pick.ok {
 			pick.mergeJ = jn
 			pick.work = work
@@ -826,6 +880,10 @@ func (s Subtract) Run() (formPick, error) {
 		if dropCutter {
 			pick.dropIdx = i
 		}
+		if w.stashOn {
+			w.finishPropose(pick)
+			continue
+		}
 		if betterPick(pick, best) {
 			best = pick
 		}
@@ -847,6 +905,13 @@ func (d Delete) Applies() bool {
 func (d Delete) Run() (formPick, error) {
 	s := d.world
 	next := dropAt(s.doc, d.i+1)
+	if s.stashOn {
+		s.finishPropose(formPick{
+			doc: next, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete,
+			dirty: nodeRect(s.doc.Children()[d.i+1]),
+		})
+		return nonePick(), nil
+	}
 	ngot, err := render.Scratch(next)
 	if err != nil {
 		return nonePick(), err
@@ -927,6 +992,10 @@ func (sl Slide) Run() (formPick, error) {
 	if err != nil {
 		return nonePick(), err
 	}
+	if s.stashOn {
+		s.finishPropose(pick)
+		return nonePick(), nil
+	}
 	return pick, nil
 }
 
@@ -1002,6 +1071,10 @@ func (b Bend) Run() (formPick, error) {
 		if err != nil {
 			return nonePick(), err
 		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
+		}
 		if betterPick(pick, best) {
 			best = pick
 		}
@@ -1024,6 +1097,14 @@ func (sw Swap) Run() (formPick, error) {
 	s := sw.world
 	next, fills, owner, ok := s.swapPaths(sw.i, sw.j)
 	if !ok {
+		return nonePick(), nil
+	}
+	if s.stashOn {
+		s.finishPropose(formPick{
+			doc: next, fills: fills, owner: owner,
+			replace: -1, insert: -1, dropIdx: -1, mergeJ: -1, op: OpSwap,
+			dirty: nodeRect(s.doc.Children()[sw.i+1]).Union(nodeRect(s.doc.Children()[sw.j+1])),
+		})
 		return nonePick(), nil
 	}
 	ngot, err := render.Scratch(next)
