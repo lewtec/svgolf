@@ -32,12 +32,15 @@ v1 ships Dumb via prelude. Run tests with: mise run test`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			search.SetGraphicsProcessor(gpu)
-			cmd.SetContext(search.WithGraphicsProcessor(cmd.Context(), gpu))
+			kind, err := search.ParseProcessor(gpu)
+			if err != nil {
+				return err
+			}
+			search.SetGraphicsProcessor(kind)
+			cmd.SetContext(search.WithGraphicsProcessor(cmd.Context(), kind))
 			if profileDir == "" {
 				return nil
 			}
-			var err error
 			stopProf, err = startProfiles(profileDir)
 			return err
 		},
@@ -49,7 +52,7 @@ v1 ships Dumb via prelude. Run tests with: mise run test`,
 		},
 	}
 	cmd.PersistentFlags().StringVar(&profileDir, "profile", "", "directory to write cpu, heap, allocs, goroutine, mutex, block profiles and an execution trace")
-	cmd.PersistentFlags().StringVar(&gpu, "gpu", "integrated", "graphics processor for Search: integrated (onboard), dedicated, or a driver id such as vulkan:nvidia:dedicated")
+	cmd.PersistentFlags().StringVar(&gpu, "gpu", search.ProcessorIntegrated.String(), "graphics processor for Search: integrated (onboard), dedicated, virtual, software, or other")
 	cmd.AddCommand(newRenderCmd())
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newVectorizeCmd())

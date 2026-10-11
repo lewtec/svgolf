@@ -2,50 +2,90 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
-// The onboard graphics processor is the default. The dedicated card is an option.
-const defaultGraphicsProcessor = "integrated"
+// Processor is the kind of graphics processor Search should use.
+// The zero value is the onboard processor. String tokens match cmd.EnumArg.
+type Processor uint8
+
+const (
+	ProcessorIntegrated Processor = iota
+	ProcessorDedicated
+	ProcessorVirtual
+	ProcessorSoftware
+	ProcessorOther
+)
+
+func (p Processor) String() string {
+	switch p {
+	case ProcessorDedicated:
+		return "dedicated"
+	case ProcessorVirtual:
+		return "virtual"
+	case ProcessorSoftware:
+		return "software"
+	case ProcessorOther:
+		return "other"
+	default:
+		return "integrated"
+	}
+}
+
+// Values lists the processors cmd.EnumArg accepts.
+func (Processor) Values() []Processor {
+	return []Processor{
+		ProcessorIntegrated,
+		ProcessorDedicated,
+		ProcessorVirtual,
+		ProcessorSoftware,
+		ProcessorOther,
+	}
+}
+
+// ParseProcessor maps a String token. Unknown tokens are an error.
+func ParseProcessor(name string) (Processor, error) {
+	var zero Processor
+	for _, v := range zero.Values() {
+		if v.String() == name {
+			return v, nil
+		}
+	}
+	return ProcessorIntegrated, fmt.Errorf("graphics processor %q", name)
+}
 
 type processorKey struct{}
 
 var (
 	processorMu   sync.Mutex
-	processorName = defaultGraphicsProcessor
+	processorKind = ProcessorIntegrated
 )
 
 // SetGraphicsProcessor chooses the processor for searches that do not carry one
-// on their context. Empty means the onboard processor. Names are integrated,
-// dedicated, software, virtual, other, or a driver id such as vulkan:nvidia:dedicated.
-func SetGraphicsProcessor(name string) {
-	if name == "" {
-		name = defaultGraphicsProcessor
-	}
+// on their context.
+func SetGraphicsProcessor(kind Processor) {
 	processorMu.Lock()
-	processorName = name
+	processorKind = kind
 	processorMu.Unlock()
 }
 
 // WithGraphicsProcessor returns a context that names the processor for Search.
-func WithGraphicsProcessor(ctx context.Context, name string) context.Context {
+func WithGraphicsProcessor(ctx context.Context, kind Processor) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if name == "" {
-		name = defaultGraphicsProcessor
-	}
-	return context.WithValue(ctx, processorKey{}, name)
+	return context.WithValue(ctx, processorKey{}, kind)
 }
 
 // GraphicsProcessor is the processor named on ctx, or the process default.
-func GraphicsProcessor(ctx context.Context) string {
+func GraphicsProcessor(ctx context.Context) Processor {
 	if ctx != nil {
-		if name, ok := ctx.Value(processorKey{}).(string); ok && name != "" {
-			return name
+		if kind, ok := ctx.Value(processorKey{}).(Processor); ok {
+			return kind
 		}
 	}
 	processorMu.Lock()
 	defer processorMu.Unlock()
-	return processorName
+	return processorKind
 }

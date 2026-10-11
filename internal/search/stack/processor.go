@@ -13,37 +13,24 @@ import (
 	"github.com/lewtec/svgolf/internal/search"
 )
 
-// chooseProcessor picks a Vulkan device. choice is a device type or a driver id.
-// integrated is the onboard processor. When that type is absent, the highest-weight
-// non-software device is used so a machine with one graphics processor still runs.
-// An explicit type or id that is not listed is an error.
-func chooseProcessor(handles []driver.Handle[drvvulkan.Device], choice string) (driver.Handle[drvvulkan.Device], error) {
-	if choice == "" {
-		choice = "integrated"
-	}
-	for _, handle := range handles {
-		if handle.ID == choice {
-			return handle, nil
-		}
-	}
-	kind, err := drvvulkan.ParseDeviceType(choice)
-	if err != nil {
-		return driver.Handle[drvvulkan.Device]{}, fmt.Errorf("graphics processor %q: %w", choice, err)
-	}
-	choice = kind.String()
+// chooseProcessor picks a Vulkan device of kind. ProcessorIntegrated is the
+// onboard processor. When that type is absent, the highest-weight non-software
+// device is used so a machine with one graphics processor still runs.
+// An explicit type that is not listed is an error.
+func chooseProcessor(handles []driver.Handle[drvvulkan.Device], kind search.Processor) (driver.Handle[drvvulkan.Device], error) {
 	var matches []driver.Handle[drvvulkan.Device]
 	for _, handle := range handles {
-		if processorType(handle.ID) == choice {
+		if processorType(handle.ID) == kind {
 			matches = append(matches, handle)
 		}
 	}
 	if len(matches) > 0 {
 		return highestWeight(matches), nil
 	}
-	if choice == "integrated" {
+	if kind == search.ProcessorIntegrated {
 		var rest []driver.Handle[drvvulkan.Device]
 		for _, handle := range handles {
-			if processorType(handle.ID) == "software" {
+			if processorType(handle.ID) == search.ProcessorSoftware {
 				continue
 			}
 			rest = append(rest, handle)
@@ -52,15 +39,19 @@ func chooseProcessor(handles []driver.Handle[drvvulkan.Device], choice string) (
 			return highestWeight(rest), nil
 		}
 	}
-	return driver.Handle[drvvulkan.Device]{}, fmt.Errorf("no %s graphics processor", choice)
+	return driver.Handle[drvvulkan.Device]{}, fmt.Errorf("no %s graphics processor", kind)
 }
 
-func processorType(id string) string {
+func processorType(id string) search.Processor {
 	parts := strings.Split(id, ":")
 	if len(parts) < 3 {
-		return ""
+		return search.ProcessorOther
 	}
-	return parts[2]
+	kind, err := search.ParseProcessor(parts[2])
+	if err != nil {
+		return search.ProcessorOther
+	}
+	return kind
 }
 
 func highestWeight(handles []driver.Handle[drvvulkan.Device]) driver.Handle[drvvulkan.Device] {
@@ -75,7 +66,7 @@ func highestWeight(handles []driver.Handle[drvvulkan.Device]) driver.Handle[drvv
 
 var (
 	evalMu    sync.Mutex
-	evalCache = map[string]ndarray.Evaluator{}
+	evalCache = map[search.Processor]ndarray.Evaluator{}
 )
 
 func openEvaluator(ctx context.Context) (ndarray.Evaluator, error) {
