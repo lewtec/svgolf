@@ -32,6 +32,7 @@ type beam struct {
 	closed  bool
 	head    int
 	trying  map[int]map[straightKey]struct{}
+	seen    map[Op]map[int]map[uint64]struct{}
 }
 
 func newBeam(first snapshot) *beam {
@@ -40,6 +41,7 @@ func newBeam(first snapshot) *beam {
 		served: map[Op]map[int]bool{},
 		busy:   map[int]int{},
 		trying: map[int]map[straightKey]struct{}{},
+		seen:   map[Op]map[int]map[uint64]struct{}{},
 		head:   first.id,
 	}
 	b.cond = sync.NewCond(&b.mu)
@@ -99,6 +101,24 @@ func (b *beam) finish(op Op, id int) {
 	}
 	b.mu.Unlock()
 	b.cond.Broadcast()
+}
+
+// remember reports whether this operator has already proposed this
+// document for this corpus entry. A repeat is not sent again.
+func (b *beam) remember(op Op, id int, key uint64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.seen[op] == nil {
+		b.seen[op] = map[int]map[uint64]struct{}{}
+	}
+	if b.seen[op][id] == nil {
+		b.seen[op][id] = map[uint64]struct{}{}
+	}
+	if _, ok := b.seen[op][id][key]; ok {
+		return false
+	}
+	b.seen[op][id][key] = struct{}{}
+	return true
 }
 
 func (b *beam) abandon(id int) {
@@ -371,7 +391,7 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	}()
 	for _, kind := range agentKinds() {
 		copies := 1
-		if kind == OpSimplify {
+		if kind == OpSimplify || fuzzKind(kind) {
 			copies = beamWidth
 		}
 		for range copies {
@@ -831,7 +851,14 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 	if kind == OpSimplify {
 		return s.fuzzSimplifyParent(ctx, st, board, parent, proposals)
 	}
-	defer board.finish(kind, parent.id)
+	again := false
+	defer func() {
+		if again {
+			board.abandon(parent.id)
+			return
+		}
+		board.finish(kind, parent.id)
+	}()
 	if st != nil {
 		st.Update("running")
 	}
@@ -840,17 +867,33 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 	fork.rank = s.rank
 	fork.candidateLog = s.candidateLog
 	fork.stashOn = true
+	fork.oneShot = fuzzKind(kind)
 	var sent atomic.Bool
 	send := func(p formPick) {
 		if ctx.Err() != nil {
 			return
 		}
+		if !board.remember(kind, parent.id, docKey(p.doc)) {
+			return
+		}
 		p.parent = parent
+		fork.gotNovel = true
 		sent.Store(true)
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
 	}
 	fork.emitNow = send
-	err := fork.emitKind(ctx, kind, parent.lefts, send)
+	tries := 1
+	switch kind {
+	case OpSwap, OpDelete, OpSlide, OpBend:
+		tries = 8
+	}
+	var err error
+	for range tries {
+		err = fork.emitKind(ctx, kind, parent.lefts, send)
+		if err != nil || sent.Load() {
+			break
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return true
@@ -861,6 +904,9 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		board.send(ctx, proposals, agentNote{err: err})
 		return true
 	}
+	if fuzzKind(kind) && sent.Load() {
+		again = true
+	}
 	if st != nil {
 		if sent.Load() {
 			st.Update("proposed")
@@ -869,6 +915,16 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		}
 	}
 	return false
+}
+
+func fuzzKind(kind Op) bool {
+	switch kind {
+	case OpSuggest, OpSquash, OpSpline, OpSwap, OpDelete, OpSlide, OpBend,
+		OpWash, OpJoin, OpSubtract, OpUnhole:
+		return true
+	default:
+		return false
+	}
 }
 
 func beamSlots(list []snapshot) []search.Slot {

@@ -21,6 +21,21 @@ func TestBeamSlotCountsVertices(t *testing.T) {
 	require.Equal(t, "triangle", slots[0].Operator)
 }
 
+func TestFuzzSwapDoesNotRepeatTheSamePair(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	doc := svg.NewDocument(8, 8).WithViewBox(0, 0, 8, 8)
+	doc = doc.Append(whitePane(8, 8).Node())
+	doc = doc.Append(filledPath([][2]float64{{0, 0}, {4, 0}, {4, 4}}, red).Node())
+	doc = doc.Append(filledPath([][2]float64{{4, 4}, {8, 4}, {8, 8}}, red).Node())
+	s := &world{doc: doc, paths: 2, w: 8, h: 8, fills: []color.NRGBA{red, red}}
+	parent := s.snap()
+	board := newBeam(parent)
+	ch := make(chan agentNote, 4)
+	require.False(t, s.proposeParent(t.Context(), nil, board, OpSwap, parent, ch))
+	require.False(t, s.proposeParent(t.Context(), nil, board, OpSwap, parent, ch))
+	require.Len(t, ch, 1)
+}
+
 func TestRunAgentsStopsWhenContextIsCancelled(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 4; y < 12; y++ {

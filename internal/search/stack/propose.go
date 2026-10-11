@@ -77,6 +77,21 @@ func (g Suggest) Stream(ctx context.Context, emit func(formPick)) error {
 				dropIdx: -1, mergeJ: -1, insert: -1, op: OpSuggest,
 				dirty: nodeRect(node),
 			})
+			if s.oneShot && s.gotNovel {
+				return nil
+			}
+		}
+		return nil
+	}
+	if s.oneShot {
+		order := rand.Perm(s.paths)
+		for _, i := range order {
+			if s.gotNovel {
+				return nil
+			}
+			if err := one(ctx, i); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -149,6 +164,21 @@ func (q Squash) Stream(ctx context.Context, emit func(formPick)) error {
 				doc: next, replace: i, mergeJ: j, work: work, fill: choice.solid,
 				dropIdx: -1, insert: -1, op: OpSquash, dirty: dirty,
 			})
+			if s.oneShot && s.gotNovel {
+				return nil
+			}
+		}
+		return nil
+	}
+	if s.oneShot {
+		rand.Shuffle(len(pairs), func(a, b int) { pairs[a], pairs[b] = pairs[b], pairs[a] })
+		for k := range pairs {
+			if s.gotNovel {
+				return nil
+			}
+			if err := one(ctx, k); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -206,12 +236,30 @@ func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 					continue
 				}
 				sp.emitRing(emit, s, i, node, rings, ri, ring.replaceSpan(span.from, span.to, cmds), work)
+				if s.oneShot && s.gotNovel {
+					return nil
+				}
 				if far, ok := farthestOnSpan(ring.verts, span.from, span.to); ok {
 					split := splitCommands(ring.verts, span.from, far, span.to)
 					if len(split) == 2 {
 						sp.emitRing(emit, s, i, node, rings, ri, ring.replaceSpan(span.from, span.to, split), work)
+						if s.oneShot && s.gotNovel {
+							return nil
+						}
 					}
 				}
+			}
+		}
+		return nil
+	}
+	if s.oneShot {
+		order := rand.Perm(s.paths)
+		for _, i := range order {
+			if s.gotNovel {
+				return nil
+			}
+			if err := one(ctx, i); err != nil {
+				return err
 			}
 		}
 		return nil

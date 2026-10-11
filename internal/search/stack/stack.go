@@ -92,6 +92,9 @@ type world struct {
 	// emitNow hands a proposition to the painters immediately.
 	// The operator can keep generating on the other cores.
 	emitNow func(formPick)
+	// oneShot asks a stream to stop after the first new proposal.
+	oneShot  bool
+	gotNovel bool
 }
 
 var candidateLog io.Writer
@@ -1330,6 +1333,42 @@ func pathCommandWeight(n svg.Node) int {
 		w++
 	}
 	return w
+}
+
+func docKey(d svg.Document) uint64 {
+	var h uint64 = 14695981039346656037
+	mix := func(x uint64) {
+		h ^= x
+		h *= 1099511628211
+	}
+	for _, child := range d.Children() {
+		p, ok := child.Path()
+		if !ok {
+			continue
+		}
+		if col, ok := p.Fill(); ok {
+			mix(uint64(col.R) | uint64(col.G)<<8 | uint64(col.B)<<16 | uint64(col.A)<<24)
+		}
+		if g, ok := p.LinearFill(); ok {
+			mix(math.Float64bits(g.X1()))
+			mix(math.Float64bits(g.Y1()))
+			mix(math.Float64bits(g.X2()))
+			mix(math.Float64bits(g.Y2()))
+			c0, c1 := g.C0(), g.C1()
+			mix(uint64(c0.R) | uint64(c0.G)<<8 | uint64(c0.B)<<16)
+			mix(uint64(c1.R) | uint64(c1.G)<<8 | uint64(c1.B)<<16)
+		}
+		for _, c := range p.Commands() {
+			mix(uint64(c.Kind))
+			mix(math.Float64bits(c.X))
+			mix(math.Float64bits(c.Y))
+			mix(math.Float64bits(c.X1))
+			mix(math.Float64bits(c.Y1))
+			mix(math.Float64bits(c.X2))
+			mix(math.Float64bits(c.Y2))
+		}
+	}
+	return h
 }
 
 func docVertices(d svg.Document) int {
