@@ -4,6 +4,9 @@ import (
 	"image"
 	"image/color"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -304,6 +307,37 @@ func TestForgetTouchingKeepsDistantTriple(t *testing.T) {
 	if _, ok := miss[near]; ok {
 		t.Fatal("the dropped triple stayed remembered")
 	}
+}
+
+func TestSimplifyWindowSkipsRefusedVertices(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	ring := [][2]float64{{0, 0}, {2, 0}, {4, 0}, {6, 0}, {8, 0}, {8, 8}, {0, 8}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(ring, red).Node())
+	s := &world{
+		doc:   doc,
+		fills: []color.NRGBA{red},
+		paths: 1,
+		w:     16,
+		h:     16,
+	}
+	parent := s.snap()
+	board := newBeam(parent)
+	proposals := make(chan agentNote, 32)
+	go func() {
+		for note := range proposals {
+			if note.verdict != nil {
+				note.verdict <- false
+			}
+		}
+	}()
+	sent, err := s.simplifyWindows(t.Context(), board, parent, proposals, time.Now())
+	require.NoError(t, err)
+	require.NotZero(t, sent)
+	again := board.list()[0].fork(nil, nil, 16, 16)
+	sent, err = again.simplifyWindows(t.Context(), board, board.list()[0], proposals, time.Now())
+	require.NoError(t, err)
+	require.Zero(t, sent)
 }
 
 func TestSimplifySkipsRememberedTriple(t *testing.T) {

@@ -548,6 +548,141 @@ func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
 
+func (w *world) simplifyWindows(ctx context.Context, board *beam, parent snapshot, proposals chan<- agentNote, started time.Time) (int, error) {
+	buckets := fillBuckets(w.owner, w.w, w.paths, nil)
+	missed := cloneStraightMiss(w.simplifyMiss)
+	if missed == nil {
+		missed = map[straightKey]struct{}{}
+	}
+	sent := 0
+	for {
+		if err := live(ctx); err != nil {
+			return sent, err
+		}
+		tasks := w.straightTasks(buckets, missed)
+		if len(tasks) == 0 {
+			return sent, nil
+		}
+		n := simplifyWindow
+		if n > len(tasks) {
+			n = len(tasks)
+		}
+		picks := make([]formPick, n)
+		if err := parallelEach(ctx, n, func(ctx context.Context, i int) error {
+			picks[i] = w.simplifyPick(buckets, tasks[i], missed)
+			return nil
+		}); err != nil {
+			return sent, err
+		}
+		type pending struct {
+			key straightKey
+			ch  chan bool
+		}
+		var wait []pending
+		for i := range n {
+			key := tasks[i].key
+			if picks[i].doc.Width() == 0 {
+				missed[key] = struct{}{}
+				continue
+			}
+			picks[i].parent = parent
+			ch := make(chan bool, 1)
+			board.send(ctx, proposals, agentNote{
+				pick:    picks[i],
+				elapsed: time.Since(started),
+				verdict: ch,
+			})
+			sent++
+			wait = append(wait, pending{key: key, ch: ch})
+		}
+		for _, item := range wait {
+			select {
+			case <-ctx.Done():
+				return sent, ctx.Err()
+			case ok := <-item.ch:
+				if !ok {
+					missed[item.key] = struct{}{}
+				} else {
+					missed[item.key] = struct{}{}
+				}
+			}
+		}
+		keys := make([]straightKey, 0, len(missed))
+		for key := range missed {
+			keys = append(keys, key)
+		}
+		board.noteMiss(keys...)
+	}
+}
+
+type straightTask struct {
+	key    straightKey
+	i, ri  int
+	v      int
+	rings  []pathRing
+	lin    svg.LinearFill
+	hasLin bool
+}
+
+func (w *world) straightTasks(buckets [][]pix, missed map[straightKey]struct{}) []straightTask {
+	var tasks []straightTask
+	for i := 0; i < w.paths; i++ {
+		node := w.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			for v := 0; v < len(ring.verts); v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				key := ringStraightKey(ring, v)
+				if _, seen := missed[key]; seen {
+					continue
+				}
+				tasks = append(tasks, straightTask{
+					key: key, i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin,
+				})
+			}
+		}
+	}
+	_ = buckets
+	return tasks
+}
+
+func (w *world) simplifyPick(buckets [][]pix, t straightTask, missed map[straightKey]struct{}) formPick {
+	ring := t.rings[t.ri]
+	moved := ring.dropVertex(t.v)
+	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+		return nonePick()
+	}
+	nextRings := append([]pathRing{}, t.rings...)
+	nextRings[t.ri] = moved
+	cand := filledRings(nextRings[0], nextRings[1:], w.fills[t.i])
+	if t.hasLin {
+		cand = cand.WithLinearFill(t.lin)
+	}
+	var work []pix
+	if t.i < len(buckets) {
+		work = buckets[t.i]
+	}
+	g := w.seedGrow(grow{i: t.i, work: work, fill: w.fills[t.i]})
+	g.dirty0 = t.key.scoreRect()
+	pick := w.draft(replaceAt(w.doc, t.i+1, cand.Node()), cand.Node(), g, OpSimplify)
+	if pick.doc.Width() == 0 {
+		return nonePick()
+	}
+	kept := cloneStraightMiss(missed)
+	forgetTouching(kept, t.key)
+	pick.simplifyMiss = kept
+	pick.hasStraight = true
+	pick.straightMiss = t.key
+	return pick
+}
+
 func (w *world) fanSimplify(ctx context.Context, buckets [][]pix) error {
 	missed := w.simplifyMiss
 	type task struct {

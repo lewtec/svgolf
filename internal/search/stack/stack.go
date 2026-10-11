@@ -149,6 +149,8 @@ type formPick struct {
 	parent       snapshot
 	dirty        image.Rectangle
 	simplifyMiss map[straightKey]struct{}
+	hasStraight  bool
+	straightMiss straightKey
 }
 
 type snapshot struct {
@@ -606,10 +608,10 @@ func (s *world) apply(pick formPick) {
 		s.fills = append(s.fills, pick.fill)
 		s.paths++
 	}
-	if pick.op == OpSimplify {
+	if pick.op == OpSimplify && pick.simplifyMiss != nil {
 		s.simplifyMiss = pick.simplifyMiss
-	} else {
-		s.simplifyMiss = nil
+	} else if !pick.dirty.Empty() {
+		forgetRect(s.simplifyMiss, pick.dirty)
 	}
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
@@ -1451,10 +1453,14 @@ func cloneStraightMiss(in map[straightKey]struct{}) map[straightKey]struct{} {
 // the drop. Pixels outside that rect are unchanged, so a triple
 // that missed there still misses.
 func forgetTouching(miss map[straightKey]struct{}, dropped straightKey) {
-	if len(miss) == 0 {
+	forgetRect(miss, dropped.scoreRect())
+}
+
+func forgetRect(miss map[straightKey]struct{}, dirty image.Rectangle) {
+	if len(miss) == 0 || dirty.Empty() {
 		return
 	}
-	zone := dropped.scoreRect().Inset(-2)
+	zone := dirty.Inset(-2)
 	for k := range miss {
 		if k.scoreRect().Inset(-2).Overlaps(zone) {
 			delete(miss, k)

@@ -99,6 +99,24 @@ func (b *beam) finish(op Op, id int) {
 	b.cond.Broadcast()
 }
 
+func (b *beam) noteMiss(keys ...straightKey) {
+	if len(keys) == 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for i := range b.best {
+		miss := cloneStraightMiss(b.best[i].simplifyMiss)
+		if miss == nil {
+			miss = map[straightKey]struct{}{}
+		}
+		for _, key := range keys {
+			miss[key] = struct{}{}
+		}
+		b.best[i].simplifyMiss = miss
+	}
+}
+
 func (b *beam) offer(sn snapshot) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -204,16 +222,17 @@ func (b *beam) close() {
 
 func (sn snapshot) fork(want *image.NRGBA, wantP *loss.Plane, w, h int) *world {
 	s := &world{
-		want:   want,
-		wantP:  wantP,
-		got:    sn.got,
-		doc:    sn.doc,
-		fills:  append([]color.NRGBA(nil), sn.fills...),
-		owner:  append([]uint16(nil), sn.owner...),
-		errSum: sn.errSum,
-		paths:  sn.paths,
-		w:      w,
-		h:      h,
+		want:         want,
+		wantP:        wantP,
+		got:          sn.got,
+		doc:          sn.doc,
+		fills:        append([]color.NRGBA(nil), sn.fills...),
+		owner:        append([]uint16(nil), sn.owner...),
+		errSum:       sn.errSum,
+		paths:        sn.paths,
+		w:            w,
+		h:            h,
+		simplifyMiss: cloneStraightMiss(sn.simplifyMiss),
 	}
 	if sn.got != nil {
 		s.gotP = loss.NewPlane(sn.got)
@@ -226,6 +245,7 @@ type agentNote struct {
 	pick    formPick
 	err     error
 	elapsed time.Duration
+	verdict chan bool
 }
 
 // proposalBuffer is the queue between proposers and the painters.
@@ -235,6 +255,10 @@ const (
 	proposalBuffer = 1024
 	proposalBatch  = 32
 	renderAhead    = proposalBatch
+	// simplifyWindow is how many straight vertices one simplify worker
+	// hands the ranker before it waits for the decisions. The rest stay
+	// unsent, so a long run of refusals does not fill the queue.
+	simplifyWindow = 8
 )
 
 type pixmapNote struct {
@@ -269,7 +293,13 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		painters.Wait()
 	}()
 	for _, kind := range agentKinds() {
-		s.startProposer(ctx, &proposers, board, kind, proposals)
+		copies := 1
+		if kind == OpSimplify {
+			copies = beamWidth
+		}
+		for range copies {
+			s.startProposer(ctx, &proposers, board, kind, proposals)
+		}
 	}
 	go func() {
 		proposers.Wait()
@@ -297,6 +327,33 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	}()
 loop:
 	for {
+		for {
+			select {
+			case kept := <-ready:
+				s.foldKept(ctx, board, &st, &fold, &inFlight, kept, emit)
+				if st.stop {
+					board.close()
+					break loop
+				}
+			default:
+				goto take
+			}
+		}
+	take:
+		if inFlight >= simplifyWindow {
+			select {
+			case <-ctx.Done():
+				board.close()
+				break loop
+			case kept := <-ready:
+				s.foldKept(ctx, board, &st, &fold, &inFlight, kept, emit)
+				if st.stop {
+					board.close()
+					break loop
+				}
+			}
+			continue
+		}
 		var painted pixmapNote
 		var kept pendingKeep
 		var ok bool
@@ -455,13 +512,19 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 	queued := 0
 	proposals := make([]search.Proposal, 0, len(scored))
 	for i, pick := range scored {
+		note := notes[i]
 		if ctx.Err() != nil {
+			replyVerdict(note, false)
 			return queued
 		}
-		note := notes[i]
 		if !pick.scored {
+			replyVerdict(note, false)
 			continue
 		}
+		if pick.hasStraight && !pick.ok {
+			board.noteMiss(pick.straightMiss)
+		}
+		replyVerdict(note, pick.ok)
 		id := pick.op
 		row := st.bestByOp[id]
 		if row == nil {
@@ -515,6 +578,16 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 	st.shown = proposals
 	s.publishRank(ctx, board, st, proposals)
 	return queued
+}
+
+func replyVerdict(note agentNote, ok bool) {
+	if note.verdict == nil {
+		return
+	}
+	select {
+	case note.verdict <- ok:
+	default:
+	}
 }
 
 func (s *world) fillKeep(ctx context.Context, ready chan<- pendingKeep, item pendingKeep) {
@@ -663,6 +736,30 @@ func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *
 		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
 	}
 	fork.emitNow = send
+	if kind == OpSimplify {
+		sentCount, err := fork.simplifyWindows(ctx, board, parent, proposals, started)
+		if sentCount > 0 {
+			sent.Store(true)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return true
+			}
+			if st != nil {
+				st.Update(err.Error())
+			}
+			board.send(ctx, proposals, agentNote{err: err})
+			return true
+		}
+		if st != nil {
+			if sent.Load() {
+				st.Update("proposed")
+			} else {
+				st.Update("waiting")
+			}
+		}
+		return false
+	}
 	err := fork.emitKind(ctx, kind, parent.lefts, send)
 	if err != nil {
 		if ctx.Err() != nil {
