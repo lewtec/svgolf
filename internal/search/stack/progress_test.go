@@ -60,12 +60,31 @@ func TestSearchProgressShowsRank(t *testing.T) {
 			var lines []string
 			for time.Now().Before(deadline) {
 				lines = nil
-				for _, n := range sess.List(64) {
+				var job taskgroup.ID
+				var jobMsg string
+				var rankParent taskgroup.ID
+				rank := ""
+				proposers := 0
+				nodes := sess.List(64)
+				for _, n := range nodes {
 					lines = append(lines, n.Name+": "+n.Message)
-					if n.Name == "rank" && strings.Contains(n.Message, "#1") {
-						found <- n.Message
-						return nil
+					if n.Name == "job" {
+						job = n.ID
+						jobMsg = n.Message
 					}
+				}
+				for _, n := range nodes {
+					if n.Name == "rank" && strings.Contains(n.Message, "#1") {
+						rank = n.Message
+						rankParent = n.Parent
+					}
+					if job != 0 && n.Parent == job && n.Name != "rank" && n.Name != "leftovers" {
+						proposers++
+					}
+				}
+				if rank != "" && rankParent == job && proposers >= 2 && strings.Contains(jobMsg, "/") {
+					found <- rank
+					return nil
 				}
 				time.Sleep(time.Millisecond)
 			}

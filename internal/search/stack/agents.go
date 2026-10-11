@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"runtime"
 	"sync"
 	"time"
 
@@ -20,22 +19,15 @@ import (
 // beam is the chooser's list of the best documents. Proposers read it and
 // claim the parent that currently has the fewest proposers working on it.
 type beam struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	best     []snapshot
-	served   map[Op]map[int]bool
-	busy     map[int]int
-	queue    []agentTask
-	inflight int
-	pending  int
-	holding  int
-	closed   bool
-	head     int
-}
-
-type agentTask struct {
-	kind   Op
-	parent snapshot
+	mu      sync.Mutex
+	cond    *sync.Cond
+	best    []snapshot
+	served  map[Op]map[int]bool
+	busy    map[int]int
+	pending int
+	holding int
+	closed  bool
+	head    int
 }
 
 func newBeam(first snapshot) *beam {
@@ -181,49 +173,8 @@ func (b *beam) endChoose() {
 	b.cond.Broadcast()
 }
 
-func (b *beam) schedule(sn snapshot) {
-	b.mu.Lock()
-	for _, kind := range agentKinds() {
-		if b.served[kind] != nil && b.served[kind][sn.id] {
-			continue
-		}
-		b.queue = append(b.queue, agentTask{kind: kind, parent: sn})
-	}
-	b.mu.Unlock()
-	b.cond.Broadcast()
-}
-
-func (b *beam) takeTask() (agentTask, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for {
-		if b.closed && len(b.queue) == 0 {
-			return agentTask{}, false
-		}
-		if len(b.queue) > 0 {
-			task := b.queue[0]
-			b.queue = b.queue[1:]
-			b.inflight++
-			return task, true
-		}
-		if b.quiescent() {
-			return agentTask{}, false
-		}
-		b.cond.Wait()
-	}
-}
-
-func (b *beam) taskDone() {
-	b.mu.Lock()
-	if b.inflight > 0 {
-		b.inflight--
-	}
-	b.mu.Unlock()
-	b.cond.Broadcast()
-}
-
 func (b *beam) quiescent() bool {
-	if b.pending > 0 || b.holding > 0 || b.inflight > 0 || len(b.queue) > 0 {
+	if b.pending > 0 || b.holding > 0 {
 		return false
 	}
 	for _, n := range b.busy {
@@ -274,75 +225,20 @@ type agentNote struct {
 	elapsed time.Duration
 }
 
-// runAgents starts one goroutine per proposer. Each reads the beam, claims the
-// least-busy parent it has not served, and sends proposals to the chooser.
-// The chooser scores an unscored proposal and offers it back when it stays in
-// the best beamWidth documents. Worker slots leave one processor for the chooser
-// so scoring does not deadlock the render pool.
+// runAgents starts one proposer per operator. Each proposer claims the
+// least-busy parent it has not served and sends proposals on the channel.
+// This goroutine is the only consumer: it scores, keeps the beam, and the
+// proposers claim any parent that offer publishes.
 func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []search.Rated) bool) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	first := s.snap()
 	first.lefts = s.watchLeftovers(ctx)
 	board := newBeam(first)
-	board.schedule(first)
-	jobs := make(chan agentTask)
-	proposals := make(chan agentNote)
+	proposals := make(chan agentNote, 64)
 	var wg sync.WaitGroup
-	workers := runtime.GOMAXPROCS(0) - 1
-	if workers < 1 {
-		workers = 1
-	}
-	go func() {
-		defer close(jobs)
-		for {
-			task, ok := board.takeTask()
-			if !ok {
-				return
-			}
-			select {
-			case <-ctx.Done():
-				board.taskDone()
-				board.close()
-				return
-			case jobs <- task:
-			}
-		}
-	}()
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for task := range jobs {
-				started := time.Now()
-				fork := task.parent.fork(s.want, s.wantP, s.w, s.h)
-				fork.ctx = ctx
-				fork.rank = s.rank
-				fork.candidateLog = s.candidateLog
-				jobNote(ctx, task.kind.String())
-				err := fork.emitKind(task.kind, task.parent.lefts, func(p formPick) {
-					p.parent = task.parent
-					note := agentNote{pick: p, elapsed: time.Since(started)}
-					board.account(1)
-					select {
-					case <-ctx.Done():
-						board.account(-1)
-					case proposals <- note:
-					}
-				})
-				board.finish(task.kind, task.parent.id)
-				board.taskDone()
-				if err != nil {
-					board.account(1)
-					select {
-					case <-ctx.Done():
-						board.account(-1)
-					case proposals <- agentNote{err: err}:
-					}
-					return
-				}
-			}
-		}()
+	for _, kind := range agentKinds() {
+		s.startProposer(ctx, &wg, board, kind, proposals)
 	}
 	go func() {
 		wg.Wait()
@@ -415,12 +311,11 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		sn := s.snap()
 		sn.operator = pick.op
 		sn.lefts = s.watchLeftovers(ctx)
-		jobNote(ctx, fmt.Sprintf("%s · %s", pick.op, archiveLine(board.list())))
 		if !board.offer(sn) {
 			board.endChoose()
 			continue
 		}
-		board.schedule(sn)
+		jobNote(ctx, archiveLine(board.list()))
 		pool = append(pool, pick)
 		if top, changed := board.takeHead(head); changed {
 			head = top.id
@@ -451,6 +346,75 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		return false, err
 	}
 	return yielded, nil
+}
+
+func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// The task row stays open for the whole claim loop. The work runs on
+		// this goroutine, so a proposer waiting for a parent does not occupy
+		// a CPU slot and the row remains a sibling of rank under the job.
+		watchStep(ctx, kind.String(), func(st *taskgroup.Status) {
+			if st != nil {
+				st.Progress(0, -1)
+				st.Update("waiting")
+			}
+			for {
+				if ctx.Err() != nil {
+					return
+				}
+				parent, ok := board.claim(kind)
+				if !ok {
+					return
+				}
+				if s.proposeParent(ctx, st, board, kind, parent, proposals) {
+					return
+				}
+			}
+		})
+	}()
+}
+
+func (s *world) proposeParent(ctx context.Context, st *taskgroup.Status, board *beam, kind Op, parent snapshot, proposals chan<- agentNote) (stop bool) {
+	defer board.finish(kind, parent.id)
+	if st != nil {
+		st.Update("running")
+	}
+	started := time.Now()
+	fork := parent.fork(s.want, s.wantP, s.w, s.h)
+	fork.ctx = ctx
+	fork.rank = s.rank
+	fork.candidateLog = s.candidateLog
+	sent := false
+	err := fork.emitKind(kind, parent.lefts, func(p formPick) {
+		p.parent = parent
+		sent = true
+		board.send(ctx, proposals, agentNote{pick: p, elapsed: time.Since(started)})
+		if st != nil {
+			st.Update(pickLine(p))
+		}
+	})
+	if err != nil {
+		if st != nil {
+			st.Update(err.Error())
+		}
+		board.send(ctx, proposals, agentNote{err: err})
+		return true
+	}
+	if st != nil && !sent {
+		st.Update("waiting")
+	}
+	return false
+}
+
+func (b *beam) send(ctx context.Context, proposals chan<- agentNote, note agentNote) {
+	b.account(1)
+	select {
+	case <-ctx.Done():
+		b.account(-1)
+	case proposals <- note:
+	}
 }
 
 func (s *world) watchLeftovers(ctx context.Context) []leftover {
