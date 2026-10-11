@@ -9,10 +9,12 @@ import (
 )
 
 // maxDevicePixels is the most pixels one score kernel may read.
-// The loss is a sum of per-pixel terms, so a larger rectangle is several
-// row bands and the bands add. Device buffers only grow, so this cap is
-// also the resident size of the tape.
-const maxDevicePixels = 1 << 20
+// A launch is mostly waiting on the device to start, so a kernel should
+// hold several full frames. The loss is a sum of per-pixel terms, so a
+// larger rectangle is row bands and the bands add. Device buffers only
+// grow, and this cap is the resident size: 8<<20 pixels is about 96MB
+// for the packed images and the error buffer.
+const maxDevicePixels = 8 << 20
 
 // splitRows cuts r into row bands of at most limit pixels. A row wider
 // than limit stays one band; the caller scores that band without the device.

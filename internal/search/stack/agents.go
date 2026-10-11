@@ -278,7 +278,6 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		painters.Wait()
 		close(pixmaps)
 	}()
-
 	st := rankState{head: first.id, bestByOp: map[Op]*namedPick{}}
 	go func() {
 		<-ctx.Done()
@@ -298,9 +297,10 @@ loop:
 			}
 		}
 		batch := []pixmapNote{painted}
+		pixels := pixmapPixels(painted)
 		closed := false
 	drain:
-		for len(batch) < proposalBatch {
+		for len(batch) < proposalBatch && pixels < maxDevicePixels {
 			select {
 			case <-ctx.Done():
 				board.close()
@@ -311,6 +311,7 @@ loop:
 					break drain
 				}
 				batch = append(batch, next)
+				pixels += pixmapPixels(next)
 			default:
 				break drain
 			}
@@ -322,7 +323,7 @@ loop:
 			imgs[i] = item.img
 		}
 		s.rankNotes(ctx, board, &st, notes, imgs, emit)
-		if closed || ctx.Err() != nil {
+		if closed || ctx.Err() != nil || st.stop {
 			board.close()
 			break loop
 		}
@@ -383,6 +384,17 @@ func paintProposals(ctx context.Context, in <-chan agentNote, out chan<- pixmapN
 		case out <- painted:
 		}
 	}
+}
+
+func pixmapPixels(item pixmapNote) int {
+	if item.img == nil {
+		return 1
+	}
+	b := item.img.Bounds()
+	if n := b.Dx() * b.Dy(); n > 0 {
+		return n
+	}
+	return 1
 }
 
 func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, imgs []*image.NRGBA, emit func(Op, []pix, []pix, []search.Rated) bool) {
@@ -460,28 +472,38 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		sn := s.snap()
 		sn.operator = pick.op
 		sn.lefts = s.watchLeftovers(ctx)
-		if !board.offer(sn) {
-			continue
-		}
-		st.loss = append(st.loss, sn.errSum)
-		jobNote(ctx, archiveLine(board.list()))
-		st.pool = append(st.pool, pick)
-		s.publishRank(ctx, board, st, proposals)
-		if top, changed := board.takeHead(st.head); changed {
-			st.head = top.id
-			s.load(top)
-			rated := collectRated(st.bestByOp)
-			st.flushed = len(st.bestByOp)
-			markKept(rated, []formPick{{op: top.operator}})
-			blob, fitted := leftoverView(top, st.pool)
-			st.yielded = true
-			if !emit(top.operator, blob, fitted, rated) {
-				board.close()
-				st.stop = true
-			}
+		if !s.retainKept(ctx, board, st, sn, pick, proposals, emit) {
+			return
 		}
 	}
 	s.publishRank(ctx, board, st, proposals)
+}
+
+func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, proposals []search.Proposal, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
+	if !board.offer(sn) {
+		return true
+	}
+	st.loss = append(st.loss, sn.errSum)
+	jobNote(ctx, archiveLine(board.list()))
+	st.pool = append(st.pool, pick)
+	s.publishRank(ctx, board, st, proposals)
+	top, changed := board.takeHead(st.head)
+	if !changed {
+		return true
+	}
+	st.head = top.id
+	s.load(top)
+	rated := collectRated(st.bestByOp)
+	st.flushed = len(st.bestByOp)
+	markKept(rated, []formPick{{op: top.operator}})
+	blob, fitted := leftoverView(top, st.pool)
+	st.yielded = true
+	if !emit(top.operator, blob, fitted, rated) {
+		board.close()
+		st.stop = true
+		return false
+	}
+	return true
 }
 
 func (s *world) publishRank(ctx context.Context, board *beam, st *rankState, proposals []search.Proposal) {
