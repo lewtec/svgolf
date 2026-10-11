@@ -590,7 +590,7 @@ func beamSlots(list []snapshot) []search.Slot {
 		if name == "" {
 			name = "plate"
 		}
-		out[i] = search.Slot{Operator: name, Score: sn.errSum, Paths: sn.paths, Commands: sn.commands}
+		out[i] = search.Slot{Operator: name, Score: sn.errSum, Paths: sn.paths, Commands: sn.commands, Vertices: docVertices(sn.doc)}
 	}
 	return out
 }

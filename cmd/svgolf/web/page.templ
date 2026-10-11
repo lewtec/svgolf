@@ -114,6 +114,7 @@ templ JobPage(j JobView) {
 										<th>score</th>
 										<th>paths</th>
 										<th>commands</th>
+										<th>vertices</th>
 									</tr>
 								</thead>
 								<tbody id="beam"></tbody>
@@ -166,7 +167,7 @@ templ JobPage(j JobView) {
 				if (rows.length === 0) {
 					const tr = document.createElement("tr");
 					const td = document.createElement("td");
-					td.colSpan = 5;
+					td.colSpan = 6;
 					td.textContent = "waiting for the first kept document";
 					tr.appendChild(td);
 					beamBody.appendChild(tr);
@@ -179,6 +180,7 @@ templ JobPage(j JobView) {
 					tr.appendChild(cell(fmt(slot.score), true));
 					tr.appendChild(cell(String(slot.paths), true));
 					tr.appendChild(cell(String(slot.commands), true));
+					tr.appendChild(cell(String(slot.vertices || 0), true));
 					beamBody.appendChild(tr);
 				});
 			}

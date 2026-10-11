@@ -1330,6 +1330,44 @@ func pathCommandWeight(n svg.Node) int {
 	return w
 }
 
+func docVertices(d svg.Document) int {
+	kids := d.Children()
+	if len(kids) == 0 {
+		return 0
+	}
+	n := 0
+	for _, child := range kids[1:] {
+		n += formVertices(child)
+	}
+	return n
+}
+
+func formVertices(n svg.Node) int {
+	if g, ok := n.Group(); ok {
+		sum := 0
+		for _, child := range g.Children() {
+			sum += formVertices(child)
+		}
+		return sum
+	}
+	if p, ok := n.Path(); ok {
+		sum := 0
+		for _, c := range p.Commands() {
+			if c.Kind != svg.CmdClose {
+				sum++
+			}
+		}
+		return sum
+	}
+	if p, ok := n.Polygon(); ok {
+		return len(p.Points())
+	}
+	if _, ok := n.Rect(); ok {
+		return 4
+	}
+	return 0
+}
+
 func docCmdLen(d svg.Document) int {
 	n := 0
 	for _, c := range d.Children() {

@@ -8,8 +8,18 @@ import (
 	"time"
 
 	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/svgolf/pkg/svg"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBeamSlotCountsVertices(t *testing.T) {
+	doc := svg.NewDocument(4, 4).WithViewBox(0, 0, 4, 4).Append(whitePane(4, 4).Node())
+	doc = doc.Append(filledPath([][2]float64{{0, 0}, {4, 0}, {2, 3}}, color.NRGBA{R: 255, A: 255}).Node())
+	slots := beamSlots([]snapshot{{doc: doc, paths: 1, commands: 3, errSum: 1, operator: OpTriangle}})
+	require.Len(t, slots, 1)
+	require.Equal(t, 3, slots[0].Vertices)
+	require.Equal(t, "triangle", slots[0].Operator)
+}
 
 func TestRunAgentsStopsWhenContextIsCancelled(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
