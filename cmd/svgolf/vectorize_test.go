@@ -24,10 +24,10 @@ func TestTraceOverwritesLast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d0, Scale: 8, Operator: search.OpTriangle, Elapsed: time.Second}); err != nil {
+	if err := tr.Record(t.Context(), search.Epoch{Document: d0, Scale: 8, Operator: search.OpTriangle, Elapsed: time.Second}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tr.Record(search.Epoch{Document: d1, Scale: 4, Operator: search.OpWash}); err != nil {
+	if err := tr.Record(t.Context(), search.Epoch{Document: d1, Scale: 4, Operator: search.OpWash}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(log.String(), "scale=8") {

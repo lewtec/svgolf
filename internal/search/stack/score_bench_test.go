@@ -38,10 +38,11 @@ func benchDoc() (svg.Document, *image.NRGBA) {
 func BenchmarkScore(b *testing.B) {
 	got := nrgba1024(color.NRGBA{R: 255, G: 255, B: 255, A: 255})
 	want := nrgba1024(color.NRGBA{R: 12, G: 52, B: 88, A: 255})
-	_ = Score(got, want)
+	ctx := b.Context()
+	_ = Score(ctx, got, want)
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = Score(got, want)
+		_ = Score(ctx, got, want)
 	}
 }
 
@@ -52,9 +53,10 @@ func BenchmarkScoreOn(b *testing.B) {
 	wantP := loss.NewPlane(want)
 	gotP.Ensure()
 	wantP.Ensure()
+	ctx := b.Context()
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = ScoreOn(gotP, wantP)
+		_ = ScoreOn(ctx, gotP, wantP)
 	}
 }
 
@@ -64,7 +66,8 @@ func BenchmarkScratchScore(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	_ = Score(img, want)
+	ctx := b.Context()
+	_ = Score(ctx, img, want)
 	render.Release(img)
 	b.ReportAllocs()
 	for b.Loop() {
@@ -72,7 +75,7 @@ func BenchmarkScratchScore(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_ = Score(img, want)
+		_ = Score(ctx, img, want)
 		render.Release(img)
 	}
 }

@@ -58,7 +58,7 @@ func (c *vectorizeCmd) Run(ctx context.Context) error {
 		}
 		last = ep.Document
 		if trace != nil {
-			if err := trace.Record(ep); err != nil {
+			if err := trace.Record(ctx, ep); err != nil {
 				return err
 			}
 		}

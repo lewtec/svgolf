@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"io"
@@ -27,34 +28,35 @@ func NewTrace(dir string, log io.Writer, want *image.NRGBA) (*Trace, error) {
 	return &Trace{dir: dir, log: log, want: want}, nil
 }
 
-func (t *Trace) Record(ep search.Epoch) error {
+func (t *Trace) Record(ctx context.Context, ep search.Epoch) error {
 	doc := ep.Document
 	scale := ep.Scale
 	if scale < 1 {
 		scale = 1
 	}
 	svgPath := filepath.Join(t.dir, fmt.Sprintf("%03d.svg", t.n))
-	for _, r := range []DocumentRenderer{
-		NewSVGFile(svgPath),
-		NewSVGFile(filepath.Join(t.dir, "last.svg")),
-		NewPNGFile(filepath.Join(t.dir, fmt.Sprintf("%03d.png", t.n))),
-		NewPNGFile(filepath.Join(t.dir, "last.png")),
-	} {
-		if err := r.Render(doc); err != nil {
+	for _, path := range []string{svgPath, filepath.Join(t.dir, "last.svg")} {
+		if err := NewSVGFile(path).Render(doc); err != nil {
 			return err
 		}
 	}
+	got, err := render.Render(doc)
+	if err != nil {
+		return err
+	}
+	if err := writePNG(filepath.Join(t.dir, fmt.Sprintf("%03d.png", t.n)), got); err != nil {
+		return err
+	}
+	if err := writePNG(filepath.Join(t.dir, "last.png"), got); err != nil {
+		return err
+	}
 	if t.log != nil {
-		got, err := render.Render(doc)
-		if err != nil {
-			return err
-		}
 		op := ep.Operator.String()
 		if op == "" {
 			op = "-"
 		}
 		fmt.Fprintf(t.log, "epoch %d operator=%s scale=%d elapsed=%.3fs paths=%d vertices=%d score=%.3f -> %s\n",
-			t.n, op, scale, ep.Elapsed.Seconds(), documentPaths(doc), documentVertices(doc), stack.Score(got, t.want), svgPath)
+			t.n, op, scale, ep.Elapsed.Seconds(), documentPaths(doc), documentVertices(doc), stack.Score(ctx, got, t.want), svgPath)
 	}
 	t.n++
 	return nil

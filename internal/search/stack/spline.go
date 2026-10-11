@@ -57,10 +57,6 @@ func monotoneSpans(ring pathRing) []ringSpan {
 	return out
 }
 
-func lineEdge(cmd svg.PathCmd) bool {
-	return cmd.Kind == svg.CmdLine || cmd.Kind == svg.CmdClose
-}
-
 func edgesInSpan(from, to, n int) int {
 	if n == 0 {
 		return 0

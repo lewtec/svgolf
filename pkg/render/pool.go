@@ -34,7 +34,12 @@ func initWorkers() {
 
 func acquirePixmap(w, h int) *pixmap {
 	initWorkers()
-	p := <-pixmaps
+	var p *pixmap
+	select {
+	case p = <-pixmaps:
+	default:
+		p = &pixmap{}
+	}
 	need := w * h * 4
 	if cap(p.pix) < need {
 		p.pix = make([]uint8, need)
@@ -50,12 +55,21 @@ func releasePixmap(p *pixmap) {
 	if p == nil {
 		return
 	}
-	pixmaps <- p
+	initWorkers()
+	select {
+	case pixmaps <- p:
+	default:
+	}
 }
 
 func acquireImage(w, h int) *image.NRGBA {
 	initWorkers()
-	img := <-images
+	var img *image.NRGBA
+	select {
+	case img = <-images:
+	default:
+		img = &image.NRGBA{}
+	}
 	need := w * h * 4
 	if cap(img.Pix) < need {
 		img.Pix = make([]uint8, need)
@@ -72,7 +86,11 @@ func Release(img *image.NRGBA) {
 	if img == nil {
 		return
 	}
-	images <- img
+	initWorkers()
+	select {
+	case images <- img:
+	default:
+	}
 }
 
 // Keep copies a Scratch image so it can outlive Release.

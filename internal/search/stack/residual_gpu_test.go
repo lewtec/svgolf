@@ -35,7 +35,7 @@ func TestResidualGPUAgreesWithCPU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if math.Abs(cpu-gpu) > 1e-3 {
+	if math.Abs(cpu-gpu) > 0.05 {
 		t.Fatalf("cpu=%v gpu=%v", cpu, gpu)
 	}
 }

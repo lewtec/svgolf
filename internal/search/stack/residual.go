@@ -7,10 +7,6 @@ import (
 	"github.com/lewtec/lewkit/x/ndarray"
 )
 
-// saturationFloor is the grey split inside loss.ColorAt.
-// Pixels under it compare value; a grey pixel against a saturated pixel is the full miss.
-const saturationFloor float32 = 0.08
-
 // residualSum is the squared hue-saturation-value error of rect, dispatched
 // through an ndarray evaluator. The CPU tape and a GPU evaluator run the same graph.
 func residualSum(ctx context.Context, evaluator ndarray.Evaluator, got, want *image.NRGBA, rect image.Rectangle) (float64, error) {
@@ -146,16 +142,6 @@ func hsvTensor(r, g, b *ndarray.Tensor[float32]) (h, s, v *ndarray.Tensor[float3
 	return h, s, v
 }
 
-func hueDistance(a, b *ndarray.Tensor[float32]) *ndarray.Tensor[float32] {
-	d := abs32(a.Add(b.Neg()))
-	turn := ndarray.Const(float32(180))
-	return d.CmpLt(turn).Where(d, ndarray.Const(float32(360)).Add(d.Neg()))
-}
-
-func abs32(x *ndarray.Tensor[float32]) *ndarray.Tensor[float32] {
-	return x.Max(x.Neg())
-}
-
 // deviceAgrees reports whether the ndarray residual can change a lexicographic
 // comparison against the renderer score. The gap grows with the number of
 // float32 terms. A caller confirms with Score when the gap still reaches the parent.
@@ -184,6 +170,6 @@ func confirmResidual(ctx context.Context, evaluator ndarray.Evaluator, got, want
 	if err != nil {
 		return 0, 0, err
 	}
-	exact := ScoreRect(got, want, rect)
+	exact := ScoreRect(ctx, got, want, rect)
 	return device, exact, nil
 }

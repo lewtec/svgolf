@@ -4,16 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/lewtec/lewkit/x/cmd"
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	app, err := cmd.Parse[cmd.App[root]](os.Args[1:]...)
 	if err != nil {
 		exit(err)
 	}
-	err = app.Run(context.Background())
+	err = app.Run(ctx)
 	if app.Args.stopProf != nil {
 		if serr := app.Args.stopProf(); err == nil {
 			err = serr

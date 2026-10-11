@@ -23,10 +23,11 @@ func HSVOf(c color.NRGBA) Pix {
 // Plane is an image converted to HSV once. Search holds one for want
 // (immutable) and one for got (Reset after each Render).
 type Plane struct {
-	img  *image.NRGBA
-	once sync.Once
-	pix  []Pix
-	buf  []Pix
+	img       *image.NRGBA
+	once      sync.Once
+	pix       []Pix
+	buf       []Pix
+	converted bool // pix covers the whole image; EnsureRect would rewrite it
 }
 
 // NewPlane wraps img. Convert runs on the first At / Ensure.
@@ -61,9 +62,16 @@ func initPlanes() {
 }
 
 // Acquire is a Plane whose HSV table is reused. Release it.
+// The channel is a cache: a busy pool allocates instead of waiting,
+// so two searches cannot stall each other on the last plane.
 func Acquire(img *image.NRGBA) *Plane {
 	initPlanes()
-	p := <-planes
+	var p *Plane
+	select {
+	case p = <-planes:
+	default:
+		p = &Plane{}
+	}
 	p.Reset(img)
 	return p
 }
@@ -74,7 +82,11 @@ func Release(p *Plane) {
 		return
 	}
 	p.Reset(nil)
-	planes <- p
+	initPlanes()
+	select {
+	case planes <- p:
+	default:
+	}
 }
 
 // Image is the source pixmap.
@@ -102,6 +114,7 @@ func (p *Plane) Reset(img *image.NRGBA) {
 	p.img = img
 	p.once = sync.Once{}
 	p.pix = nil
+	p.converted = false
 }
 
 // At is the HSV pixel at (x,y) in image coordinates.
@@ -121,7 +134,7 @@ func (p *Plane) At(x, y int) Pix {
 
 // EnsureRect converts r. The rest of the table stays unset until Ensure.
 func (p *Plane) EnsureRect(r image.Rectangle) {
-	if p == nil || p.img == nil {
+	if p == nil || p.img == nil || p.converted {
 		return
 	}
 	b := p.img.Rect
@@ -136,14 +149,32 @@ func (p *Plane) EnsureRect(r image.Rectangle) {
 	stride := p.img.Stride
 	w := b.Dx()
 	minX := b.Min.X
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		row := (y - b.Min.Y) * w
-		off := (y-b.Min.Y)*stride + (r.Min.X-minX)*4
-		for x := r.Min.X; x < r.Max.X; x++ {
-			p.pix[row+(x-minX)] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
-			off += 4
-		}
+	n := r.Dx() * r.Dy()
+	parallel, claim := EnterCores(n)
+	if claim.held {
+		defer claim.Release()
 	}
+	if !parallel {
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			row := (y - b.Min.Y) * w
+			off := (y-b.Min.Y)*stride + (r.Min.X-minX)*4
+			for x := r.Min.X; x < r.Max.X; x++ {
+				p.pix[row+(x-minX)] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
+				off += 4
+			}
+		}
+		return
+	}
+	dx := r.Dx()
+	SplitRange(n, func(lo, hi int) {
+		for i := lo; i < hi; i++ {
+			y := r.Min.Y + i/dx
+			x := r.Min.X + i%dx
+			row := (y - b.Min.Y) * w
+			off := (y-b.Min.Y)*stride + (x-minX)*4
+			p.pix[row+(x-minX)] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
+		}
+	})
 }
 
 func (p *Plane) growPix(n int, zero bool) []Pix {
@@ -164,15 +195,32 @@ func (p *Plane) convert() {
 	stride := p.img.Stride
 	w, h := b.Dx(), b.Dy()
 	p.pix = p.growPix(w*h, false)
-	i := 0
-	for y := 0; y < h; y++ {
-		off := y * stride
-		for x := 0; x < w; x++ {
-			p.pix[i] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
-			off += 4
-			i++
-		}
+	n := w * h
+	parallel, claim := EnterCores(n)
+	if claim.held {
+		defer claim.Release()
 	}
+	if !parallel {
+		i := 0
+		for y := 0; y < h; y++ {
+			off := y * stride
+			for x := 0; x < w; x++ {
+				p.pix[i] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
+				off += 4
+				i++
+			}
+		}
+	} else {
+		SplitRange(n, func(lo, hi int) {
+			for i := lo; i < hi; i++ {
+				y := i / w
+				x := i - y*w
+				off := y*stride + x*4
+				p.pix[i] = HSVOf(color.NRGBA{R: src[off], G: src[off+1], B: src[off+2], A: src[off+3]})
+			}
+		})
+	}
+	p.converted = true
 }
 
 // Slice is the row-major HSV table. Call Ensure or EnsureRect first.

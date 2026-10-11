@@ -29,6 +29,7 @@ const (
 	OpSuggest
 	OpSquash
 	OpSpline
+	OpOutline
 	OpCount
 )
 
@@ -52,6 +53,7 @@ var operatorNames = [OpCount]string{
 	OpSuggest:   "suggest",
 	OpSquash:    "squash",
 	OpSpline:    "spline",
+	OpOutline:   "outline",
 }
 
 func (id Op) String() string {

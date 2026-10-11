@@ -15,7 +15,7 @@ func TestInitialLeftoverFeedsTriangle(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
-	s, err := newWorld(img)
+	s, err := newWorld(t.Context(), img)
 	if err != nil {
 		t.Fatal(err)
 	}

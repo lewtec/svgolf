@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,27 @@ import (
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
+
+func TestPixSetDoesNotBlockWhenBusy(t *testing.T) {
+	island := []pix{{0, 0}, {1, 0}, {1, 1}}
+	n := runtime.GOMAXPROCS(0)*2 + 2
+	got := make([]*pixBits, n)
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < n; i++ {
+			got[i] = pixSet(island)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pixSet blocked with the bit cache full")
+	}
+	for _, b := range got {
+		releaseBits(b)
+	}
+}
 
 func mustCtx(t *testing.T) context.Context {
 	t.Helper()
@@ -67,7 +89,7 @@ func TestUnholeDropsUselessHole(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -111,7 +133,7 @@ func TestSimplifySkipsLoadBearingEars(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -431,7 +453,7 @@ func TestSimplifyKeepsUntouchedCubic(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -481,7 +503,7 @@ func TestSimplifyDropsOneColinearVertex(t *testing.T) {
 		paths:  1,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -498,7 +520,7 @@ func TestSimplifyDropsOneColinearVertex(t *testing.T) {
 		t.Fatal("not a path")
 	}
 	if n := pathPts(p.Node()); n != 5 {
-		t.Fatalf("verts=%d want 5; one drop, not the whole colinear run", n)
+		t.Fatalf("verts=%d want 5; one straight vertex, the next epoch takes the rest", n)
 	}
 }
 
@@ -541,7 +563,7 @@ func TestSlideKeepsUntouchedCubic(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -580,7 +602,7 @@ func TestScoreCandStoresFullError(t *testing.T) {
 			want.SetNRGBA(x, y, red)
 		}
 	}
-	s, err := newWorld(want)
+	s, err := newWorld(nil, want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +622,7 @@ func TestScoreCandStoresFullError(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer render.Release(got)
-	full := ScoreOn(loss.NewPlane(got), s.wantP)
+	full := ScoreOn(nil, loss.NewPlane(got), s.wantP)
 	if math.Abs(pick.errSum-full) > 1e-9*math.Abs(full) {
 		t.Fatalf("errSum=%v full=%v (dirty rect lied)", pick.errSum, full)
 	}
@@ -645,7 +667,7 @@ func TestTryDropRedundant(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	pick, err := (Delete{world: s, i: 1}).Run()
 	if err != nil {
@@ -690,7 +712,7 @@ func TestDeleteEmitsLosingScore(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1502,7 +1524,7 @@ func TestTrianglePlacesInscribedPlate(t *testing.T) {
 			img.SetNRGBA(x, y, red)
 		}
 	}
-	s, err := newWorld(img)
+	s, err := newWorld(nil, img)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1641,7 +1663,7 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 		paths:  2,
 		w:      24,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1699,7 +1721,7 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 		paths:  2,
 		w:      16,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1833,7 +1855,7 @@ func TestJoinKeepsUntouchedCubic(t *testing.T) {
 		paths:  2,
 		w:      24,
 		h:      16,
-		errSum: Score(got, img),
+		errSum: Score(nil, got, img),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -1943,7 +1965,7 @@ func TestSubtractPunchesOverlap(t *testing.T) {
 		paths:  2,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2020,7 +2042,7 @@ func TestSubtractDropsPaperNotch(t *testing.T) {
 		paths:  2,
 		w:      32,
 		h:      32,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2105,7 +2127,7 @@ func TestSwapUncoversMark(t *testing.T) {
 		paths:  2,
 		w:      32,
 		h:      32,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2164,7 +2186,7 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      32,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2245,7 +2267,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2308,7 +2330,7 @@ func TestSlidePullsTowardLeftover(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2358,7 +2380,7 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      16,
-		errSum: Score(got, want),
+		errSum: Score(nil, got, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2422,7 +2444,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 		paths:  1,
 		w:      32,
 		h:      32,
-		errSum: Score(bgot, want),
+		errSum: Score(nil, bgot, want),
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
@@ -2437,7 +2459,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.doc, s.got, s.fills, s.owner, s.paths = adoc, agot, nil, make([]uint16, 32*32), 0
-	s.errSum = Score(agot, want)
+	s.errSum = Score(nil, agot, want)
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
@@ -2497,7 +2519,7 @@ func TestStackMarkAfterPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if Score(got, img) >= Score(empty, img) {
+	if Score(nil, got, img) >= Score(nil, empty, img) {
 		t.Fatalf("final score not better than empty")
 	}
 }

@@ -301,7 +301,7 @@ func hullRing(work []pix) [][2]float64 {
 }
 
 // coverRing is the leftover outline with only exact colinear
-// vertices removed. Simplify drops more vertices later.
+// vertices removed. Simplify drops one straight vertex per epoch.
 func coverRing(work []pix) [][2]float64 {
 	if len(work) == 0 {
 		return nil
