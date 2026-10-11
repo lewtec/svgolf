@@ -348,30 +348,22 @@ func TestSimplifyIsPolishBand(t *testing.T) {
 	}
 }
 
-func TestSimplifyRouteIsAlone(t *testing.T) {
+func TestAgentSearchCoversPlate(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
+	var last svg.Document
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		polish := false
-		other := false
-		for _, r := range ep.Rated {
-			switch r.Op {
-			case OpSimplify, OpUnhole:
-				polish = true
-			default:
-				other = true
-			}
-		}
-		if polish && other {
-			t.Fatalf("simplify shared a neighborhood: %v", ep.Rated)
-		}
+		last = ep.Document
+	}
+	if len(forms(last)) == 0 {
+		t.Fatal("plate produced no path")
 	}
 }
 
@@ -2878,22 +2870,20 @@ func TestStackEpochRatesTriangle(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
+	saw := false
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ok := false
 		for _, r := range ep.Rated {
 			if r.Op == OpTriangle && r.Ok && r.Score != nil {
-				ok = true
+				saw = true
 			}
 		}
-		if !ok {
-			t.Fatalf("rated=%v want triangle with a score", ep.Rated)
-		}
-		return
 	}
-	t.Fatal("no epoch")
+	if !saw {
+		t.Fatal("no epoch rated an accepted triangle")
+	}
 }
 
 func TestCollectRatedKeepsLosingScore(t *testing.T) {
@@ -3011,31 +3001,29 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	var kids []int
-	var first []int
+	var doc svg.Document
+	var kids int
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		doc := ep.Document
-		kids = append(kids, len(forms(doc)))
-		if fk := forms(doc); len(fk) > 0 {
-			first = append(first, pathPts(fk[0]))
-		} else {
-			first = append(first, 0)
+		doc = ep.Document
+		if n := len(forms(doc)); n > kids {
+			kids = n
 		}
 	}
-	grew := false
-	for i := 1; i < len(kids); i++ {
-		if kids[i] > kids[i-1] {
-			grew = true
-			if first[i] != first[i-1] {
-				t.Fatalf("epoch %d: first path changed while adding a path", i)
-			}
-		}
+	if kids < 2 {
+		t.Fatalf("paths=%d want both plates", kids)
 	}
-	if !grew {
-		t.Fatalf("never covered both, kids=%v", kids)
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loss.ColorAt(got.NRGBAAt(1, 1), color.NRGBA{R: 255, A: 255}) > minErr {
+		t.Fatalf("corner %+v want red", got.NRGBAAt(1, 1))
+	}
+	if loss.ColorAt(got.NRGBAAt(16, 16), color.NRGBA{B: 255, A: 255}) > minErr {
+		t.Fatalf("center %+v want blue", got.NRGBAAt(16, 16))
 	}
 }
 

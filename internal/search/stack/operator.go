@@ -26,23 +26,26 @@ type Operator interface {
 type Op = search.Op
 
 const (
-	OpNone     = search.OpNone
-	OpAbsorb   = search.OpAbsorb
+	OpNone      = search.OpNone
+	OpAbsorb    = search.OpAbsorb
 	OpTriangle  = search.OpTriangle
 	OpRing      = search.OpRing
 	OpRectangle = search.OpRectangle
 	OpGrow      = search.OpGrow
-	OpCarve    = search.OpCarve
-	OpSlide    = search.OpSlide
-	OpBend     = search.OpBend
-	OpSimplify = search.OpSimplify
-	OpWash     = search.OpWash
-	OpJoin     = search.OpJoin
-	OpSubtract = search.OpSubtract
-	OpSwap     = search.OpSwap
-	OpDelete   = search.OpDelete
-	OpUnhole   = search.OpUnhole
-	opCount    = search.OpCount
+	OpCarve     = search.OpCarve
+	OpSlide     = search.OpSlide
+	OpBend      = search.OpBend
+	OpSimplify  = search.OpSimplify
+	OpWash      = search.OpWash
+	OpJoin      = search.OpJoin
+	OpSubtract  = search.OpSubtract
+	OpSwap      = search.OpSwap
+	OpDelete    = search.OpDelete
+	OpUnhole    = search.OpUnhole
+	OpSuggest   = search.OpSuggest
+	OpSquash    = search.OpSquash
+	OpSpline    = search.OpSpline
+	opCount     = search.OpCount
 )
 
 type op struct {
@@ -87,6 +90,12 @@ func (o op) impl() Operator {
 		return Delete{world: o.world, i: o.i}
 	case OpUnhole:
 		return Unhole{world: o.world, buckets: o.buckets}
+	case OpSuggest:
+		return Suggest{world: o.world, buckets: o.buckets}
+	case OpSquash:
+		return Squash{world: o.world, buckets: o.buckets}
+	case OpSpline:
+		return Spline{world: o.world, buckets: o.buckets}
 	default:
 		return nil
 	}

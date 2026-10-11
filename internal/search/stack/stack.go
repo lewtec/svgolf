@@ -27,6 +27,8 @@ const (
 	// leftoverPicks = 3
 	leftoverPicks = 1
 	survivorPicks = 3
+	// beamWidth is the chooser's list. Proposers read it and pick one parent.
+	beamWidth = 5
 	// polishBand is simplify-until-stall. Other bands do not
 	// schedule it, so a cheap vertex drop cannot starve join.
 	polishBand = 5
@@ -124,6 +126,7 @@ type formPick struct {
 	fills    []color.NRGBA
 	owner    []uint16
 	parent   snapshot
+	dirty    image.Rectangle
 }
 
 type snapshot struct {
@@ -136,6 +139,7 @@ type snapshot struct {
 	paths    int
 	commands int
 	operator Op
+	lefts    []leftover
 }
 
 func nonePick() formPick {
@@ -301,100 +305,12 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			started = time.Now()
 			return yield(ep, nil)
 		}
-		archive := []snapshot{s.snap()}
-		band := 1
-		polished := false
-		polishHelped := false
-		yielded := false
-		for {
-			if err := ctx.Err(); err != nil {
-				if !yielded {
-					yield(search.Epoch{}, err)
-				}
-				return
+		yielded, err := s.runAgents(ctx, emit)
+		if err != nil {
+			if !yielded {
+				yield(search.Epoch{}, err)
 			}
-			var pool []formPick
-			var rated []search.Rated
-			if band == 4 {
-				miss := make([][]leftover, len(archive))
-				for j, member := range archive {
-					s.load(member)
-					miss[j] = s.leftovers()
-				}
-				for i, member := range archive {
-					for j := range archive {
-						if i == j {
-							continue
-						}
-						s.load(member)
-						picks, pr, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
-						if err != nil {
-							yield(search.Epoch{}, err)
-							return
-						}
-						pool = append(pool, picks...)
-						rated = mergeRated(rated, pr)
-					}
-				}
-			} else {
-				for _, member := range archive {
-					s.load(member)
-					picks, pr, err := s.choose(ctx, s.leftovers(), member, band)
-					if err != nil {
-						yield(search.Epoch{}, err)
-						return
-					}
-					pool = append(pool, picks...)
-					rated = mergeRated(rated, pr)
-				}
-			}
-			next, improved := s.archiveUpdate(archive, pool, band)
-			if improved {
-				archive = next
-				s.load(archive[0])
-				yielded = true
-				markKept(rated, []formPick{{op: archive[0].operator}})
-				blob, fitted := leftoverView(archive[0], pool)
-				if !emit(archive[0].operator, blob, fitted, rated) {
-					return
-				}
-				if band == polishBand {
-					polishHelped = true
-					continue
-				}
-				polished = false
-				polishHelped = false
-				// After a leftover add, score wash/join against
-				// the next ear in the same neighborhood.
-				if leftoverAdd(archive[0].operator) {
-					band = 2
-				} else {
-					band = 1
-				}
-				continue
-			}
-			if band < 3 {
-				band++
-				continue
-			}
-			if band == 3 {
-				band = 4
-				continue
-			}
-			if band == 4 {
-				if polished {
-					break
-				}
-				band = polishBand
-				polishHelped = false
-				continue
-			}
-			polished = true
-			if polishHelped {
-				band = 1
-				continue
-			}
-			break
+			return
 		}
 		if !yielded {
 			emit(OpNone, nil, nil, nil)
