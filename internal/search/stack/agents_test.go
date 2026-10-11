@@ -70,17 +70,17 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	full.parent = parent
 	full.dirty = img.Bounds()
 	emit := func(Op, []pix, []pix, []search.Rated) bool { return true }
-	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, emit)
+	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1)
 	require.Less(t, st.loss[0], parent.errSum)
-	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, emit)
+	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1, "duplicate loss=%v", st.loss)
 	same := nonePick()
 	same.doc = parent.doc
 	same.op = OpRectangle
 	same.parent = parent
 	same.dirty = img.Bounds()
-	s.rankNotes(ctx, board, st, []agentNote{{pick: same}}, nil, emit)
+	s.rankNotes(ctx, board, st, []agentNote{{pick: same}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1, "rejected loss=%v", st.loss)
 	halfRing := [][2]float64{{0, 0}, {2, 0}, {2, float64(n)}, {0, float64(n)}}
 	half := nonePick()
@@ -88,7 +88,7 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	half.op = OpRectangle
 	half.parent = parent
 	half.dirty = img.Bounds()
-	s.rankNotes(ctx, board, st, []agentNote{{pick: half}}, nil, emit)
+	s.rankNotes(ctx, board, st, []agentNote{{pick: half}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 2)
 	require.Greater(t, st.loss[1], st.loss[0])
 	require.NotEmpty(t, frames)

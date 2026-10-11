@@ -242,6 +242,14 @@ type pixmapNote struct {
 	img  *image.NRGBA
 }
 
+// pendingKeep is a scored document waiting for its islands. The ranker
+// offers it after the CPU pass, and keeps scoring on the device meanwhile.
+type pendingKeep struct {
+	seq  int
+	sn   snapshot
+	pick formPick
+}
+
 // runAgents runs three actors. Proposers claim a parent and send geometry.
 // Painters turn that geometry into pixmaps. This goroutine is the ranker:
 // it scores, keeps the beam, and the proposers claim any parent that offer publishes.
@@ -252,6 +260,7 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	board := newBeam(first)
 	proposals := make(chan agentNote, proposalBuffer)
 	pixmaps := make(chan pixmapNote, renderAhead)
+	ready := make(chan pendingKeep, proposalBuffer)
 	var proposers, painters sync.WaitGroup
 	defer func() {
 		cancel()
@@ -279,6 +288,9 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		close(pixmaps)
 	}()
 	st := rankState{head: first.id, bestByOp: map[Op]*namedPick{}}
+	var fold keepFold
+	var inFlight int
+	var seq int
 	go func() {
 		<-ctx.Done()
 		board.close()
@@ -286,11 +298,19 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 loop:
 	for {
 		var painted pixmapNote
+		var kept pendingKeep
 		var ok bool
 		select {
 		case <-ctx.Done():
 			board.close()
 			break loop
+		case kept = <-ready:
+			s.foldKept(ctx, board, &st, &fold, &inFlight, kept, emit)
+			if st.stop {
+				board.close()
+				break loop
+			}
+			continue
 		case painted, ok = <-pixmaps:
 			if !ok {
 				break loop
@@ -322,11 +342,16 @@ loop:
 			notes[i] = item.note
 			imgs[i] = item.img
 		}
-		s.rankNotes(ctx, board, &st, notes, imgs, emit)
+		queued := s.rankNotes(ctx, board, &st, notes, imgs, ready, &seq, emit)
+		inFlight += queued
 		if closed || ctx.Err() != nil || st.stop {
 			board.close()
 			break loop
 		}
+	}
+	for inFlight > 0 && ctx.Err() == nil && !st.stop {
+		kept := <-ready
+		s.foldKept(ctx, board, &st, &fold, &inFlight, kept, emit)
 	}
 	if !st.stop && st.yielded && len(st.bestByOp) > st.flushed {
 		top := board.top()
@@ -350,6 +375,7 @@ type rankState struct {
 	pool     []formPick
 	recent   []candResult
 	loss     []float64
+	shown    []search.Proposal
 	stop     bool
 }
 
@@ -397,20 +423,20 @@ func pixmapPixels(item pixmapNote) int {
 	return 1
 }
 
-func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, imgs []*image.NRGBA, emit func(Op, []pix, []pix, []search.Rated) bool) {
+func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes []agentNote, imgs []*image.NRGBA, ready chan<- pendingKeep, seq *int, emit func(Op, []pix, []pix, []search.Rated) bool) int {
 	board.beginChoose()
 	defer board.endChoose()
 	for range notes {
 		board.account(-1)
 	}
 	if st.stop || ctx.Err() != nil {
-		return
+		return 0
 	}
 	for _, note := range notes {
 		if note.err != nil {
 			board.close()
 			st.stop = true
-			return
+			return 0
 		}
 	}
 	drafts := make([]formPick, len(notes))
@@ -424,12 +450,13 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		scored = s.scoreBatch(ctx, drafts)
 	}
 	if ctx.Err() != nil {
-		return
+		return 0
 	}
+	queued := 0
 	proposals := make([]search.Proposal, 0, len(scored))
 	for i, pick := range scored {
 		if ctx.Err() != nil {
-			return
+			return queued
 		}
 		note := notes[i]
 		if !pick.scored {
@@ -471,12 +498,85 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		s.apply(pick)
 		sn := s.snap()
 		sn.operator = pick.op
+		if ready != nil {
+			board.beginChoose()
+			item := pendingKeep{seq: *seq, sn: sn, pick: pick}
+			*seq++
+			queued++
+			go s.fillKeep(ctx, ready, item)
+			continue
+		}
 		sn.lefts = s.watchLeftovers(ctx)
 		if !s.retainKept(ctx, board, st, sn, pick, proposals, emit) {
+			return queued
+		}
+	}
+	st.shown = proposals
+	s.publishRank(ctx, board, st, proposals)
+	return queued
+}
+
+func (s *world) fillKeep(ctx context.Context, ready chan<- pendingKeep, item pendingKeep) {
+	item.sn.lefts = s.leftoversOf(item.sn)
+	select {
+	case <-ctx.Done():
+		return
+	case ready <- item:
+	}
+}
+
+func (s *world) leftoversOf(sn snapshot) []leftover {
+	w := &world{
+		want:  s.want,
+		wantP: s.wantP,
+		got:   sn.got,
+		doc:   sn.doc,
+		fills: sn.fills,
+		owner: sn.owner,
+		paths: sn.paths,
+		w:     s.w,
+		h:     s.h,
+	}
+	if sn.got != nil {
+		w.gotP = loss.NewPlane(sn.got)
+	}
+	if w.wantP != nil {
+		w.wantP.Ensure()
+	}
+	return w.leftovers(nil)
+}
+
+type keepFold struct {
+	next int
+	wait map[int]pendingKeep
+}
+
+func (f *keepFold) push(item pendingKeep) []pendingKeep {
+	if f.wait == nil {
+		f.wait = map[int]pendingKeep{}
+	}
+	f.wait[item.seq] = item
+	var out []pendingKeep
+	for {
+		item, ok := f.wait[f.next]
+		if !ok {
+			break
+		}
+		delete(f.wait, f.next)
+		f.next++
+		out = append(out, item)
+	}
+	return out
+}
+
+func (s *world) foldKept(ctx context.Context, board *beam, st *rankState, fold *keepFold, inFlight *int, item pendingKeep, emit func(Op, []pix, []pix, []search.Rated) bool) {
+	for _, ready := range fold.push(item) {
+		board.endChoose()
+		*inFlight--
+		if !s.retainKept(ctx, board, st, ready.sn, ready.pick, st.shown, emit) {
 			return
 		}
 	}
-	s.publishRank(ctx, board, st, proposals)
 }
 
 func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, proposals []search.Proposal, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
