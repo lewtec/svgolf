@@ -55,6 +55,7 @@ func (c *serverCmd) Run(ctx context.Context) error {
 	return progress.Run(sess, sctx, func(ctx context.Context) error {
 		s := &server{cache: cache, algo: algo, all: event.New[jobEvent]()}
 		mux := http.NewServeMux()
+		mountProfiles(mux)
 		mux.HandleFunc("GET /", s.watch(ctx, s.handleHome))
 		mux.HandleFunc("POST /jobs", s.watch(ctx, func(w http.ResponseWriter, r *http.Request) {
 			s.handleCreate(ctx, w, r)

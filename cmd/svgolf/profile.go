@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	httpprof "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,6 +13,19 @@ import (
 	"sync"
 	"syscall"
 )
+
+// mountProfiles exposes the process profiles on the server.
+// Block and mutex rates stay on so those two profiles are not empty.
+func mountProfiles(mux *http.ServeMux) {
+	runtime.SetBlockProfileRate(1)
+	runtime.SetMutexProfileFraction(1)
+	mux.HandleFunc("GET /debug/pprof/", httpprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", httpprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", httpprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", httpprof.Symbol)
+	mux.HandleFunc("POST /debug/pprof/symbol", httpprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", httpprof.Trace)
+}
 
 func startProfiles(dir string) (func() error, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
