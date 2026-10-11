@@ -2,6 +2,7 @@ package stack
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 
 	_ "github.com/lewtec/lewkit/x/driver/ndeval/vulkan"
 	"github.com/lewtec/lewkit/x/ndarray"
+	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
@@ -18,15 +20,22 @@ import (
 // beam is the chooser's list of the best documents. Proposers read it and
 // claim the parent that currently has the fewest proposers working on it.
 type beam struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	best    []snapshot
-	served  map[Op]map[int]bool
-	busy    map[int]int
-	pending int
-	holding int
-	closed  bool
-	head    int
+	mu       sync.Mutex
+	cond     *sync.Cond
+	best     []snapshot
+	served   map[Op]map[int]bool
+	busy     map[int]int
+	queue    []agentTask
+	inflight int
+	pending  int
+	holding  int
+	closed   bool
+	head     int
+}
+
+type agentTask struct {
+	kind   Op
+	parent snapshot
 }
 
 func newBeam(first snapshot) *beam {
@@ -172,8 +181,49 @@ func (b *beam) endChoose() {
 	b.cond.Broadcast()
 }
 
+func (b *beam) schedule(sn snapshot) {
+	b.mu.Lock()
+	for _, kind := range agentKinds() {
+		if b.served[kind] != nil && b.served[kind][sn.id] {
+			continue
+		}
+		b.queue = append(b.queue, agentTask{kind: kind, parent: sn})
+	}
+	b.mu.Unlock()
+	b.cond.Broadcast()
+}
+
+func (b *beam) takeTask() (agentTask, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for {
+		if b.closed && len(b.queue) == 0 {
+			return agentTask{}, false
+		}
+		if len(b.queue) > 0 {
+			task := b.queue[0]
+			b.queue = b.queue[1:]
+			b.inflight++
+			return task, true
+		}
+		if b.quiescent() {
+			return agentTask{}, false
+		}
+		b.cond.Wait()
+	}
+}
+
+func (b *beam) taskDone() {
+	b.mu.Lock()
+	if b.inflight > 0 {
+		b.inflight--
+	}
+	b.mu.Unlock()
+	b.cond.Broadcast()
+}
+
 func (b *beam) quiescent() bool {
-	if b.pending > 0 || b.holding > 0 {
+	if b.pending > 0 || b.holding > 0 || b.inflight > 0 || len(b.queue) > 0 {
 		return false
 	}
 	for _, n := range b.busy {
@@ -230,69 +280,73 @@ type agentNote struct {
 // the best beamWidth documents. Worker slots leave one processor for the chooser
 // so scoring does not deadlock the render pool.
 func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []search.Rated) bool) (bool, error) {
-	evaluator, err := openEvaluator(ctx)
-	if err != nil {
-		return false, err
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	first := s.snap()
-	first.lefts = s.leftovers()
+	first.lefts = s.watchLeftovers(ctx)
 	board := newBeam(first)
-	notes := make(chan agentNote)
+	board.schedule(first)
+	jobs := make(chan agentTask)
+	proposals := make(chan agentNote)
 	var wg sync.WaitGroup
-	slots := runtime.GOMAXPROCS(0) - 1
-	if slots < 1 {
-		slots = 1
+	workers := runtime.GOMAXPROCS(0) - 1
+	if workers < 1 {
+		workers = 1
 	}
-	ticket := make(chan struct{}, slots)
-	for _, kind := range agentKinds() {
+	go func() {
+		defer close(jobs)
+		for {
+			task, ok := board.takeTask()
+			if !ok {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				board.taskDone()
+				board.close()
+				return
+			case jobs <- task:
+			}
+		}
+	}()
+	for range workers {
 		wg.Add(1)
-		go func(kind Op) {
+		go func() {
 			defer wg.Done()
-			for {
-				if ctx.Err() != nil {
-					return
-				}
-				parent, ok := board.claim(kind)
-				if !ok {
-					return
-				}
-				select {
-				case <-ctx.Done():
-					board.finish(kind, parent.id)
-					return
-				case ticket <- struct{}{}:
-				}
+			for task := range jobs {
 				started := time.Now()
-				fork := parent.fork(s.want, s.wantP, s.w, s.h)
-				err := fork.emitKind(kind, parent.lefts, func(p formPick) {
-					p.parent = parent
+				fork := task.parent.fork(s.want, s.wantP, s.w, s.h)
+				fork.ctx = ctx
+				fork.rank = s.rank
+				fork.candidateLog = s.candidateLog
+				jobNote(ctx, task.kind.String())
+				err := fork.emitKind(task.kind, task.parent.lefts, func(p formPick) {
+					p.parent = task.parent
 					note := agentNote{pick: p, elapsed: time.Since(started)}
 					board.account(1)
 					select {
 					case <-ctx.Done():
 						board.account(-1)
-					case notes <- note:
+					case proposals <- note:
 					}
 				})
-				<-ticket
-				board.finish(kind, parent.id)
+				board.finish(task.kind, task.parent.id)
+				board.taskDone()
 				if err != nil {
 					board.account(1)
 					select {
 					case <-ctx.Done():
 						board.account(-1)
-					case notes <- agentNote{err: err}:
+					case proposals <- agentNote{err: err}:
 					}
 					return
 				}
 			}
-		}(kind)
+		}()
 	}
 	go func() {
 		wg.Wait()
-		close(notes)
+		close(proposals)
 	}()
 
 	yielded := false
@@ -300,12 +354,13 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	bestByOp := map[Op]*namedPick{}
 	flushed := 0
 	var pool []formPick
+	var recent []candResult
 	stop := false
 	go func() {
 		<-ctx.Done()
 		board.close()
 	}()
-	for note := range notes {
+	for note := range proposals {
 		board.beginChoose()
 		board.account(-1)
 		if stop || ctx.Err() != nil {
@@ -340,20 +395,32 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 			st.pick = pick
 		}
 		s.logCandidate(id, note.elapsed, pick)
+		if pick.scored {
+			recent = append(recent, candResult{name: id.String(), pick: pick})
+			if len(recent) > 12 {
+				recent = recent[len(recent)-12:]
+			}
+			if s.rank != nil {
+				rows := append([]candResult(nil), recent...)
+				sortCandResults(rows)
+				s.rank.show(ctx, rankSummary(rows, beamWidth))
+			}
+		}
 		if !pick.ok {
 			board.endChoose()
 			continue
 		}
 		s.load(pick.parent)
 		s.apply(pick)
-		_ = s.dispatchResidual(ctx, evaluator, pick.dirty)
 		sn := s.snap()
 		sn.operator = pick.op
-		sn.lefts = s.leftovers()
+		sn.lefts = s.watchLeftovers(ctx)
+		jobNote(ctx, fmt.Sprintf("%s · %s", pick.op, archiveLine(board.list())))
 		if !board.offer(sn) {
 			board.endChoose()
 			continue
 		}
+		board.schedule(sn)
 		pool = append(pool, pick)
 		if top, changed := board.takeHead(head); changed {
 			head = top.id
@@ -384,6 +451,17 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		return false, err
 	}
 	return yielded, nil
+}
+
+func (s *world) watchLeftovers(ctx context.Context) []leftover {
+	var lefts []leftover
+	watchStep(ctx, "leftovers", func(st *taskgroup.Status) {
+		lefts = s.leftovers()
+		if st != nil {
+			st.Update(fmt.Sprintf("%d islands", len(lefts)))
+		}
+	})
+	return lefts
 }
 
 func (s *world) scoreDraft(p formPick) (formPick, error) {

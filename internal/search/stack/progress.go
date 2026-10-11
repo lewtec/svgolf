@@ -78,6 +78,18 @@ func pickLine(p formPick) string {
 	return fmt.Sprintf("%.3f %s · %d paths · %d cmds", p.errSum, state, p.paths, p.commands)
 }
 
+func sortCandResults(rows []candResult) {
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+		j := i
+		for j > 0 && betterPick(row.pick, rows[j-1].pick) {
+			rows[j] = rows[j-1]
+			j--
+		}
+		rows[j] = row
+	}
+}
+
 func rankSummary(rows []candResult, limit int) string {
 	if len(rows) == 0 {
 		return "no candidates"

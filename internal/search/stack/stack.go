@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -317,12 +316,11 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 		s.rank = &liveRank{}
 		defer s.rank.stop()
 		started := time.Now()
-		yielded := false
 		stop := func(err error) bool {
 			if err == nil {
 				return false
 			}
-			if ctx.Err() != nil && yielded {
+			if ctx.Err() != nil {
 				return true
 			}
 			yield(search.Epoch{}, err)
@@ -339,137 +337,14 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			started = time.Now()
 			return ok
 		}
-		archive := []snapshot{s.snap()}
-		band := 1
-		polished := false
-		polishHelped := false
-		for {
-			if err := ctx.Err(); err != nil {
-				if !yielded {
-					yield(search.Epoch{}, err)
-				}
-				return
+		ok, err := s.runAgents(ctx, emit)
+		if err != nil {
+			if !ok && !stop(err) {
+				yield(search.Epoch{}, err)
 			}
-			var pool []formPick
-			var rated []search.Rated
-			jobNote(ctx, fmt.Sprintf("%s · archive %d", bandLabel(band), len(archive)))
-			if band == 4 {
-				miss := make([][]leftover, len(archive))
-				for j, member := range archive {
-					s.load(member)
-					var lefts []leftover
-					watchStep(ctx, fmt.Sprintf("leftovers %d", j+1), func(st *taskgroup.Status) {
-						if st != nil {
-							st.Update(bandLabel(band))
-						}
-						lefts = s.leftovers()
-						if st != nil {
-							st.Update(fmt.Sprintf("%d islands", len(lefts)))
-						}
-					})
-					miss[j] = lefts
-				}
-				for i, member := range archive {
-					for j := range archive {
-						if i == j {
-							continue
-						}
-						s.load(member)
-						jobNote(ctx, fmt.Sprintf("%s · %d on %d", bandLabel(band), i+1, j+1))
-						picks, pr, _, err := s.choose(ctx, s.bindLeftovers(miss[j]), member, 4)
-						if stop(err) {
-							return
-						}
-						pool = append(pool, picks...)
-						rated = mergeRated(rated, pr)
-					}
-				}
-			} else {
-				for j, member := range archive {
-					s.load(member)
-					// Polish only runs simplify and unhole. The
-					// leftover flood is not an input to either.
-					var lefts []leftover
-					if band != polishBand {
-						watchStep(ctx, "leftovers", func(st *taskgroup.Status) {
-							if st != nil {
-								st.Update(fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
-							}
-							lefts = s.leftovers()
-							if st != nil {
-								st.Update(fmt.Sprintf("%d islands", len(lefts)))
-							}
-						})
-					}
-					jobNote(ctx, fmt.Sprintf("%s · member %d/%d", bandLabel(band), j+1, len(archive)))
-					picks, pr, miss, err := s.choose(ctx, lefts, member, band)
-					if stop(err) {
-						return
-					}
-					if miss != nil {
-						archive[j].simplifyMiss = miss
-					}
-					pool = append(pool, picks...)
-					rated = mergeRated(rated, pr)
-				}
-			}
-			next, improved := s.archiveUpdate(archive, pool, band)
-			jobNote(ctx, fmt.Sprintf("%s · archive %s", bandLabel(band), archiveLine(next)))
-			// A short sibling can take another triangle forever
-			// without beating the plate. Restarting on that
-			// nibble never reaches the edge moves. Only a new
-			// lex-best opens the neighborhood again.
-			bestMoved := improved && len(next) > 0 && !samePoint(archive[0], next[0])
-			if improved {
-				archive = next
-			}
-			if bestMoved {
-				s.load(archive[0])
-				yielded = true
-				markKept(rated, []formPick{{op: archive[0].operator}})
-				blob, fitted := leftoverView(archive[0], pool)
-				if !emit(archive[0].operator, blob, fitted, rated) {
-					return
-				}
-				if band == polishBand {
-					polishHelped = true
-					continue
-				}
-				polished = false
-				polishHelped = false
-				// After a leftover add, score wash/join against
-				// the next ear in the same neighborhood.
-				if leftoverAdd(archive[0].operator) {
-					band = 2
-				} else {
-					band = 1
-				}
-				continue
-			}
-			if band < 3 {
-				band++
-				continue
-			}
-			if band == 3 {
-				band = 4
-				continue
-			}
-			if band == 4 {
-				if polished {
-					break
-				}
-				band = polishBand
-				polishHelped = false
-				continue
-			}
-			polished = true
-			if polishHelped {
-				band = 1
-				continue
-			}
-			break
+			return
 		}
-		if !yielded {
+		if !ok {
 			emit(OpNone, nil, nil, nil)
 		}
 	}

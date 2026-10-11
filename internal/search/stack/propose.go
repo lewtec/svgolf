@@ -255,7 +255,7 @@ func proposeOne(oper Operator, emit func(formPick)) error {
 
 func agentKinds() []Op {
 	return []Op{
-		OpTriangle, OpRectangle, OpRing,
+		OpTriangle, OpRectangle, OpRing, OpOutline,
 		OpGrow, OpCarve, OpSlide, OpBend,
 		OpSimplify, OpUnhole,
 		OpWash, OpJoin, OpSubtract, OpSwap, OpDelete,
