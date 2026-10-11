@@ -63,7 +63,6 @@ func gpuEvaluator(ctx context.Context) ndarray.Evaluator {
 		return nil
 	}
 	if ev := flaggedEvaluator(ctx); ev != nil {
-		logNDDriver(ev, nil)
 		gpuEval.Store(&gpuHold{ev: ev})
 		gpuTried.Store(true)
 		return ev
