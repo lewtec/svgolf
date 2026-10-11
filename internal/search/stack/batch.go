@@ -8,31 +8,100 @@ import (
 	"github.com/lewtec/svgolf/pkg/render"
 )
 
-// scoreJobs is one device evaluation for every rectangle, or the
-// float64 loop when the device path is closed.
+// maxDevicePixels is the most pixels one score kernel may read.
+// The loss is a sum of per-pixel terms, so a larger rectangle is several
+// row bands and the bands add. Device buffers only grow, so this cap is
+// also the resident size of the tape.
+const maxDevicePixels = 1 << 20
+
+// splitRows cuts r into row bands of at most limit pixels. A row wider
+// than limit stays one band; the caller scores that band without the device.
+func splitRows(r image.Rectangle, limit int) []image.Rectangle {
+	if limit < 1 {
+		limit = 1
+	}
+	if r.Empty() || r.Dx() < 1 || r.Dy() < 1 {
+		return nil
+	}
+	var out []image.Rectangle
+	for r.Dy() > 0 {
+		rows := limit / r.Dx()
+		if rows < 1 {
+			rows = 1
+		}
+		if rows > r.Dy() {
+			rows = r.Dy()
+		}
+		out = append(out, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+rows))
+		r.Min.Y += rows
+	}
+	return out
+}
+
+// scoreJobs sums every rectangle. A rectangle wider than the device
+// budget is split into row bands. The caller adds those bands.
 func scoreJobs(ctx context.Context, want *image.NRGBA, gots []*image.NRGBA, rects []image.Rectangle) []float64 {
-	if ctx != nil && ctx.Err() != nil {
-		return nil
-	}
-	if sums, ok := ndScoreMany(ctx, want, gots, rects); ok {
-		return sums
-	}
-	if ctx != nil && ctx.Err() != nil {
-		return nil
-	}
+	return scoreJobsLimited(ctx, want, gots, rects, maxDevicePixels)
+}
+
+func scoreJobsLimited(ctx context.Context, want *image.NRGBA, gots []*image.NRGBA, rects []image.Rectangle, limit int) []float64 {
 	out := make([]float64, len(rects))
-	for i := range rects {
+	if limit < 1 {
+		limit = 1
+	}
+	type piece struct {
+		job int
+		r   image.Rectangle
+	}
+	var pieces []piece
+	for i, r := range rects {
+		if want != nil {
+			r = r.Intersect(want.Bounds())
+		}
+		if i < len(gots) && gots[i] != nil {
+			r = r.Intersect(gots[i].Bounds())
+		}
+		for _, band := range splitRows(r, limit) {
+			pieces = append(pieces, piece{i, band})
+		}
+	}
+	for start := 0; start < len(pieces); {
 		if ctx != nil && ctx.Err() != nil {
 			return nil
 		}
-		if gots[i] == nil || want == nil || rects[i].Empty() {
-			continue
+		pixels := 0
+		end := start
+		for end < len(pieces) {
+			n := pieces[end].r.Dx() * pieces[end].r.Dy()
+			if end > start && pixels+n > limit {
+				break
+			}
+			pixels += n
+			end++
 		}
-		if rects[i].Eq(want.Bounds()) && rects[i].Eq(gots[i].Bounds()) {
-			out[i] = Score(ctx, gots[i], want)
-			continue
+		partGots := make([]*image.NRGBA, end-start)
+		partRects := make([]image.Rectangle, end-start)
+		for k := start; k < end; k++ {
+			partGots[k-start] = gots[pieces[k].job]
+			partRects[k-start] = pieces[k].r
 		}
-		out[i] = ScoreRect(ctx, gots[i], want, rects[i])
+		sums, ok := ndScoreMany(ctx, want, partGots, partRects)
+		if !ok {
+			if ctx != nil && ctx.Err() != nil {
+				return nil
+			}
+			sums = make([]float64, len(partRects))
+			for k, r := range partRects {
+				if partGots[k] == nil || want == nil || r.Empty() {
+					continue
+				}
+				sums[k] = ScoreRect(ctx, partGots[k], want, r)
+			}
+		}
+		for k := start; k < end; k++ {
+			out[pieces[k].job] += sums[k-start]
+		}
+		start = end
 	}
 	return out
 }
@@ -44,6 +113,39 @@ func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 	out := make([]formPick, len(drafts))
 	if ctx != nil && ctx.Err() != nil {
 		return out
+	}
+	frame := 1
+	if s.want != nil {
+		b := s.want.Bounds()
+		if n := b.Dx() * b.Dy(); n > 0 {
+			frame = n
+		}
+	}
+	for start := 0; start < len(drafts); {
+		if ctx != nil && ctx.Err() != nil {
+			return out
+		}
+		used := 0
+		end := start
+		for end < len(drafts) {
+			if used > 0 && used+frame > maxDevicePixels {
+				break
+			}
+			used += frame
+			end++
+			if used >= maxDevicePixels {
+				break
+			}
+		}
+		s.scoreGroup(ctx, drafts[start:end], out[start:end])
+		start = end
+	}
+	return out
+}
+
+func (s *world) scoreGroup(ctx context.Context, drafts []formPick, out []formPick) {
+	if ctx != nil && ctx.Err() != nil {
+		return
 	}
 	rendered := make([]*image.NRGBA, len(drafts))
 	var wg sync.WaitGroup
@@ -69,7 +171,7 @@ func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 	}
 	wg.Wait()
 	if ctx != nil && ctx.Err() != nil {
-		return out
+		return
 	}
 
 	type part struct {
@@ -115,8 +217,8 @@ func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 		rects[i] = job.r
 	}
 	sums := scoreJobs(ctx, s.want, gots, rects)
-	if ctx != nil && ctx.Err() != nil {
-		return out
+	if ctx != nil && ctx.Err() != nil || sums == nil {
+		return
 	}
 	for i, d := range drafts {
 		if d.scored {
@@ -144,7 +246,9 @@ func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 			parentCmds = docCmdLen(d.parent.doc)
 		}
 		ok := acceptLexicographic(nerr, npaths, ncmds, d.parent.errSum, d.parent.paths, parentCmds)
-		d.got = rendered[i]
+		if ok {
+			d.got = rendered[i]
+		}
 		d.errSum = nerr
 		d.paths = npaths
 		d.commands = ncmds
@@ -152,5 +256,4 @@ func (s *world) scoreBatch(ctx context.Context, drafts []formPick) []formPick {
 		d.scored = true
 		out[i] = d
 	}
-	return out
 }

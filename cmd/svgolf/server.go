@@ -312,7 +312,6 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	ctx = stack.WithJobStatus(ctx, st)
 	stack.ShowFrames(true)
 	n := 0
-	var scores []float64
 	var rounds [][]search.Rated
 	var pathCounts []int
 	var vertexCounts []int
@@ -320,6 +319,10 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	ctx = stack.WithFrames(ctx, func(frame search.Frame) {
 		meta.Beam = frame.Beam
 		meta.Proposals = frame.Proposals
+		if len(frame.Loss) > 0 {
+			meta.Scores = frame.Loss
+			meta.Score = frame.Loss[len(frame.Loss)-1]
+		}
 		_ = writeMeta(dir, meta)
 		s.publish(id, "frame", meta)
 	})
@@ -330,13 +333,10 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		if err := ctx.Err(); err != nil {
 			return s.stopJob(st, dir, id, context.Cause(ctx))
 		}
-		got, err := writeEpoch(ctx, dir, n, ep, want)
-		if err != nil {
+		if _, err := writeEpoch(ctx, dir, n, ep, want); err != nil {
 			return s.stopJob(st, dir, id, err)
 		}
 		n++
-		sc := stack.Score(ctx, got, want)
-		scores = append(scores, sc)
 		rounds = append(rounds, ep.Rated)
 		paths := documentPaths(ep.Document)
 		vertices := documentVertices(ep.Document)
@@ -347,8 +347,9 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		meta.Search = s.algo
 		meta.Epochs = n
 		meta.Operator = ep.Operator.String()
-		meta.Score = sc
-		meta.Scores = scores
+		if len(meta.Scores) > 0 {
+			meta.Score = meta.Scores[len(meta.Scores)-1]
+		}
 		meta.Rounds = rounds
 		meta.Paths = paths
 		meta.Vertices = vertices
@@ -358,7 +359,7 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 		_ = writeMeta(dir, meta)
 		s.publish(id, "epoch", meta)
 		if st != nil {
-			st.Update(fmt.Sprintf("epoch %d · %s · %.3f", n, meta.Operator, sc))
+			st.Update(fmt.Sprintf("epoch %d · %s · %.3f", n, meta.Operator, meta.Score))
 			st.Progress(int64(n), -1)
 		}
 	}

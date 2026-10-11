@@ -210,6 +210,18 @@ func TestLogNDDriverCPUStaysFloat64(t *testing.T) {
 	}
 }
 
+func TestPixelBudgetLeavesTheDeviceOn(t *testing.T) {
+	before := gpuOff.Load()
+	_, err := gpuTapeFor(maxDevicePixels + 1)
+	if !errors.Is(err, errPixelBudget) {
+		t.Fatalf("err=%v", err)
+	}
+	noteDeviceErr(t.Context(), err)
+	if gpuOff.Load() != before {
+		t.Fatal("pixel budget disabled the device")
+	}
+}
+
 func TestNilContextSkipsDevice(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 255, B: 255, A: 255})

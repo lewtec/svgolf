@@ -96,8 +96,8 @@ templ JobPage(j JobView) {
 			<div class="card bg-base-200">
 				<div class="card-body">
 					<h2 class="card-title">Loss</h2>
-					<p id="loss-scale" class="text-sm opacity-70">one point per accepted head</p>
-					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss over epochs"></svg>
+					<p id="loss-scale" class="text-sm opacity-70">one point each time a proposal is kept</p>
+					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss of kept proposals"></svg>
 				</div>
 			</div>
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -224,8 +224,10 @@ templ JobPage(j JobView) {
 			function takeFrame(d) {
 				if (Array.isArray(d.beam)) beam = d.beam;
 				if (Array.isArray(d.proposals)) proposals = d.proposals;
+				if (Array.isArray(d.scores) && d.scores.length) scores = d.scores;
 				paintBeam();
 				paintProposals();
+				drawLoss(scores);
 			}
 			function fmt(v) {
 				if (!Number.isFinite(v)) return "-";
@@ -239,7 +241,7 @@ templ JobPage(j JobView) {
 				const pad = { l: 64, r: 16, t: 16, b: 28 };
 				while (svg.firstChild) svg.removeChild(svg.firstChild);
 				if (!vals.length) {
-					note.textContent = "waiting for the first accepted head";
+					note.textContent = "waiting for the first kept proposal";
 					return;
 				}
 				let ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);
@@ -248,7 +250,7 @@ templ JobPage(j JobView) {
 					ymax = ymax * 1.1 || 1;
 				}
 				const log = ymin > 0 && ymax / ymin >= 10;
-				note.textContent = log ? "log10 score · accepted head" : "score · accepted head";
+				note.textContent = log ? "log10 score · kept proposals" : "score · kept proposals";
 				const yOf = (v) => {
 					const a = log ? Math.log10(v) : v;
 					const lo = log ? Math.log10(ymin) : ymin;
@@ -278,7 +280,7 @@ templ JobPage(j JobView) {
 					svg.appendChild(el("path", { d: d, fill: "none", stroke: "currentColor", "stroke-width": "2" }));
 					for (let i = 0; i < vals.length; i++) {
 						const c = el("circle", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: "currentColor" });
-						c.appendChild(el("title")).textContent = "epoch " + i + " · " + fmt(vals[i]);
+						c.appendChild(el("title")).textContent = "kept " + i + " · " + fmt(vals[i]);
 						svg.appendChild(c);
 					}
 				}
@@ -292,10 +294,7 @@ templ JobPage(j JobView) {
 				document.getElementById("status").textContent = d.status;
 				document.getElementById("meta").textContent =
 					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.vertices} vertices · ${d.elapsed}`;
-				if (Array.isArray(d.scores)) scores = d.scores;
-				else if (d.n >= scores.length) scores.push(parseFloat(d.score));
 				takeFrame(d);
-				drawLoss(scores);
 				show();
 			});
 			es.addEventListener("frame", (ev) => {

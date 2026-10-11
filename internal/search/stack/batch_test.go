@@ -9,6 +9,32 @@ import (
 	"github.com/lewtec/svgolf/pkg/svg"
 )
 
+func TestScoreJobsBandsMatchWholeRect(t *testing.T) {
+	gotImg := image.NewNRGBA(image.Rect(0, 0, 32, 8))
+	want := image.NewNRGBA(image.Rect(0, 0, 32, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 32; x++ {
+			gotImg.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 7), G: uint8(y * 20), A: 255})
+			want.SetNRGBA(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+		}
+	}
+	whole := ScoreRect(nil, gotImg, want, want.Bounds())
+	got := scoreJobsLimited(nil, want, []*image.NRGBA{gotImg}, []image.Rectangle{want.Bounds()}, 32)
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+	if math.Abs(got[0]-whole) > 1e-6*math.Abs(whole) {
+		t.Fatalf("bands=%v whole=%v", got[0], whole)
+	}
+	device := scoreJobsLimited(t.Context(), want, []*image.NRGBA{gotImg}, []image.Rectangle{want.Bounds()}, 32)
+	if len(device) != 1 {
+		t.Fatalf("device len=%d", len(device))
+	}
+	if d := math.Abs(device[0] - whole); d > 1e-3*math.Abs(whole) && d > 1e-3 {
+		t.Fatalf("device bands=%v whole=%v", device[0], whole)
+	}
+}
+
 func TestScoreBatchMatchesScoreDraft(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
 	for y := 0; y < 8; y++ {

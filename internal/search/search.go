@@ -56,10 +56,12 @@ type Proposal struct {
 	Keep     bool    `json:"keep"`
 }
 
-// Frame is the beam and the batch the ranker just scored.
+// Frame is the beam, the batch the ranker just scored, and the loss
+// of every proposal that entered the pool.
 type Frame struct {
 	Beam      []Slot     `json:"beam"`
 	Proposals []Proposal `json:"proposals"`
+	Loss      []float64  `json:"loss,omitempty"`
 }
 
 // Search is the whole problem: want pixmap → one Epoch per step.

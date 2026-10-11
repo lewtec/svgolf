@@ -179,10 +179,14 @@ func loadGPU() ndarray.Evaluator {
 	return h.ev
 }
 
+// errPixelBudget means the caller asked for more pixels than one kernel
+// may read. It is a local refusal, not a broken device.
+var errPixelBudget = errors.New("stack: pixel budget")
+
 // noteDeviceErr turns the device off after a real failure. Cancel
 // and a missing parent leave it alone so the next score can try again.
 func noteDeviceErr(ctx context.Context, err error) {
-	if err == nil || ctx == nil || ctx.Err() != nil {
+	if err == nil || errors.Is(err, errPixelBudget) || ctx == nil || ctx.Err() != nil {
 		return
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -217,6 +221,9 @@ func pow2(n int) int {
 }
 
 func gpuTapeFor(n int) (*errTape, error) {
+	if n > maxDevicePixels {
+		return nil, errPixelBudget
+	}
 	if gpuTape != nil && gpuTape.cap >= n {
 		if err := gpuTape.err.Resize(ndarray.Shape{n}); err != nil {
 			return nil, err
@@ -476,17 +483,10 @@ func (tape *errTape) eval(ctx context.Context, ev ndarray.Evaluator, n int) (flo
 }
 
 func ndScoreImages(ctx context.Context, got, want *image.NRGBA) (float64, bool) {
-	ev := gpuEvaluator(ctx)
-	if ev == nil || got == nil || want == nil || !got.Rect.Eq(want.Rect) {
+	if got == nil || want == nil {
 		return 0, false
 	}
-	n := got.Rect.Dx() * got.Rect.Dy()
-	if n == 0 {
-		return 0, true
-	}
-	gpuMu.Lock()
-	defer gpuMu.Unlock()
-	return ndScoreLocked(ctx, ev, got, want, got.Rect, n)
+	return ndScoreImageRect(ctx, got, want, got.Rect)
 }
 
 // ndScoreMany packs every rectangle into one kernel. sums[i] is the
@@ -558,9 +558,29 @@ func ndScoreImageRect(ctx context.Context, got, want *image.NRGBA, r image.Recta
 		return 0, true
 	}
 	n := r.Dx() * r.Dy()
+	if n > maxDevicePixels {
+		return deviceSumBands(ctx, want, got, r)
+	}
 	gpuMu.Lock()
 	defer gpuMu.Unlock()
 	return ndScoreLocked(ctx, ev, got, want, r, n)
+}
+
+// deviceSumBands scores r as row bands. A failed band fails the whole
+// sum so the caller can use one float64 walk instead of a mixed total.
+func deviceSumBands(ctx context.Context, want, got *image.NRGBA, r image.Rectangle) (float64, bool) {
+	var total float64
+	for _, band := range splitRows(r, maxDevicePixels) {
+		if ctx != nil && ctx.Err() != nil {
+			return 0, false
+		}
+		sums, ok := ndScoreMany(ctx, want, []*image.NRGBA{got}, []image.Rectangle{band})
+		if !ok || len(sums) != 1 {
+			return 0, false
+		}
+		total += sums[0]
+	}
+	return total, true
 }
 
 func ndScoreLocked(ctx context.Context, ev ndarray.Evaluator, got, want *image.NRGBA, r image.Rectangle, n int) (float64, bool) {
@@ -587,37 +607,28 @@ func ndStamp(ctx context.Context, got, want *image.NRGBA, lo, hi float64, mark [
 		return false, false
 	}
 	b := want.Rect
-	n := b.Dx() * b.Dy()
+	w, h := b.Dx(), b.Dy()
+	n := w * h
 	if n == 0 || len(mark) < n || len(family) < n {
 		return false, false
 	}
-	gpuMu.Lock()
-	tape, err := gpuTapeFor(n)
-	if err != nil {
-		noteDeviceErr(ctx, err)
-		gpuMu.Unlock()
-		return false, false
+	for y := 0; y < h; {
+		if ctx != nil && ctx.Err() != nil {
+			return false, false
+		}
+		rows := maxDevicePixels / w
+		if rows < 1 {
+			rows = 1
+		}
+		if rows > h-y {
+			rows = h - y
+		}
+		r := image.Rect(b.Min.X, b.Min.Y+y, b.Max.X, b.Min.Y+y+rows)
+		if !stampBand(ctx, ev, got, want, lo, hi, r, mark[y*w:]) {
+			return false, false
+		}
+		y += rows
 	}
-	if err := tape.mark.Resize(ndarray.Shape{n}); err != nil {
-		noteDeviceErr(ctx, err)
-		gpuMu.Unlock()
-		return false, false
-	}
-	tape.load(got, want, b)
-	if buf := tape.lo.Buffer(); len(buf) > 0 {
-		buf[0] = float32(lo)
-	}
-	if buf := tape.hi.Buffer(); len(buf) > 0 {
-		buf[0] = float32(hi)
-	}
-	if err := tape.mark.Eval(ctx, ev, tape.mask[:n]); err != nil {
-		noteDeviceErr(ctx, err)
-		gpuMu.Unlock()
-		return false, false
-	}
-	copy(mark[:n], tape.mask[:n])
-	gpuMu.Unlock()
-	w := b.Dx()
 	for i := range n {
 		if mark[i] == 0 {
 			continue
@@ -628,4 +639,35 @@ func ndStamp(ctx context.Context, got, want *image.NRGBA, lo, hi float64, mark [
 		any = true
 	}
 	return true, any
+}
+
+func stampBand(ctx context.Context, ev ndarray.Evaluator, got, want *image.NRGBA, lo, hi float64, r image.Rectangle, dst []byte) bool {
+	n := r.Dx() * r.Dy()
+	if n == 0 || len(dst) < n {
+		return false
+	}
+	gpuMu.Lock()
+	defer gpuMu.Unlock()
+	tape, err := gpuTapeFor(n)
+	if err != nil {
+		noteDeviceErr(ctx, err)
+		return false
+	}
+	if err := tape.mark.Resize(ndarray.Shape{n}); err != nil {
+		noteDeviceErr(ctx, err)
+		return false
+	}
+	tape.load(got, want, r)
+	if buf := tape.lo.Buffer(); len(buf) > 0 {
+		buf[0] = float32(lo)
+	}
+	if buf := tape.hi.Buffer(); len(buf) > 0 {
+		buf[0] = float32(hi)
+	}
+	if err := tape.mark.Eval(ctx, ev, tape.mask[:n]); err != nil {
+		noteDeviceErr(ctx, err)
+		return false
+	}
+	copy(dst[:n], tape.mask[:n])
+	return true
 }

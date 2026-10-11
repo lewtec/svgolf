@@ -312,6 +312,7 @@ type rankState struct {
 	flushed  int
 	pool     []formPick
 	recent   []candResult
+	loss     []float64
 	stop     bool
 }
 
@@ -388,8 +389,10 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		if !board.offer(sn) {
 			continue
 		}
+		st.loss = append(st.loss, sn.errSum)
 		jobNote(ctx, archiveLine(board.list()))
 		st.pool = append(st.pool, pick)
+		s.publishRank(ctx, board, st, proposals)
 		if top, changed := board.takeHead(st.head); changed {
 			st.head = top.id
 			s.load(top)
@@ -404,7 +407,15 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			}
 		}
 	}
-	emitFrame(ctx, search.Frame{Beam: beamSlots(board.list()), Proposals: proposals})
+	s.publishRank(ctx, board, st, proposals)
+}
+
+func (s *world) publishRank(ctx context.Context, board *beam, st *rankState, proposals []search.Proposal) {
+	emitFrame(ctx, search.Frame{
+		Beam:      beamSlots(board.list()),
+		Proposals: proposals,
+		Loss:      append([]float64(nil), st.loss...),
+	})
 }
 
 func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote) {
