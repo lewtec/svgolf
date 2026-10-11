@@ -4,14 +4,14 @@ import (
 	_ "github.com/lewtec/svgolf/internal/search/prelude"
 
 	"github.com/lewtec/lewkit/x/cmd"
-	"github.com/lewtec/svgolf/internal/search"
+	"github.com/lewtec/lewkit/x/driver/ndeval"
 )
 
-// root is the svgolf command. Flags are x/cmd fields. gpu is stored on the
-// context under "gpu" as a Processor for Search.
+// root is the svgolf command. Flags are x/cmd fields. gpu is one ndarray
+// evaluator, resolved from an expression and stored on the context.
 type root struct {
-	GPU     cmd.EnumArg[search.Processor] `long:"gpu" default:"integrated" help:"graphics processor: integrated (onboard), dedicated, virtual, software, or other" ctx:"gpu"`
-	Profile cmd.StringArg                 `long:"profile" default:"" help:"directory to write cpu, heap, allocs, goroutine, mutex, block profiles and an execution trace"`
+	GPU     ndeval.Arg    `long:"gpu" help:"evaluator expression, for example vulkan:integrated | cpu" ctx:"gpu"`
+	Profile cmd.StringArg `long:"profile" default:"" help:"directory to write cpu, heap, allocs, goroutine, mutex, block profiles and an execution trace"`
 
 	Render    *renderCmd
 	Verify    *verifyCmd
