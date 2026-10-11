@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lewtec/svgolf/pkg/svg"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScoreJobsBandsMatchWholeRect(t *testing.T) {
@@ -20,19 +21,11 @@ func TestScoreJobsBandsMatchWholeRect(t *testing.T) {
 	}
 	whole := ScoreRect(nil, gotImg, want, want.Bounds())
 	got := scoreJobsLimited(nil, want, []*image.NRGBA{gotImg}, []image.Rectangle{want.Bounds()}, 32)
-	if len(got) != 1 {
-		t.Fatalf("len=%d", len(got))
-	}
-	if math.Abs(got[0]-whole) > 1e-6*math.Abs(whole) {
-		t.Fatalf("bands=%v whole=%v", got[0], whole)
-	}
+	require.Len(t, got, 1)
+	require.InDelta(t, whole, got[0], 1e-6*math.Abs(whole))
 	device := scoreJobsLimited(t.Context(), want, []*image.NRGBA{gotImg}, []image.Rectangle{want.Bounds()}, 32)
-	if len(device) != 1 {
-		t.Fatalf("device len=%d", len(device))
-	}
-	if d := math.Abs(device[0] - whole); d > 1e-3*math.Abs(whole) && d > 1e-3 {
-		t.Fatalf("device bands=%v whole=%v", device[0], whole)
-	}
+	require.Len(t, device, 1)
+	require.InDelta(t, whole, device[0], math.Max(1e-3*math.Abs(whole), 1e-3))
 }
 
 func TestScoreBatchMatchesScoreDraft(t *testing.T) {
@@ -43,41 +36,33 @@ func TestScoreBatchMatchesScoreDraft(t *testing.T) {
 		}
 	}
 	s, err := newWorld(t.Context(), img)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	parent := s.snap()
 	draft := formPick{
 		doc: parent.doc, dirty: img.Bounds(), op: OpWash, parent: parent,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
 	}
 	one, err := s.scoreDraft(t.Context(), draft)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	batch := s.scoreBatch(t.Context(), []formPick{draft, draft})
-	if len(batch) != 2 || !batch[0].scored || !batch[1].scored {
-		t.Fatalf("batch=%v", batch)
-	}
-	if math.Abs(batch[0].errSum-one.errSum) > 1e-3 || math.Abs(batch[1].errSum-batch[0].errSum) > 1e-3 {
-		t.Fatalf("batch %v %v draft %v", batch[0].errSum, batch[1].errSum, one.errSum)
-	}
+	require.Len(t, batch, 2)
+	require.True(t, batch[0].scored, "%+v", batch)
+	require.True(t, batch[1].scored, "%+v", batch)
+	require.InDelta(t, one.errSum, batch[0].errSum, 1e-3)
+	require.InDelta(t, batch[0].errSum, batch[1].errSum, 1e-3)
 }
 
 func TestFinishProposeKeepsTheDocumentUnscored(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
 	s, err := newWorld(t.Context(), img)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s.stashOn = true
 	doc := svg.NewDocument(4, 4).WithViewBox(0, 0, 4, 4)
 	got := s.finishPropose(s.draft(doc, svg.Node{}, grow{i: -1}, OpTriangle))
-	if got.scored || got.doc.Width() != 0 {
-		t.Fatalf("returned a scored pick: %+v", got)
-	}
-	if len(s.stash) != 1 || s.stash[0].scored || s.stash[0].doc.Width() == 0 {
-		t.Fatalf("stash=%+v", s.stash)
-	}
+	require.False(t, got.scored, "%+v", got)
+	require.Zero(t, got.doc.Width())
+	require.Len(t, s.stash, 1)
+	require.False(t, s.stash[0].scored, "%+v", s.stash)
+	require.Positive(t, s.stash[0].doc.Width())
 }

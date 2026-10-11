@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/a-h/templ v0.3.1020
 	github.com/lewtec/lewkit v0.0.0
+	github.com/stretchr/testify v1.12.1
 	golang.org/x/sync v0.23.0
 )
 
@@ -33,7 +34,6 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/natefinch/atomic v1.0.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
