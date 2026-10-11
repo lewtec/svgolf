@@ -54,6 +54,7 @@ type Proposal struct {
 	Score    float64 `json:"score"`
 	Paths    int     `json:"paths"`
 	Commands int     `json:"commands"`
+	Vertices int     `json:"vertices"`
 	Keep     bool    `json:"keep"`
 }
 

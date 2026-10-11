@@ -60,6 +60,7 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	ctx := WithFrames(t.Context(), func(frame search.Frame) {
 		cp := frame
 		cp.Loss = append([]float64(nil), frame.Loss...)
+		cp.Proposals = append([]search.Proposal(nil), frame.Proposals...)
 		frames = append(frames, cp)
 	})
 	red := color.NRGBA{R: 255, A: 255}
@@ -73,6 +74,9 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1)
 	require.Less(t, st.loss[0], parent.errSum)
+	require.NotEmpty(t, frames)
+	require.NotEmpty(t, frames[0].Proposals)
+	require.Equal(t, docVertices(full.doc), frames[0].Proposals[0].Vertices)
 	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1, "duplicate loss=%v", st.loss)
 	same := nonePick()

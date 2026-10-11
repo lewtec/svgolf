@@ -489,6 +489,7 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			Score:    pick.errSum,
 			Paths:    pick.paths,
 			Commands: pick.commands,
+			Vertices: docVertices(pick.doc),
 			Keep:     pick.ok,
 		})
 		if !pick.ok || st.stop {

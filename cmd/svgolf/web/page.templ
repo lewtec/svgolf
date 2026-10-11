@@ -134,6 +134,7 @@ templ JobPage(j JobView) {
 										<th>score</th>
 										<th>paths</th>
 										<th>commands</th>
+										<th>vertices</th>
 										<th>decision</th>
 									</tr>
 								</thead>
@@ -190,7 +191,7 @@ templ JobPage(j JobView) {
 				if (rows.length === 0) {
 					const tr = document.createElement("tr");
 					const td = document.createElement("td");
-					td.colSpan = 5;
+					td.colSpan = 6;
 					td.textContent = "waiting for the ranker";
 					tr.appendChild(td);
 					proposalBody.appendChild(tr);
@@ -202,6 +203,7 @@ templ JobPage(j JobView) {
 					tr.appendChild(cell(fmt(row.score), true));
 					tr.appendChild(cell(String(row.paths), true));
 					tr.appendChild(cell(String(row.commands), true));
+					tr.appendChild(cell(String(row.vertices || 0), true));
 					const decision = document.createElement("td");
 					const badge = document.createElement("span");
 					badge.className = row.keep ? "badge badge-success badge-sm" : "badge badge-ghost badge-sm";
