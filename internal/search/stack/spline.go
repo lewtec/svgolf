@@ -2,6 +2,7 @@ package stack
 
 import (
 	"math"
+	"sort"
 
 	"github.com/lewtec/svgolf/pkg/svg"
 )
@@ -110,24 +111,6 @@ func spanPoints(verts [][2]float64, from, to int) [][2]float64 {
 	return out
 }
 
-func farthestOnSpan(verts [][2]float64, from, to int) (int, bool) {
-	n := len(verts)
-	a, b := verts[from], verts[to]
-	bestI := -1
-	var best float64
-	for e := (from + 1) % n; e != to; e = (e + 1) % n {
-		d := distLine(verts[e], a, b)
-		if bestI < 0 || d > best {
-			bestI = e
-			best = d
-		}
-		if e == from {
-			break
-		}
-	}
-	return bestI, bestI >= 0
-}
-
 // fitCubic is the least-squares cubic through samples with fixed endpoints.
 // Colinear samples return line true and the chord.
 func fitCubic(samples [][2]float64) (c1, c2 [2]float64, line bool) {
@@ -160,7 +143,14 @@ func fitCubic(samples [][2]float64) (c1, c2 [2]float64, line bool) {
 	}
 	c1 = [2]float64{(a11*bx0 - a01*bx1) / det, (a11*by0 - a01*by1) / det}
 	c2 = [2]float64{(a00*bx1 - a01*bx0) / det, (a00*by1 - a01*by0) / det}
+	if !finitePoint(c1) || !finitePoint(c2) {
+		return [2]float64{}, [2]float64{}, true
+	}
 	return c1, c2, false
+}
+
+func finitePoint(point [2]float64) bool {
+	return !math.IsNaN(point[0]) && !math.IsNaN(point[1]) && !math.IsInf(point[0], 0) && !math.IsInf(point[1], 0)
 }
 
 func chordT(samples [][2]float64) []float64 {
@@ -200,6 +190,9 @@ func (r pathRing) replaceSpan(from, to int, cmds []svg.PathCmd) pathRing {
 	}
 	verts := [][2]float64{r.verts[from]}
 	edges := append([]svg.PathCmd{}, cmds...)
+	for i := 0; i < len(cmds)-1; i++ {
+		verts = append(verts, [2]float64{cmds[i].X, cmds[i].Y})
+	}
 	if from == to {
 		return pathRing{}
 	}
@@ -207,7 +200,7 @@ func (r pathRing) replaceSpan(from, to int, cmds []svg.PathCmd) pathRing {
 		verts = append(verts, r.verts[i])
 		next := (i + 1) % n
 		if next == from {
-			edges = append(edges, svg.PathCmd{Kind: svg.CmdClose, X: r.verts[from][0], Y: r.verts[from][1]})
+			edges = append(edges, r.edges[i])
 			break
 		}
 		edges = append(edges, r.edges[i])
@@ -230,17 +223,253 @@ func spanCommands(samples [][2]float64) []svg.PathCmd {
 	return []svg.PathCmd{cubicCommand(c1, c2, dest)}
 }
 
-func splitCommands(verts [][2]float64, from, far, to int) []svg.PathCmd {
-	n := len(verts)
-	if edgesInSpan(from, far, n) < 2 || edgesInSpan(far, to, n) < 2 {
+// fitPiece is one stretch of a monotone run. A cubic is kept only when
+// the curve stays closer to the stair than the stair stays to the chord.
+// Anything else is split, or left as its original lines when it cannot split.
+type fitPiece struct {
+	samples  [][2]float64
+	commands []svg.PathCmd
+}
+
+func fitPieces(samples [][2]float64) []fitPiece {
+	if len(samples) < 2 {
 		return nil
 	}
-	left := spanCommands(spanPoints(verts, from, far))
-	right := spanCommands(spanPoints(verts, far, to))
-	if len(left) != 1 || len(right) != 1 {
-		return nil
+	if commands, ok := winningCubic(samples); ok {
+		return []fitPiece{{samples: append([][2]float64{}, samples...), commands: commands}}
 	}
-	return append(left, right...)
+	far := farthestSample(samples)
+	if len(samples) < 5 || far < 2 || far > len(samples)-3 {
+		return []fitPiece{{samples: append([][2]float64{}, samples...), commands: lineChain(samples)}}
+	}
+	return append(fitPieces(samples[:far+1]), fitPieces(samples[far:])...)
+}
+
+// refineFit splits the cubic that leaves its stair farthest. The two
+// sides are fitted again, so a half that still loses to its chord is
+// not emitted as that cubic.
+func refineFit(pieces []fitPiece) ([]fitPiece, bool) {
+	worst := -1
+	worstBulge := -1.0
+	for i, piece := range pieces {
+		if len(piece.commands) != 1 || piece.commands[0].Kind != svg.CmdCubic || len(piece.samples) < 5 {
+			continue
+		}
+		bulge := pieceBulge(piece)
+		if bulge > worstBulge {
+			worst = i
+			worstBulge = bulge
+		}
+	}
+	if worst < 0 {
+		return nil, false
+	}
+	samples := pieces[worst].samples
+	far := farthestSample(samples)
+	if far < 2 || far > len(samples)-3 {
+		return nil, false
+	}
+	left := fitPieces(samples[:far+1])
+	right := fitPieces(samples[far:])
+	next := make([]fitPiece, 0, len(pieces)+len(left)+len(right))
+	next = append(next, pieces[:worst]...)
+	next = append(next, left...)
+	next = append(next, right...)
+	next = append(next, pieces[worst+1:]...)
+	if samePieceCommands(next, pieces) {
+		return nil, false
+	}
+	return next, true
+}
+
+func pieceCommands(pieces []fitPiece) []svg.PathCmd {
+	var commands []svg.PathCmd
+	for _, piece := range pieces {
+		commands = append(commands, piece.commands...)
+	}
+	return commands
+}
+
+func winningCubic(samples [][2]float64) ([]svg.PathCmd, bool) {
+	if len(samples) < 3 {
+		return nil, false
+	}
+	c1, c2, line := fitCubic(samples)
+	if line {
+		return nil, false
+	}
+	if stairBulge(samples, c1, c2) > chordGap(samples) {
+		return nil, false
+	}
+	return []svg.PathCmd{cubicCommand(c1, c2, samples[len(samples)-1])}, true
+}
+
+func pieceBulge(piece fitPiece) float64 {
+	command := piece.commands[0]
+	return stairBulge(piece.samples, [2]float64{command.X1, command.Y1}, [2]float64{command.X2, command.Y2})
+}
+
+func farthestSample(samples [][2]float64) int {
+	if len(samples) < 3 {
+		return 0
+	}
+	a, b := samples[0], samples[len(samples)-1]
+	bestI := 1
+	best := -1.0
+	for i := 1; i < len(samples)-1; i++ {
+		distance := distLine(samples[i], a, b)
+		if distance > best {
+			best = distance
+			bestI = i
+		}
+	}
+	return bestI
+}
+
+func chordGap(samples [][2]float64) float64 {
+	if len(samples) < 3 {
+		return 0
+	}
+	a, b := samples[0], samples[len(samples)-1]
+	gap := 0.0
+	for _, point := range samples[1 : len(samples)-1] {
+		if distance := segmentDistance(point, a, b); distance > gap {
+			gap = distance
+		}
+	}
+	return gap
+}
+
+func stairBulge(samples [][2]float64, c1, c2 [2]float64) float64 {
+	if len(samples) < 2 {
+		return 0
+	}
+	steps := (len(samples) - 1) * 4
+	if steps < 16 {
+		steps = 16
+	}
+	curve := make([][2]float64, steps+1)
+	p0 := samples[0]
+	p3 := samples[len(samples)-1]
+	for i := 0; i <= steps; i++ {
+		curve[i] = cubicAt(p0, c1, c2, p3, float64(i)/float64(steps))
+	}
+	bulge := 0.0
+	for _, point := range curve {
+		if distance := polylineDistance(point, samples); distance > bulge {
+			bulge = distance
+		}
+	}
+	for _, point := range samples {
+		if distance := polylineDistance(point, curve); distance > bulge {
+			bulge = distance
+		}
+	}
+	return bulge
+}
+
+func lineChain(samples [][2]float64) []svg.PathCmd {
+	commands := make([]svg.PathCmd, 0, len(samples)-1)
+	for i := 1; i < len(samples); i++ {
+		commands = append(commands, lineCommand(samples[i]))
+	}
+	return commands
+}
+
+func sameLineChain(commands []svg.PathCmd, samples [][2]float64) bool {
+	if len(commands) != len(samples)-1 {
+		return false
+	}
+	for i, command := range commands {
+		if command.Kind != svg.CmdLine || command.X != samples[i+1][0] || command.Y != samples[i+1][1] {
+			return false
+		}
+	}
+	return true
+}
+
+func samePieceCommands(left, right []fitPiece) bool {
+	return sameCommands(pieceCommands(left), pieceCommands(right))
+}
+
+func sameCommands(left, right []svg.PathCmd) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func segmentDistance(point, a, b [2]float64) float64 {
+	dx, dy := b[0]-a[0], b[1]-a[1]
+	length := dx*dx + dy*dy
+	if length == 0 {
+		return math.Hypot(point[0]-a[0], point[1]-a[1])
+	}
+	t := ((point[0]-a[0])*dx + (point[1]-a[1])*dy) / length
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	return math.Hypot(point[0]-(a[0]+t*dx), point[1]-(a[1]+t*dy))
+}
+
+func polylineDistance(point [2]float64, polyline [][2]float64) float64 {
+	if len(polyline) == 0 {
+		return 0
+	}
+	best := math.Hypot(point[0]-polyline[0][0], point[1]-polyline[0][1])
+	for i := 1; i < len(polyline); i++ {
+		if distance := segmentDistance(point, polyline[i-1], polyline[i]); distance < best {
+			best = distance
+		}
+	}
+	return best
+}
+
+func spansByChord(ring pathRing, spans []ringSpan) []ringSpan {
+	ordered := append([]ringSpan{}, spans...)
+	n := len(ring.verts)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left := chordGap(spanPoints(ring.verts, ordered[i].from, ordered[i].to))
+		right := chordGap(spanPoints(ring.verts, ordered[j].from, ordered[j].to))
+		if left != right {
+			return left > right
+		}
+		return edgesInSpan(ordered[i].from, ordered[i].to, n) > edgesInSpan(ordered[j].from, ordered[j].to, n)
+	})
+	return ordered
+}
+
+func pullCubicJoint(p0, p1, p2, p3, pull [2]float64) (left, right svg.PathCmd, ok bool) {
+	a, b := splitBezier(p0, p1, p2, p3)
+	mid := a[3]
+	if mid == pull {
+		return svg.PathCmd{}, svg.PathCmd{}, false
+	}
+	moved := [2]float64{(mid[0] + pull[0]) / 2, (mid[1] + pull[1]) / 2}
+	deltaX, deltaY := moved[0]-mid[0], moved[1]-mid[1]
+	innerLeft := [2]float64{a[2][0] + deltaX, a[2][1] + deltaY}
+	innerRight := [2]float64{b[1][0] + deltaX, b[1][1] + deltaY}
+	return cubicCommand(a[1], innerLeft, moved), cubicCommand(innerRight, b[2], p3), true
+}
+
+func splitBezier(p0, p1, p2, p3 [2]float64) (left, right [4][2]float64) {
+	midpoint := func(a, b [2]float64) [2]float64 {
+		return [2]float64{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2}
+	}
+	p01 := midpoint(p0, p1)
+	p12 := midpoint(p1, p2)
+	p23 := midpoint(p2, p3)
+	p012 := midpoint(p01, p12)
+	p123 := midpoint(p12, p23)
+	joint := midpoint(p012, p123)
+	return [4][2]float64{p0, p01, p012, joint}, [4][2]float64{joint, p123, p23, p3}
 }
 
 func cubicSamples(cmd svg.PathCmd, from [2]float64) [][2]float64 {

@@ -193,11 +193,14 @@ func (q Squash) Stream(ctx context.Context, emit func(formPick)) error {
 	return nil
 }
 
-// Spline replaces one monotone run with one cubic, and also submits the
-// farthest-point split of that run when both halves still have two edges.
+// Spline replaces one monotone run with the coarsest cubics that stay
+// closer to the stair than its chord. The next claim of that parent
+// splits the cubic farthest from the stair. A cubic already in the
+// file splits toward leftover.
 type Spline struct {
 	world   *world
 	buckets [][]pix
+	lefts   []leftover
 }
 
 func (Spline) ID() Op { return OpSpline }
@@ -229,25 +232,17 @@ func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 		}
 		work := buckets[i]
 		for ri, ring := range rings {
-			for _, span := range monotoneSpans(ring) {
-				samples := spanPoints(ring.verts, span.from, span.to)
-				cmds := spanCommands(samples)
-				if len(cmds) == 0 {
-					continue
-				}
-				sp.emitRing(emit, s, i, node, rings, ri, ring.replaceSpan(span.from, span.to, cmds), work)
-				if s.oneShot && s.gotNovel {
-					return nil
-				}
-				if far, ok := farthestOnSpan(ring.verts, span.from, span.to); ok {
-					split := splitCommands(ring.verts, span.from, far, span.to)
-					if len(split) == 2 {
-						sp.emitRing(emit, s, i, node, rings, ri, ring.replaceSpan(span.from, span.to, split), work)
-						if s.oneShot && s.gotNovel {
-							return nil
-						}
-					}
-				}
+			if err := sp.emitRuns(ctx, emit, s, i, node, rings, ri, ring, work); err != nil {
+				return err
+			}
+			if s.oneShot && s.gotNovel {
+				return nil
+			}
+			if err := sp.emitExpansions(ctx, emit, s, i, node, rings, ri, ring, work); err != nil {
+				return err
+			}
+			if s.oneShot && s.gotNovel {
+				return nil
 			}
 		}
 		return nil
@@ -273,6 +268,93 @@ func (sp Spline) Stream(ctx context.Context, emit func(formPick)) error {
 		}
 	}
 	return nil
+}
+
+func (sp Spline) emitRuns(ctx context.Context, emit func(formPick), s *world, i int, node svg.Node, rings []pathRing, ri int, ring pathRing, work []pix) error {
+	for _, span := range spansByChord(ring, monotoneSpans(ring)) {
+		samples := spanPoints(ring.verts, span.from, span.to)
+		pieces := fitPieces(samples)
+		for {
+			if err := live(ctx); err != nil {
+				return err
+			}
+			commands := pieceCommands(pieces)
+			if len(commands) > 0 && !sameLineChain(commands, samples) {
+				sp.emitRing(emit, s, i, node, rings, ri, ring.replaceSpan(span.from, span.to, commands), work)
+				if s.oneShot && s.gotNovel {
+					return nil
+				}
+			}
+			refined, ok := refineFit(pieces)
+			if !ok {
+				break
+			}
+			pieces = refined
+		}
+	}
+	return nil
+}
+
+func (sp Spline) emitExpansions(ctx context.Context, emit func(formPick), s *world, i int, node svg.Node, rings []pathRing, ri int, ring pathRing, work []pix) error {
+	if len(sp.lefts) == 0 || len(ring.verts) != len(ring.edges) {
+		return nil
+	}
+	n := len(ring.verts)
+	for edge := 0; edge < n; edge++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
+		command := ring.edges[edge]
+		if command.Kind != svg.CmdCubic {
+			continue
+		}
+		from := ring.verts[edge]
+		p1 := [2]float64{command.X1, command.Y1}
+		p2 := [2]float64{command.X2, command.Y2}
+		p3 := [2]float64{command.X, command.Y}
+		pull, ok := nearestMiss(sp.lefts, cubicAt(from, p1, p2, p3, 0.5))
+		if !ok {
+			continue
+		}
+		left, right, ok := pullCubicJoint(from, p1, p2, p3, pull)
+		if !ok {
+			continue
+		}
+		next := ring.replaceSpan(edge, (edge+1)%n, []svg.PathCmd{left, right})
+		sp.emitRing(emit, s, i, node, rings, ri, next, work)
+		if s.oneShot && s.gotNovel {
+			return nil
+		}
+	}
+	return nil
+}
+
+func nearestMiss(lefts []leftover, point [2]float64) ([2]float64, bool) {
+	found := false
+	best := point
+	bestD := 0.0
+	for _, left := range lefts {
+		shape := left.glow
+		if len(shape) == 0 {
+			shape = left.island
+		}
+		target := outline(shape)
+		if len(target) == 0 {
+			continue
+		}
+		candidate := nearest(target, point)
+		dx, dy := candidate[0]-point[0], candidate[1]-point[1]
+		distance := dx*dx + dy*dy
+		if !found || distance < bestD {
+			found = true
+			best = candidate
+			bestD = distance
+		}
+	}
+	if !found || best == point {
+		return point, false
+	}
+	return best, true
 }
 
 func (sp Spline) emitRing(emit func(formPick), s *world, i int, node svg.Node, rings []pathRing, ri int, next pathRing, work []pix) {
@@ -318,7 +400,7 @@ func (s *world) emitKind(ctx context.Context, kind Op, lefts []leftover, emit fu
 	case OpSquash:
 		return Squash{world: s, buckets: buckets}.Stream(ctx, emit)
 	case OpSpline:
-		return Spline{world: s, buckets: buckets}.Stream(ctx, emit)
+		return Spline{world: s, buckets: buckets, lefts: lefts}.Stream(ctx, emit)
 	case OpWash, OpJoin, OpSubtract, OpSimplify, OpUnhole:
 		return proposeOne(ctx, op{id: kind, world: s, buckets: buckets}, emit)
 	case OpSwap:
