@@ -89,7 +89,7 @@ templ JobPage(j JobView) {
 		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON } data-beam={ j.BeamJSON } data-proposals={ j.ProposalsJSON } data-paths={ j.PathCountsJSON } data-vertices={ j.VertexCountsJSON }>
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
-				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
+				@frameCard("got", "/jobs/" + j.ID + "/files/last.svg")
 				@frameCard("HSV delta", "/jobs/" + j.ID + "/files/last-error.png")
 				@frameCard("leftover mask", "/jobs/" + j.ID + "/files/last-island.png")
 			</div>
@@ -125,7 +125,7 @@ templ JobPage(j JobView) {
 				<div class="card bg-base-200">
 					<div class="card-body">
 						<h2 class="card-title">Ranked batch</h2>
-						<p class="text-sm opacity-70">The last propositions the ranker scored together.</p>
+						<p class="text-sm opacity-70">The last propositions the ranker scored together. Keep beat the parent. Slot took one of the five.</p>
 						<div class="overflow-x-auto">
 							<table class="table table-xs table-pin-rows">
 								<thead>
@@ -206,8 +206,16 @@ templ JobPage(j JobView) {
 					tr.appendChild(cell(String(row.vertices || 0), true));
 					const decision = document.createElement("td");
 					const badge = document.createElement("span");
-					badge.className = row.keep ? "badge badge-success badge-sm" : "badge badge-ghost badge-sm";
-					badge.textContent = row.keep ? "keep" : "reject";
+					if (row.slot) {
+						badge.className = "badge badge-success badge-sm";
+						badge.textContent = "slot";
+					} else if (row.keep) {
+						badge.className = "badge badge-warning badge-sm";
+						badge.textContent = "keep";
+					} else {
+						badge.className = "badge badge-ghost badge-sm";
+						badge.textContent = "reject";
+					}
 					decision.appendChild(badge);
 					tr.appendChild(decision);
 					proposalBody.appendChild(tr);
@@ -215,7 +223,7 @@ templ JobPage(j JobView) {
 			}
 			function show() {
 				for (const [sel, name] of [
-					["got", "last.png"],
+					["got", "last.svg"],
 					["HSV delta", "last-error.png"],
 					["leftover mask", "last-island.png"],
 				]) {
