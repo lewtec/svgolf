@@ -332,8 +332,9 @@ func (sn snapshot) fork(want *image.NRGBA, wantP *loss.Plane, w, h int) *world {
 		simplifyMiss: cloneStraightMiss(sn.simplifyMiss),
 	}
 	if sn.got != nil {
+		// The plane converts on first read. A proposer that only emits
+		// geometry never reads it, so the claim does not allocate a table.
 		s.gotP = loss.NewPlane(sn.got)
-		s.gotP.Ensure()
 	}
 	return s
 }
@@ -345,18 +346,32 @@ type agentNote struct {
 	verdict chan bool
 }
 
-// proposalBuffer is the queue between proposers and the painters.
-// renderAhead is the queue between the painters and the ranker.
-// Painters fill the next batch while the ranker scores the previous one.
+// proposalBatch is how many scored notes one ranker turn packs, and how
+// many notes may sit unscored. send waits at that count, so proposers
+// stop handing over documents until the ranker takes some.
+// proposalLog is how many scored rows the page keeps. Older rows drop
+// off the log; the search does not drop the documents they described.
 const (
-	proposalBuffer = 1024
 	proposalBatch  = 32
+	proposalBuffer = proposalBatch
+	proposalLog    = 40
 	renderAhead    = proposalBatch
 	// simplifyWindow is how many straight vertices one simplify worker
 	// hands the ranker before it waits for the decisions. The rest stay
 	// unsent, so a long run of refusals does not fill the queue.
 	simplifyWindow = 8
 )
+
+func workerLimit() int {
+	n := runtime.GOMAXPROCS(0)
+	if n < 1 {
+		n = 1
+	}
+	if n > proposalBatch {
+		return proposalBatch
+	}
+	return n
+}
 
 type pixmapNote struct {
 	note agentNote
@@ -382,7 +397,7 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	board := newBeam(first)
 	proposals := make(chan agentNote, proposalBuffer)
 	pixmaps := make(chan pixmapNote, renderAhead)
-	ready := make(chan pendingKeep, proposalBuffer)
+	ready := make(chan pendingKeep, simplifyWindow)
 	var proposers, painters sync.WaitGroup
 	defer func() {
 		cancel()
@@ -390,13 +405,17 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 		proposers.Wait()
 		painters.Wait()
 	}()
+	// slots is how many proposers may build at once. A proposer holds a
+	// slot through the send, and send blocks when the batch queue is full,
+	// so the rest wait until the ranker has taken work.
+	slots := make(chan struct{}, workerLimit())
 	for _, kind := range agentKinds() {
 		copies := 1
 		if kind == OpSimplify || fuzzKind(kind) {
 			copies = beamWidth
 		}
 		for range copies {
-			s.startProposer(ctx, &proposers, board, kind, proposals)
+			s.startProposer(ctx, &proposers, board, kind, proposals, slots)
 		}
 	}
 	go func() {
@@ -530,8 +549,28 @@ type rankState struct {
 	pool     []formPick
 	recent   []candResult
 	loss     []float64
-	shown    []search.Proposal
+	log      []search.Proposal
+	logBase  int
 	stop     bool
+}
+
+func (st *rankState) pushProposal(p search.Proposal) int {
+	abs := st.logBase + len(st.log)
+	st.log = append(st.log, p)
+	if len(st.log) > proposalLog {
+		drop := len(st.log) - proposalLog
+		st.log = append([]search.Proposal(nil), st.log[drop:]...)
+		st.logBase += drop
+	}
+	return abs
+}
+
+func (st *rankState) proposalAt(abs int) *search.Proposal {
+	i := abs - st.logBase
+	if i < 0 || i >= len(st.log) {
+		return nil
+	}
+	return &st.log[i]
 }
 
 func paintNote(note agentNote) *image.NRGBA {
@@ -608,7 +647,6 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		return 0
 	}
 	queued := 0
-	proposals := make([]search.Proposal, 0, len(scored))
 	for i, pick := range scored {
 		note := notes[i]
 		if ctx.Err() != nil {
@@ -645,8 +683,7 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			sortCandResults(rows)
 			s.rank.show(ctx, rankSummary(rows, beamWidth))
 		}
-		index := len(proposals)
-		proposals = append(proposals, search.Proposal{
+		abs := st.pushProposal(search.Proposal{
 			Operator: id.String(),
 			Score:    pick.errSum,
 			Paths:    pick.paths,
@@ -655,6 +692,7 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			Keep:     pick.ok,
 		})
 		if !pick.ok || st.stop {
+			s.publishRank(ctx, board, st)
 			continue
 		}
 		s.load(pick.parent)
@@ -662,20 +700,20 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		sn := s.snap()
 		sn.operator = pick.op
 		if ready != nil {
+			s.publishRank(ctx, board, st)
 			board.beginChoose()
-			item := pendingKeep{seq: *seq, sn: sn, pick: pick, proposal: index}
+			item := pendingKeep{seq: *seq, sn: sn, pick: pick, proposal: abs}
 			*seq++
 			queued++
 			go s.fillKeep(ctx, ready, item)
 			continue
 		}
 		sn.lefts = s.watchLeftovers(ctx)
-		if !s.retainKept(ctx, board, st, sn, pick, proposals, index, emit) {
+		if !s.retainKept(ctx, board, st, sn, pick, abs, emit) {
 			return queued
 		}
 	}
-	st.shown = proposals
-	s.publishRank(ctx, board, st, proposals)
+	s.publishRank(ctx, board, st)
 	return queued
 }
 
@@ -746,23 +784,24 @@ func (s *world) foldKept(ctx context.Context, board *beam, st *rankState, fold *
 	for _, ready := range fold.push(item) {
 		board.endChoose()
 		*inFlight--
-		if !s.retainKept(ctx, board, st, ready.sn, ready.pick, st.shown, ready.proposal, emit) {
+		if !s.retainKept(ctx, board, st, ready.sn, ready.pick, ready.proposal, emit) {
 			return
 		}
 	}
 }
 
-func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, proposals []search.Proposal, index int, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
+func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, abs int, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
 	if !board.offer(sn) {
+		s.publishRank(ctx, board, st)
 		return true
 	}
-	if index >= 0 && index < len(proposals) {
-		proposals[index].Slot = true
+	if row := st.proposalAt(abs); row != nil {
+		row.Slot = true
 	}
 	st.loss = append(st.loss, sn.errSum)
 	jobNote(ctx, archiveLine(board.list()))
 	st.pool = append(st.pool, pick)
-	s.publishRank(ctx, board, st, proposals)
+	s.publishRank(ctx, board, st)
 	top, changed := board.takeHead(st.head)
 	if !changed {
 		return true
@@ -782,10 +821,10 @@ func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn s
 	return true
 }
 
-func (s *world) publishRank(ctx context.Context, board *beam, st *rankState, proposals []search.Proposal) {
+func (s *world) publishRank(ctx context.Context, board *beam, st *rankState) {
 	emitFrame(ctx, search.Frame{
 		Beam:      beamSlots(board.list()),
-		Proposals: append([]search.Proposal(nil), proposals...),
+		Proposals: append([]search.Proposal(nil), st.log...),
 		Loss:      append([]float64(nil), st.loss...),
 	})
 }
@@ -824,7 +863,7 @@ func (s *world) fuzzSimplifyParent(ctx context.Context, st *taskgroup.Status, bo
 	return false
 }
 
-func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote) {
+func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *beam, kind Op, proposals chan<- agentNote, slots chan struct{}) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -837,14 +876,19 @@ func (s *world) startProposer(ctx context.Context, wg *sync.WaitGroup, board *be
 				st.Update("waiting")
 			}
 			for {
-				if ctx.Err() != nil {
-					return
-				}
 				parent, ok := board.claim(kind)
 				if !ok {
 					return
 				}
-				if s.proposeParent(ctx, st, board, kind, parent, proposals) {
+				select {
+				case <-ctx.Done():
+					board.abandon(parent.id)
+					return
+				case slots <- struct{}{}:
+				}
+				stop := s.proposeParent(ctx, st, board, kind, parent, proposals)
+				<-slots
+				if stop {
 					return
 				}
 			}

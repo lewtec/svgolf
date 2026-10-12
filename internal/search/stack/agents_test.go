@@ -21,6 +21,33 @@ func TestBeamSlotCountsVertices(t *testing.T) {
 	require.Equal(t, "triangle", slots[0].Operator)
 }
 
+func TestSendWaitsWhileABatchIsUnscored(t *testing.T) {
+	board := newBeam(snapshot{id: 1})
+	notes := make(chan agentNote, proposalBatch)
+	for range proposalBatch {
+		board.send(t.Context(), notes, agentNote{})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		board.send(ctx, notes, agentNote{})
+		close(done)
+	}()
+	select {
+	case <-done:
+		require.Fail(t, "send handed over a proposal while a full batch was still unscored")
+	case <-time.After(30 * time.Millisecond):
+	}
+	board.account(-1)
+	go func() { <-notes }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		require.Fail(t, "send stayed blocked after the ranker took a proposal")
+	}
+}
+
 func TestFuzzSwapDoesNotRepeatTheSamePair(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	doc := svg.NewDocument(8, 8).WithViewBox(0, 0, 8, 8)
@@ -97,9 +124,11 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1, "duplicate loss=%v", st.loss)
 	duplicate := frames[len(frames)-1].Proposals
-	require.NotEmpty(t, duplicate)
-	require.True(t, duplicate[0].Keep)
-	require.False(t, duplicate[0].Slot)
+	require.GreaterOrEqual(t, len(duplicate), 2)
+	require.True(t, duplicate[0].Slot)
+	latest := duplicate[len(duplicate)-1]
+	require.True(t, latest.Keep)
+	require.False(t, latest.Slot)
 	same := nonePick()
 	same.doc = parent.doc
 	same.op = OpRectangle
@@ -120,7 +149,7 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	require.Len(t, frames[len(frames)-1].Loss, len(st.loss))
 	placed := frames[len(frames)-1].Proposals
 	require.NotEmpty(t, placed)
-	require.True(t, placed[0].Slot)
+	require.True(t, placed[len(placed)-1].Slot)
 }
 
 func TestInitialLeftoverFeedsTriangle(t *testing.T) {
