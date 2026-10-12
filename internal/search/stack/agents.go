@@ -366,9 +366,10 @@ type pixmapNote struct {
 // pendingKeep is a scored document waiting for its islands. The ranker
 // offers it after the CPU pass, and keeps scoring on the device meanwhile.
 type pendingKeep struct {
-	seq  int
-	sn   snapshot
-	pick formPick
+	seq      int
+	sn       snapshot
+	pick     formPick
+	proposal int
 }
 
 // runAgents runs three actors. Proposers claim a parent and send geometry.
@@ -644,6 +645,7 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			sortCandResults(rows)
 			s.rank.show(ctx, rankSummary(rows, beamWidth))
 		}
+		index := len(proposals)
 		proposals = append(proposals, search.Proposal{
 			Operator: id.String(),
 			Score:    pick.errSum,
@@ -661,14 +663,14 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		sn.operator = pick.op
 		if ready != nil {
 			board.beginChoose()
-			item := pendingKeep{seq: *seq, sn: sn, pick: pick}
+			item := pendingKeep{seq: *seq, sn: sn, pick: pick, proposal: index}
 			*seq++
 			queued++
 			go s.fillKeep(ctx, ready, item)
 			continue
 		}
 		sn.lefts = s.watchLeftovers(ctx)
-		if !s.retainKept(ctx, board, st, sn, pick, proposals, emit) {
+		if !s.retainKept(ctx, board, st, sn, pick, proposals, index, emit) {
 			return queued
 		}
 	}
@@ -744,15 +746,18 @@ func (s *world) foldKept(ctx context.Context, board *beam, st *rankState, fold *
 	for _, ready := range fold.push(item) {
 		board.endChoose()
 		*inFlight--
-		if !s.retainKept(ctx, board, st, ready.sn, ready.pick, st.shown, emit) {
+		if !s.retainKept(ctx, board, st, ready.sn, ready.pick, st.shown, ready.proposal, emit) {
 			return
 		}
 	}
 }
 
-func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, proposals []search.Proposal, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
+func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn snapshot, pick formPick, proposals []search.Proposal, index int, emit func(Op, []pix, []pix, []search.Rated) bool) bool {
 	if !board.offer(sn) {
 		return true
+	}
+	if index >= 0 && index < len(proposals) {
+		proposals[index].Slot = true
 	}
 	st.loss = append(st.loss, sn.errSum)
 	jobNote(ctx, archiveLine(board.list()))
@@ -780,7 +785,7 @@ func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn s
 func (s *world) publishRank(ctx context.Context, board *beam, st *rankState, proposals []search.Proposal) {
 	emitFrame(ctx, search.Frame{
 		Beam:      beamSlots(board.list()),
-		Proposals: proposals,
+		Proposals: append([]search.Proposal(nil), proposals...),
 		Loss:      append([]float64(nil), st.loss...),
 	})
 }

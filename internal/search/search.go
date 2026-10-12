@@ -56,6 +56,7 @@ type Proposal struct {
 	Commands int     `json:"commands"`
 	Vertices int     `json:"vertices"`
 	Keep     bool    `json:"keep"`
+	Slot     bool    `json:"slot"`
 }
 
 // Frame is the beam, the batch the ranker just scored, and the loss

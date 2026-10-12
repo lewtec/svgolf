@@ -92,8 +92,14 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	require.NotEmpty(t, frames)
 	require.NotEmpty(t, frames[0].Proposals)
 	require.Equal(t, docVertices(full.doc), frames[0].Proposals[0].Vertices)
+	require.True(t, frames[0].Proposals[0].Keep)
+	require.True(t, frames[0].Proposals[0].Slot)
 	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1, "duplicate loss=%v", st.loss)
+	duplicate := frames[len(frames)-1].Proposals
+	require.NotEmpty(t, duplicate)
+	require.True(t, duplicate[0].Keep)
+	require.False(t, duplicate[0].Slot)
 	same := nonePick()
 	same.doc = parent.doc
 	same.op = OpRectangle
@@ -112,6 +118,9 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	require.Greater(t, st.loss[1], st.loss[0])
 	require.NotEmpty(t, frames)
 	require.Len(t, frames[len(frames)-1].Loss, len(st.loss))
+	placed := frames[len(frames)-1].Proposals
+	require.NotEmpty(t, placed)
+	require.True(t, placed[0].Slot)
 }
 
 func TestInitialLeftoverFeedsTriangle(t *testing.T) {
