@@ -54,7 +54,7 @@ func Layout(title string) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 27, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 27, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
@@ -131,7 +131,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var5 templ.SafeURL
 					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs("/jobs/" + j.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 63, Col: 34}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 63, Col: 34}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 					if templ_7745c5c3_Err != nil {
@@ -144,7 +144,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var6 string
 					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(j.ID)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 63, Col: 56}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 63, Col: 56}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 					if templ_7745c5c3_Err != nil {
@@ -157,7 +157,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var7 string
 					templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(j.Status)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 64, Col: 39}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 64, Col: 39}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 					if templ_7745c5c3_Err != nil {
@@ -170,7 +170,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var8 string
 					templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(j.Operator)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 65, Col: 54}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 65, Col: 54}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 					if templ_7745c5c3_Err != nil {
@@ -183,7 +183,7 @@ func Home(jobs []JobView) templ.Component {
 					var templ_7745c5c3_Var9 string
 					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(j.Epochs)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 65, Col: 70}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 65, Col: 70}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
 					if templ_7745c5c3_Err != nil {
@@ -253,7 +253,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var12 string
 			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(j.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 82, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 82, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 			if templ_7745c5c3_Err != nil {
@@ -266,7 +266,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var13 string
 			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(j.Status)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 85, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 85, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
@@ -279,7 +279,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var14 string
 			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(j.Operator)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 86, Col: 48}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 86, Col: 48}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
@@ -292,7 +292,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var15 string
 			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(j.Score)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 86, Col: 69}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 86, Col: 69}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
@@ -305,7 +305,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var16 string
 			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(j.Paths)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 86, Col: 84}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 86, Col: 84}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
@@ -318,7 +318,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var17 string
 			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(j.Vertices)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 86, Col: 108}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 86, Col: 108}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
@@ -331,7 +331,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var18 string
 			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.ID)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 46}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var18)
 			if templ_7745c5c3_Err != nil {
@@ -344,7 +344,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var19 string
 			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.ScoresJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var19)
 			if templ_7745c5c3_Err != nil {
@@ -357,7 +357,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var20 string
 			templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.RoundsJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 104}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 104}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var20)
 			if templ_7745c5c3_Err != nil {
@@ -370,7 +370,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var21 string
 			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.BeamJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 129}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 129}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21)
 			if templ_7745c5c3_Err != nil {
@@ -383,7 +383,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var22 string
 			templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.ProposalsJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 164}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 164}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var22)
 			if templ_7745c5c3_Err != nil {
@@ -396,7 +396,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var23 string
 			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.PathCountsJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 196}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 196}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var23)
 			if templ_7745c5c3_Err != nil {
@@ -409,7 +409,7 @@ func JobPage(j JobView) templ.Component {
 			var templ_7745c5c3_Var24 string
 			templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.ResolveAttributeValue(j.VertexCountsJSON)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 89, Col: 233}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 89, Col: 233}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var24)
 			if templ_7745c5c3_Err != nil {
@@ -435,7 +435,7 @@ func JobPage(j JobView) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Loss</h2><p id=\"loss-scale\" class=\"text-sm opacity-70\">one point each time a proposal is kept</p><svg id=\"loss\" viewBox=\"0 0 800 200\" class=\"w-full h-48 text-base-content\" role=\"img\" aria-label=\"loss of kept proposals\"></svg></div></div><div class=\"grid grid-cols-1 xl:grid-cols-2 gap-4\"><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Beam</h2><p class=\"text-sm opacity-70\">The five documents the ranker keeps. Proposers claim the least busy one.</p><div class=\"overflow-x-auto\"><table class=\"table table-xs table-pin-rows\"><thead><tr><th>place</th><th>operator</th><th>score</th><th>paths</th><th>commands</th><th>vertices</th></tr></thead> <tbody id=\"beam\"></tbody></table></div></div></div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Ranked batch</h2><p class=\"text-sm opacity-70\">Proposals as the ranker scores them. Keep beat the parent. Slot took one of the five.</p><div class=\"overflow-x-auto\"><table class=\"table table-xs table-pin-rows\"><thead><tr><th>operator</th><th>score</th><th>paths</th><th>commands</th><th>vertices</th><th>decision</th></tr></thead> <tbody id=\"proposals\"></tbody></table></div></div></div></div></main><script>\n\t\t\tconst root = document.querySelector(\"main\");\n\t\t\tconst id = root.dataset.job;\n\t\t\tconst beamBody = document.getElementById(\"beam\");\n\t\t\tconst proposalBody = document.getElementById(\"proposals\");\n\t\t\tlet scores = [];\n\t\t\tlet beam = [];\n\t\t\tlet proposals = [];\n\t\t\ttry { scores = JSON.parse(root.dataset.scores || \"[]\"); } catch (e) { scores = []; }\n\t\t\ttry { beam = JSON.parse(root.dataset.beam || \"[]\"); } catch (e) { beam = []; }\n\t\t\ttry { proposals = JSON.parse(root.dataset.proposals || \"[]\"); } catch (e) { proposals = []; }\n\t\t\tfunction cell(text, mono) {\n\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\tif (mono) td.className = \"font-mono\";\n\t\t\t\ttd.textContent = text;\n\t\t\t\treturn td;\n\t\t\t}\n\t\t\tfunction paintBeam() {\n\t\t\t\tbeamBody.replaceChildren();\n\t\t\t\tconst rows = Array.isArray(beam) ? beam : [];\n\t\t\t\tif (rows.length === 0) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\t\ttd.colSpan = 6;\n\t\t\t\t\ttd.textContent = \"waiting for the first kept document\";\n\t\t\t\t\ttr.appendChild(td);\n\t\t\t\t\tbeamBody.appendChild(tr);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\trows.forEach((slot, i) => {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\ttr.appendChild(cell(String(i + 1), true));\n\t\t\t\t\ttr.appendChild(cell(slot.operator || \"plate\", false));\n\t\t\t\t\ttr.appendChild(cell(fmt(slot.score), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.paths), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.commands), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.vertices || 0), true));\n\t\t\t\t\tbeamBody.appendChild(tr);\n\t\t\t\t});\n\t\t\t}\n\t\t\tfunction paintProposals() {\n\t\t\t\tproposalBody.replaceChildren();\n\t\t\t\tconst rows = Array.isArray(proposals) ? proposals : [];\n\t\t\t\tif (rows.length === 0) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\t\ttd.colSpan = 6;\n\t\t\t\t\ttd.textContent = \"waiting for the ranker\";\n\t\t\t\t\ttr.appendChild(td);\n\t\t\t\t\tproposalBody.appendChild(tr);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tfor (const row of rows) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\ttr.appendChild(cell(row.operator || \"—\", false));\n\t\t\t\t\ttr.appendChild(cell(fmt(row.score), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.paths), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.commands), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.vertices || 0), true));\n\t\t\t\t\tconst decision = document.createElement(\"td\");\n\t\t\t\t\tconst badge = document.createElement(\"span\");\n\t\t\t\t\tif (row.slot) {\n\t\t\t\t\t\tbadge.className = \"badge badge-success badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"slot\";\n\t\t\t\t\t} else if (row.keep) {\n\t\t\t\t\t\tbadge.className = \"badge badge-warning badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"keep\";\n\t\t\t\t\t} else {\n\t\t\t\t\t\tbadge.className = \"badge badge-ghost badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"reject\";\n\t\t\t\t\t}\n\t\t\t\t\tdecision.appendChild(badge);\n\t\t\t\t\ttr.appendChild(decision);\n\t\t\t\t\tproposalBody.appendChild(tr);\n\t\t\t\t}\n\t\t\t}\n\t\t\tfunction show() {\n\t\t\t\tfor (const [sel, name] of [\n\t\t\t\t\t[\"got\", \"last.svg\"],\n\t\t\t\t\t[\"HSV delta\", \"last-error.png\"],\n\t\t\t\t\t[\"leftover mask\", \"last-island.png\"],\n\t\t\t\t]) {\n\t\t\t\t\tconst img = document.querySelector(`img[alt=\"${sel}\"]`);\n\t\t\t\t\tif (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;\n\t\t\t\t}\n\t\t\t\tpaintBeam();\n\t\t\t\tpaintProposals();\n\t\t\t}\n\t\t\tfunction takeFrame(d) {\n\t\t\t\tif (Array.isArray(d.beam)) beam = d.beam;\n\t\t\t\tif (Array.isArray(d.proposals)) proposals = d.proposals;\n\t\t\t\tif (Array.isArray(d.scores) && d.scores.length) scores = d.scores;\n\t\t\t\tpaintBeam();\n\t\t\t\tpaintProposals();\n\t\t\t\tdrawLoss(scores);\n\t\t\t}\n\t\t\tfunction fmt(v) {\n\t\t\t\tif (!Number.isFinite(v)) return \"-\";\n\t\t\t\tif (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-2)) return v.toExponential(2);\n\t\t\t\treturn v.toFixed(2);\n\t\t\t}\n\t\t\tfunction drawLoss(vals) {\n\t\t\t\tconst svg = document.getElementById(\"loss\");\n\t\t\t\tconst note = document.getElementById(\"loss-scale\");\n\t\t\t\tconst w = 800, h = 200;\n\t\t\t\tconst pad = { l: 64, r: 16, t: 16, b: 28 };\n\t\t\t\twhile (svg.firstChild) svg.removeChild(svg.firstChild);\n\t\t\t\tif (!vals.length) {\n\t\t\t\t\tnote.textContent = \"waiting for the first kept proposal\";\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tlet ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);\n\t\t\t\tif (ymin === ymax) {\n\t\t\t\t\tymin = ymin * 0.9;\n\t\t\t\t\tymax = ymax * 1.1 || 1;\n\t\t\t\t}\n\t\t\t\tconst log = ymin > 0 && ymax / ymin >= 10;\n\t\t\t\tnote.textContent = log ? \"log10 score · kept proposals\" : \"score · kept proposals\";\n\t\t\t\tconst yOf = (v) => {\n\t\t\t\t\tconst a = log ? Math.log10(v) : v;\n\t\t\t\t\tconst lo = log ? Math.log10(ymin) : ymin;\n\t\t\t\t\tconst hi = log ? Math.log10(ymax) : ymax;\n\t\t\t\t\treturn pad.t + (1 - (a - lo) / (hi - lo)) * (h - pad.t - pad.b);\n\t\t\t\t};\n\t\t\t\tconst xOf = (i) => {\n\t\t\t\t\tconst n = Math.max(vals.length - 1, 1);\n\t\t\t\t\treturn pad.l + (i / n) * (w - pad.l - pad.r);\n\t\t\t\t};\n\t\t\t\tconst ns = \"http://www.w3.org/2000/svg\";\n\t\t\t\tconst el = (name, attrs) => {\n\t\t\t\t\tconst n = document.createElementNS(ns, name);\n\t\t\t\t\tfor (const k in (attrs || {})) n.setAttribute(k, attrs[k]);\n\t\t\t\t\treturn n;\n\t\t\t\t};\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: pad.t + 4, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymax);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: h - pad.b, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymin);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: pad.l, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = \"0\";\n\t\t\t\tsvg.appendChild(el(\"text\", { x: w - pad.r, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\", \"text-anchor\": \"end\" })).textContent = String(vals.length - 1);\n\t\t\t\tif (vals.length === 1) {\n\t\t\t\t\tsvg.appendChild(el(\"circle\", { cx: xOf(0), cy: yOf(vals[0]), r: 4, fill: \"currentColor\" }));\n\t\t\t\t} else {\n\t\t\t\t\tconst d = vals.map((v, i) => (i === 0 ? \"M\" : \"L\") + xOf(i) + \" \" + yOf(v)).join(\" \");\n\t\t\t\t\tsvg.appendChild(el(\"path\", { d: d, fill: \"none\", stroke: \"currentColor\", \"stroke-width\": \"2\" }));\n\t\t\t\t\tfor (let i = 0; i < vals.length; i++) {\n\t\t\t\t\t\tconst c = el(\"circle\", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: \"currentColor\" });\n\t\t\t\t\t\tc.appendChild(el(\"title\")).textContent = \"kept \" + i + \" · \" + fmt(vals[i]);\n\t\t\t\t\t\tsvg.appendChild(c);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tdrawLoss(scores);\n\t\t\tpaintBeam();\n\t\t\tpaintProposals();\n\t\t\tconst es = new EventSource(`/jobs/${id}/events`);\n\t\t\tes.addEventListener(\"epoch\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tdocument.getElementById(\"meta\").textContent =\n\t\t\t\t\t`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.vertices} vertices · ${d.elapsed}`;\n\t\t\t\ttakeFrame(d);\n\t\t\t\tshow();\n\t\t\t});\n\t\t\tes.addEventListener(\"frame\", (ev) => {\n\t\t\t\ttakeFrame(JSON.parse(ev.data));\n\t\t\t});\n\t\t\tes.addEventListener(\"done\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tes.close();\n\t\t\t});\n\t\t</script>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Loss</h2><p id=\"loss-scale\" class=\"text-sm opacity-70\">one point each time a proposal takes a slot. Each command costs one fully wrong pixel.</p><svg id=\"loss\" viewBox=\"0 0 800 200\" class=\"w-full h-48 text-base-content\" role=\"img\" aria-label=\"loss of kept proposals\"></svg></div></div><div class=\"grid grid-cols-1 xl:grid-cols-2 gap-4\"><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Beam</h2><p class=\"text-sm opacity-70\">The document the ranker keeps. Every proposer claims it.</p><div class=\"overflow-x-auto\"><table class=\"table table-xs table-pin-rows\"><thead><tr><th>place</th><th>operator</th><th>score</th><th>paths</th><th>commands</th><th>vertices</th></tr></thead> <tbody id=\"beam\"></tbody></table></div></div></div><div class=\"card bg-base-200\"><div class=\"card-body\"><h2 class=\"card-title\">Ranked batch</h2><p class=\"text-sm opacity-70\">Proposals as the ranker scores them. Keep beat the parent. Slot replaced that document.</p><div class=\"overflow-x-auto\"><table class=\"table table-xs table-pin-rows\"><thead><tr><th>operator</th><th>score</th><th>paths</th><th>commands</th><th>vertices</th><th>decision</th></tr></thead> <tbody id=\"proposals\"></tbody></table></div></div></div></div></main><script>\n\t\t\tconst root = document.querySelector(\"main\");\n\t\t\tconst id = root.dataset.job;\n\t\t\tconst beamBody = document.getElementById(\"beam\");\n\t\t\tconst proposalBody = document.getElementById(\"proposals\");\n\t\t\tlet scores = [];\n\t\t\tlet beam = [];\n\t\t\tlet proposals = [];\n\t\t\ttry { scores = JSON.parse(root.dataset.scores || \"[]\"); } catch (e) { scores = []; }\n\t\t\ttry { beam = JSON.parse(root.dataset.beam || \"[]\"); } catch (e) { beam = []; }\n\t\t\ttry { proposals = JSON.parse(root.dataset.proposals || \"[]\"); } catch (e) { proposals = []; }\n\t\t\tfunction cell(text, mono) {\n\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\tif (mono) td.className = \"font-mono\";\n\t\t\t\ttd.textContent = text;\n\t\t\t\treturn td;\n\t\t\t}\n\t\t\tfunction paintBeam() {\n\t\t\t\tbeamBody.replaceChildren();\n\t\t\t\tconst rows = Array.isArray(beam) ? beam : [];\n\t\t\t\tif (rows.length === 0) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\t\ttd.colSpan = 6;\n\t\t\t\t\ttd.textContent = \"waiting for the first kept document\";\n\t\t\t\t\ttr.appendChild(td);\n\t\t\t\t\tbeamBody.appendChild(tr);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\trows.forEach((slot, i) => {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\ttr.appendChild(cell(String(i + 1), true));\n\t\t\t\t\ttr.appendChild(cell(slot.operator || \"plate\", false));\n\t\t\t\t\ttr.appendChild(cell(fmt(slot.score), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.paths), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.commands), true));\n\t\t\t\t\ttr.appendChild(cell(String(slot.vertices || 0), true));\n\t\t\t\t\tbeamBody.appendChild(tr);\n\t\t\t\t});\n\t\t\t}\n\t\t\tfunction paintProposals() {\n\t\t\t\tproposalBody.replaceChildren();\n\t\t\t\tconst rows = Array.isArray(proposals) ? proposals : [];\n\t\t\t\tif (rows.length === 0) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\tconst td = document.createElement(\"td\");\n\t\t\t\t\ttd.colSpan = 6;\n\t\t\t\t\ttd.textContent = \"waiting for the ranker\";\n\t\t\t\t\ttr.appendChild(td);\n\t\t\t\t\tproposalBody.appendChild(tr);\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tfor (const row of rows) {\n\t\t\t\t\tconst tr = document.createElement(\"tr\");\n\t\t\t\t\ttr.appendChild(cell(row.operator || \"—\", false));\n\t\t\t\t\ttr.appendChild(cell(fmt(row.score), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.paths), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.commands), true));\n\t\t\t\t\ttr.appendChild(cell(String(row.vertices || 0), true));\n\t\t\t\t\tconst decision = document.createElement(\"td\");\n\t\t\t\t\tconst badge = document.createElement(\"span\");\n\t\t\t\t\tif (row.slot) {\n\t\t\t\t\t\tbadge.className = \"badge badge-success badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"slot\";\n\t\t\t\t\t} else if (row.keep) {\n\t\t\t\t\t\tbadge.className = \"badge badge-warning badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"keep\";\n\t\t\t\t\t} else {\n\t\t\t\t\t\tbadge.className = \"badge badge-ghost badge-sm\";\n\t\t\t\t\t\tbadge.textContent = \"reject\";\n\t\t\t\t\t}\n\t\t\t\t\tdecision.appendChild(badge);\n\t\t\t\t\ttr.appendChild(decision);\n\t\t\t\t\tproposalBody.appendChild(tr);\n\t\t\t\t}\n\t\t\t}\n\t\t\tfunction show() {\n\t\t\t\tfor (const [sel, name] of [\n\t\t\t\t\t[\"got\", \"last.svg\"],\n\t\t\t\t\t[\"HSV delta\", \"last-error.png\"],\n\t\t\t\t\t[\"leftover mask\", \"last-island.png\"],\n\t\t\t\t]) {\n\t\t\t\t\tconst img = document.querySelector(`img[alt=\"${sel}\"]`);\n\t\t\t\t\tif (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;\n\t\t\t\t}\n\t\t\t\tpaintBeam();\n\t\t\t\tpaintProposals();\n\t\t\t}\n\t\t\tfunction takeFrame(d) {\n\t\t\t\tif (Array.isArray(d.beam)) beam = d.beam;\n\t\t\t\tif (Array.isArray(d.proposals)) proposals = d.proposals;\n\t\t\t\tif (Array.isArray(d.scores) && d.scores.length) scores = d.scores;\n\t\t\t\tpaintBeam();\n\t\t\t\tpaintProposals();\n\t\t\t\tdrawLoss(scores);\n\t\t\t}\n\t\t\tfunction fmt(v) {\n\t\t\t\tif (!Number.isFinite(v)) return \"-\";\n\t\t\t\tif (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-2)) return v.toExponential(2);\n\t\t\t\treturn v.toFixed(2);\n\t\t\t}\n\t\t\tfunction drawLoss(vals) {\n\t\t\t\tconst svg = document.getElementById(\"loss\");\n\t\t\t\tconst note = document.getElementById(\"loss-scale\");\n\t\t\t\tconst w = 800, h = 200;\n\t\t\t\tconst pad = { l: 64, r: 16, t: 16, b: 28 };\n\t\t\t\twhile (svg.firstChild) svg.removeChild(svg.firstChild);\n\t\t\t\tif (!vals.length) {\n\t\t\t\t\tnote.textContent = \"waiting for the first kept proposal\";\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tlet ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);\n\t\t\t\tif (ymin === ymax) {\n\t\t\t\t\tymin = ymin * 0.9;\n\t\t\t\t\tymax = ymax * 1.1 || 1;\n\t\t\t\t}\n\t\t\t\tconst log = ymin > 0 && ymax / ymin >= 10;\n\t\t\t\tnote.textContent = log ? \"log10 score · kept proposals\" : \"score · kept proposals\";\n\t\t\t\tconst yOf = (v) => {\n\t\t\t\t\tconst a = log ? Math.log10(v) : v;\n\t\t\t\t\tconst lo = log ? Math.log10(ymin) : ymin;\n\t\t\t\t\tconst hi = log ? Math.log10(ymax) : ymax;\n\t\t\t\t\treturn pad.t + (1 - (a - lo) / (hi - lo)) * (h - pad.t - pad.b);\n\t\t\t\t};\n\t\t\t\tconst xOf = (i) => {\n\t\t\t\t\tconst n = Math.max(vals.length - 1, 1);\n\t\t\t\t\treturn pad.l + (i / n) * (w - pad.l - pad.r);\n\t\t\t\t};\n\t\t\t\tconst ns = \"http://www.w3.org/2000/svg\";\n\t\t\t\tconst el = (name, attrs) => {\n\t\t\t\t\tconst n = document.createElementNS(ns, name);\n\t\t\t\t\tfor (const k in (attrs || {})) n.setAttribute(k, attrs[k]);\n\t\t\t\t\treturn n;\n\t\t\t\t};\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: pad.t, x2: pad.l, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"line\", { x1: pad.l, y1: h - pad.b, x2: w - pad.r, y2: h - pad.b, stroke: \"currentColor\", \"stroke-opacity\": \"0.35\" }));\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: pad.t + 4, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymax);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: 8, y: h - pad.b, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = fmt(ymin);\n\t\t\t\tsvg.appendChild(el(\"text\", { x: pad.l, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\" })).textContent = \"0\";\n\t\t\t\tsvg.appendChild(el(\"text\", { x: w - pad.r, y: h - 6, fill: \"currentColor\", \"font-size\": \"11\", \"text-anchor\": \"end\" })).textContent = String(vals.length - 1);\n\t\t\t\tif (vals.length === 1) {\n\t\t\t\t\tsvg.appendChild(el(\"circle\", { cx: xOf(0), cy: yOf(vals[0]), r: 4, fill: \"currentColor\" }));\n\t\t\t\t} else {\n\t\t\t\t\tconst d = vals.map((v, i) => (i === 0 ? \"M\" : \"L\") + xOf(i) + \" \" + yOf(v)).join(\" \");\n\t\t\t\t\tsvg.appendChild(el(\"path\", { d: d, fill: \"none\", stroke: \"currentColor\", \"stroke-width\": \"2\" }));\n\t\t\t\t\tfor (let i = 0; i < vals.length; i++) {\n\t\t\t\t\t\tconst c = el(\"circle\", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: \"currentColor\" });\n\t\t\t\t\t\tc.appendChild(el(\"title\")).textContent = \"kept \" + i + \" · \" + fmt(vals[i]);\n\t\t\t\t\t\tsvg.appendChild(c);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tdrawLoss(scores);\n\t\t\tpaintBeam();\n\t\t\tpaintProposals();\n\t\t\tconst es = new EventSource(`/jobs/${id}/events`);\n\t\t\tes.addEventListener(\"epoch\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tdocument.getElementById(\"meta\").textContent =\n\t\t\t\t\t`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.vertices} vertices · ${d.elapsed}`;\n\t\t\t\ttakeFrame(d);\n\t\t\t\tshow();\n\t\t\t});\n\t\t\tes.addEventListener(\"frame\", (ev) => {\n\t\t\t\ttakeFrame(JSON.parse(ev.data));\n\t\t\t});\n\t\t\tes.addEventListener(\"done\", (ev) => {\n\t\t\t\tconst d = JSON.parse(ev.data);\n\t\t\t\tdocument.getElementById(\"status\").textContent = d.status;\n\t\t\t\tes.close();\n\t\t\t});\n\t\t</script>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -477,7 +477,7 @@ func frameCard(title string, src string) templ.Component {
 		var templ_7745c5c3_Var26 string
 		templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.ResolveAttributeValue(src)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 327, Col: 17}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 327, Col: 17}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var26)
 		if templ_7745c5c3_Err != nil {
@@ -490,7 +490,7 @@ func frameCard(title string, src string) templ.Component {
 		var templ_7745c5c3_Var27 string
 		templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.ResolveAttributeValue(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 327, Col: 31}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 327, Col: 31}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var27)
 		if templ_7745c5c3_Err != nil {
@@ -503,7 +503,7 @@ func frameCard(title string, src string) templ.Component {
 		var templ_7745c5c3_Var28 string
 		templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `cmd/svgolf/web/page.templ`, Line: 330, Col: 41}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/web/page.templ`, Line: 330, Col: 41}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 		if templ_7745c5c3_Err != nil {

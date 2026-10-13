@@ -96,7 +96,7 @@ templ JobPage(j JobView) {
 			<div class="card bg-base-200">
 				<div class="card-body">
 					<h2 class="card-title">Loss</h2>
-					<p id="loss-scale" class="text-sm opacity-70">one point each time a proposal is kept</p>
+					<p id="loss-scale" class="text-sm opacity-70">one point each time a proposal takes a slot. Each command costs one fully wrong pixel.</p>
 					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss of kept proposals"></svg>
 				</div>
 			</div>
@@ -104,7 +104,7 @@ templ JobPage(j JobView) {
 				<div class="card bg-base-200">
 					<div class="card-body">
 						<h2 class="card-title">Beam</h2>
-						<p class="text-sm opacity-70">The five documents the ranker keeps. Proposers claim the least busy one.</p>
+						<p class="text-sm opacity-70">The document the ranker keeps. Every proposer claims it.</p>
 						<div class="overflow-x-auto">
 							<table class="table table-xs table-pin-rows">
 								<thead>
@@ -125,7 +125,7 @@ templ JobPage(j JobView) {
 				<div class="card bg-base-200">
 					<div class="card-body">
 						<h2 class="card-title">Ranked batch</h2>
-						<p class="text-sm opacity-70">Proposals as the ranker scores them. Keep beat the parent. Slot took one of the five.</p>
+						<p class="text-sm opacity-70">Proposals as the ranker scores them. Keep beat the parent. Slot replaced that document.</p>
 						<div class="overflow-x-auto">
 							<table class="table table-xs table-pin-rows">
 								<thead>
