@@ -93,7 +93,7 @@ func TestUnholeDropsUselessHole(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Unhole{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Unhole{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestSimplifySkipsLoadBearingEars(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,30 +370,22 @@ func TestSimplifyIsPolishBand(t *testing.T) {
 	}
 }
 
-func TestSimplifyRouteIsAlone(t *testing.T) {
+func TestAgentSearchCoversPlate(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
+	var last svg.Document
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		polish := false
-		other := false
-		for _, r := range ep.Rated {
-			switch r.Op {
-			case OpSimplify, OpUnhole:
-				polish = true
-			default:
-				other = true
-			}
-		}
-		if polish && other {
-			t.Fatalf("simplify shared a neighborhood: %v", ep.Rated)
-		}
+		last = ep.Document
+	}
+	if len(forms(last)) == 0 {
+		t.Fatal("plate produced no path")
 	}
 }
 
@@ -465,7 +457,7 @@ func TestSimplifyKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +507,7 @@ func TestSimplifyDropsOneColinearVertex(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,14 +567,14 @@ func TestSlideKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Slide{world: s, left: lefts[0]}).Run()
+		pick, err = (Slide{world: s, left: lefts[0]}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -614,11 +606,11 @@ func TestScoreCandStoresFullError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lefts := s.leftovers()
+	lefts := s.leftovers(nil)
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +669,7 @@ func TestTryDropRedundant(t *testing.T) {
 		h:      16,
 		errSum: Score(nil, got, img),
 	}
-	pick, err := (Delete{world: s, i: 1}).Run()
+	pick, err := (Delete{world: s, i: 1}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +716,7 @@ func TestDeleteEmitsLosingScore(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Delete{world: s, i: 0}).Run()
+	pick, err := (Delete{world: s, i: 0}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1152,7 +1144,7 @@ func TestLeftoverDeltaBandSelectsMildStrip(t *testing.T) {
 	if _, island := (&world{got: got, want: want, w: 16, h: 16}).hottest(); len(island) != 0 {
 		t.Fatalf("hottest=%d want none; the strip is below minErr", len(island))
 	}
-	lefts := (&world{got: got, want: want, w: 16, h: 16}).leftovers()
+	lefts := (&world{got: got, want: want, w: 16, h: 16}).leftovers(nil)
 	var strip leftover
 	for _, left := range lefts {
 		if left.region {
@@ -1227,7 +1219,7 @@ func TestHottestGlowsColorFromRim(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 20, h: 20}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1281,7 +1273,7 @@ func TestLeftoverColorRegionFromBlendRim(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 20, h: 20, fills: []color.NRGBA{cyan}}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1318,7 +1310,7 @@ func TestHottestDoesNotGlowPaper(t *testing.T) {
 		}
 	}
 	s := &world{got: got, want: want, w: 24, h: 24}
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
@@ -1536,11 +1528,11 @@ func TestTrianglePlacesInscribedPlate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lefts := s.leftovers()
+	lefts := s.leftovers(nil)
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1676,7 +1668,7 @@ func TestJoinCollapsesTwoPlates(t *testing.T) {
 	s.wantP.Ensure()
 	s.gotP.Ensure()
 	buckets := fillBuckets(s.owner, s.w, s.paths, nil)
-	pick, err := (&Join{world: s, buckets: buckets}).Run()
+	pick, err := (&Join{world: s, buckets: buckets}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1733,7 +1725,7 @@ func TestJoinEmitsLosingScore(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1867,7 +1859,7 @@ func TestJoinKeepsUntouchedCubic(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+	pick, err := (&Join{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1980,7 +1972,7 @@ func TestSubtractPunchesOverlap(t *testing.T) {
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2057,7 +2049,7 @@ func TestSubtractDropsPaperNotch(t *testing.T) {
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run()
+		pick, err = (Subtract{world: s, buckets: fillBuckets(s.owner, s.w, s.paths, nil)}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2139,7 +2131,7 @@ func TestSwapUncoversMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Swap{world: s, i: 0, j: 1}).Run()
+	pick, err := (Swap{world: s, i: 0, j: 1}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2198,11 +2190,11 @@ func TestCoverPlacesBackgroundBehindMark(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2280,7 +2272,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 	s.wantP.Ensure()
 	s.gotP.Ensure()
 	var paperLeft leftover
-	for _, left := range s.leftovers() {
+	for _, left := range s.leftovers(t.Context()) {
 		if left.paper {
 			paperLeft = left
 			break
@@ -2289,7 +2281,7 @@ func TestCarvePaperShrinksNotHole(t *testing.T) {
 	if !paperLeft.big() {
 		t.Fatal("no paper leftover")
 	}
-	pick, err := (&Carve{world: s, left: paperLeft}).Run()
+	pick, err := (&Carve{world: s, left: paperLeft}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2342,14 +2334,14 @@ func TestSlidePullsTowardLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
 	var pick formPick
 	for try := 0; try < 16; try++ {
 		var err error
-		pick, err = (Slide{world: s, left: lefts[0]}).Run()
+		pick, err = (Slide{world: s, left: lefts[0]}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2392,11 +2384,11 @@ func TestBendPutsCubicTowardLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 {
 		t.Fatal("no leftover")
 	}
-	pick, err := (Bend{world: s, left: lefts[0]}).Run()
+	pick, err := (Bend{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2456,7 +2448,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	lefts := s.leftovers()
+	lefts := s.leftovers(t.Context())
 	if len(lefts) == 0 || !lefts[0].big() {
 		t.Fatal("sibling leftover empty")
 	}
@@ -2471,7 +2463,7 @@ func TestCrossoverRectangleUsesSiblingLeftover(t *testing.T) {
 	s.gotP.Reset(agot)
 	s.gotP.Ensure()
 	lefts = s.bindLeftovers(lefts)
-	pick, err := (Triangle{world: s, left: lefts[0]}).Run()
+	pick, err := (Triangle{world: s, left: lefts[0]}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2900,22 +2892,20 @@ func TestStackEpochRatesTriangle(t *testing.T) {
 			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
 		}
 	}
+	saw := false
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ok := false
 		for _, r := range ep.Rated {
 			if r.Op == OpTriangle && r.Ok && r.Score != nil {
-				ok = true
+				saw = true
 			}
 		}
-		if !ok {
-			t.Fatalf("rated=%v want triangle with a score", ep.Rated)
-		}
-		return
 	}
-	t.Fatal("no epoch")
+	if !saw {
+		t.Fatal("no epoch rated an accepted triangle")
+	}
 }
 
 func TestCollectRatedKeepsLosingScore(t *testing.T) {
@@ -3033,31 +3023,29 @@ func TestStackCoversBeforeRefine(t *testing.T) {
 			img.SetNRGBA(x, y, c)
 		}
 	}
-	var kids []int
-	var first []int
+	var doc svg.Document
+	var kids int
 	for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		doc := ep.Document
-		kids = append(kids, len(forms(doc)))
-		if fk := forms(doc); len(fk) > 0 {
-			first = append(first, pathPts(fk[0]))
-		} else {
-			first = append(first, 0)
+		doc = ep.Document
+		if n := len(forms(doc)); n > kids {
+			kids = n
 		}
 	}
-	grew := false
-	for i := 1; i < len(kids); i++ {
-		if kids[i] > kids[i-1] {
-			grew = true
-			if first[i] != first[i-1] {
-				t.Fatalf("epoch %d: first path changed while adding a path", i)
-			}
-		}
+	if kids < 2 {
+		t.Fatalf("paths=%d want both plates", kids)
 	}
-	if !grew {
-		t.Fatalf("never covered both, kids=%v", kids)
+	got, err := render.Render(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loss.ColorAt(got.NRGBAAt(1, 1), color.NRGBA{R: 255, A: 255}) > minErr {
+		t.Fatalf("corner %+v want red", got.NRGBAAt(1, 1))
+	}
+	if loss.ColorAt(got.NRGBAAt(16, 16), color.NRGBA{B: 255, A: 255}) > minErr {
+		t.Fatalf("center %+v want blue", got.NRGBAAt(16, 16))
 	}
 }
 

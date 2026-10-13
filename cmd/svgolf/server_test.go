@@ -63,8 +63,8 @@ func TestServerJobFromCache(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "20") || !strings.Contains(rec.Body.String(), "12.5") {
 		t.Fatalf("missing score series: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="epochs"`) || !strings.Contains(rec.Body.String(), "<table") {
-		t.Fatalf("missing epochs table: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `id="beam"`) || !strings.Contains(rec.Body.String(), `id="proposals"`) || !strings.Contains(rec.Body.String(), "<table") {
+		t.Fatalf("missing beam and rank tables: %s", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "3 paths") || !strings.Contains(rec.Body.String(), "12 vertices") {
 		t.Fatalf("missing path and vertex counts: %s", rec.Body.String())
@@ -246,9 +246,9 @@ func TestWatchShowsRequest(t *testing.T) {
 		sess.Cancel(context.Canceled)
 		_ = sess.Wait()
 	})
-	s := &server{ctx: ctx}
+	s := &server{}
 	saw := make(chan struct{})
-	h := s.watch(func(w http.ResponseWriter, r *http.Request) {
+	h := s.watch(ctx, func(w http.ResponseWriter, r *http.Request) {
 		deadline := time.Now().Add(time.Second)
 		for time.Now().Before(deadline) {
 			for _, n := range sess.List(16) {

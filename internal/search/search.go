@@ -39,6 +39,34 @@ type Rated struct {
 	Chosen bool     `json:"chosen,omitempty"`
 }
 
+// Slot is one document in the beam the ranker publishes.
+type Slot struct {
+	Operator string  `json:"operator"`
+	Score    float64 `json:"score"`
+	Paths    int     `json:"paths"`
+	Commands int     `json:"commands"`
+	Vertices int     `json:"vertices"`
+}
+
+// Proposal is one scored proposition from the latest ranker batch.
+type Proposal struct {
+	Operator string  `json:"operator"`
+	Score    float64 `json:"score"`
+	Paths    int     `json:"paths"`
+	Commands int     `json:"commands"`
+	Vertices int     `json:"vertices"`
+	Keep     bool    `json:"keep"`
+	Slot     bool    `json:"slot"`
+}
+
+// Frame is the beam, the batch the ranker just scored, and the loss
+// of every proposal that entered the pool.
+type Frame struct {
+	Beam      []Slot     `json:"beam"`
+	Proposals []Proposal `json:"proposals"`
+	Loss      []float64  `json:"loss,omitempty"`
+}
+
 // Search is the whole problem: want pixmap → one Epoch per step.
 // Host does not scale the pixmap. Only this adapter may scale, as its own algorithm.
 // A one-shot adapter yields once and stops. Palette, Cost, Loss, and mutate stay inside the adapter.

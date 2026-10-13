@@ -22,7 +22,7 @@ import (
 type Operator interface {
 	ID() Op
 	Applies() bool
-	Run() (formPick, error)
+	Run(ctx context.Context) (formPick, error)
 }
 
 type Op = search.Op
@@ -44,6 +44,9 @@ const (
 	OpSwap      = search.OpSwap
 	OpDelete    = search.OpDelete
 	OpUnhole    = search.OpUnhole
+	OpSuggest   = search.OpSuggest
+	OpSquash    = search.OpSquash
+	OpSpline    = search.OpSpline
 	OpOutline   = search.OpOutline
 	opCount     = search.OpCount
 )
@@ -90,6 +93,12 @@ func (o op) impl() Operator {
 		return Delete{world: o.world, i: o.i}
 	case OpUnhole:
 		return Unhole{world: o.world, buckets: o.buckets}
+	case OpSuggest:
+		return Suggest{world: o.world, buckets: o.buckets}
+	case OpSquash:
+		return Squash{world: o.world, buckets: o.buckets}
+	case OpSpline:
+		return Spline{world: o.world, buckets: o.buckets}
 	case OpOutline:
 		return Outline{world: o.world, left: o.left}
 	default:
@@ -105,13 +114,15 @@ func (o op) Applies() bool {
 	return im.Applies()
 }
 
-func (o op) Run() (formPick, error) {
+func (o op) Run(ctx context.Context) (formPick, error) {
 	im := o.impl()
 	if im == nil {
 		return nonePick(), nil
 	}
-	return im.Run()
+	return im.Run(ctx)
 }
+
+func (o op) proposeWorld() *world { return o.world }
 
 // Triangle places one leftover ear.
 type Triangle struct {
@@ -124,7 +135,7 @@ func (tr Triangle) Applies() bool {
 	return tr.left.big() && !tr.left.region && hasInterior(tr.left.island) && tr.world.paths < maxPaths
 }
 
-func (tr Triangle) Run() (formPick, error) {
+func (tr Triangle) Run(ctx context.Context) (formPick, error) {
 	s, g := tr.world, tr.left.fresh
 	if len(g.work) < 3 {
 		return nonePick(), nil
@@ -140,7 +151,7 @@ func (tr Triangle) Run() (formPick, error) {
 	}
 	g.ring = ring
 	g = s.seedGrow(g)
-	return s.addLayer(filledPath(ring, g.fill), g, OpTriangle)
+	return s.addLayer(ctx, filledPath(ring, g.fill), g, OpTriangle)
 }
 
 // Rectangle places one leftover plate from the four strongest
@@ -155,7 +166,7 @@ func (rc Rectangle) Applies() bool {
 	return rc.left.big() && !rc.left.region && hasInterior(rc.left.island) && rc.world.paths < maxPaths
 }
 
-func (rc Rectangle) Run() (formPick, error) {
+func (rc Rectangle) Run(ctx context.Context) (formPick, error) {
 	s, g := rc.world, rc.left.fresh
 	if len(g.work) < 4 {
 		return nonePick(), nil
@@ -171,7 +182,7 @@ func (rc Rectangle) Run() (formPick, error) {
 	}
 	g.ring = ring
 	g = s.seedGrow(g)
-	return s.addLayer(filledPath(ring, g.fill), g, OpRectangle)
+	return s.addLayer(ctx, filledPath(ring, g.fill), g, OpRectangle)
 }
 
 // Outline paints one leftover mask. The color-region flood is
@@ -193,7 +204,7 @@ func (o Outline) Applies() bool {
 	return o.left.big() && o.world.paths < maxPaths
 }
 
-func (o Outline) Run() (formPick, error) {
+func (o Outline) Run(ctx context.Context) (formPick, error) {
 	s := o.world
 	g := o.left.fresh
 	if len(g.work) < 3 {
@@ -206,7 +217,20 @@ func (o Outline) Run() (formPick, error) {
 	g.fill = modeFill(s.want, g.work)
 	g.ring = ring
 	g = s.seedGrow(g)
-	layer, err := s.addLayer(filledPath(ring, g.fill), g, OpOutline)
+	if s.stashOn {
+		s.markFull = true
+		defer func() { s.markFull = false }()
+		if _, err := s.addLayer(ctx, filledPath(ring, g.fill), g, OpOutline); err != nil {
+			return nonePick(), err
+		}
+		if s.paths != 0 && (o.left.paper || paperLeftover(g.fill)) {
+			if _, err := (&Carve{world: s, left: o.left}).Run(ctx); err != nil {
+				return nonePick(), err
+			}
+		}
+		return nonePick(), nil
+	}
+	layer, err := s.addLayer(ctx, filledPath(ring, g.fill), g, OpOutline)
 	if err != nil {
 		return nonePick(), err
 	}
@@ -215,7 +239,7 @@ func (o Outline) Run() (formPick, error) {
 	}
 	// The pane already is this color. Punching the same outline out
 	// of the plate matches the stacked white path and stays one shape.
-	hole, err := (&Carve{world: s, left: o.left}).Run()
+	hole, err := (&Carve{world: s, left: o.left}).Run(ctx)
 	if err != nil {
 		return nonePick(), err
 	}
@@ -223,11 +247,11 @@ func (o Outline) Run() (formPick, error) {
 	// rasters of the same outline. Lex would then keep the extra
 	// path. The full sum is the same Score the archive stores.
 	if s.want != nil && hole.scored && layer.scored {
-		if sum, err := scored(s.ctx, hole.doc, s.want); err == nil {
+		if sum, err := scored(ctx, hole.doc, s.want); err == nil {
 			hole.errSum = sum
 			hole.ok = acceptLexicographic(sum, hole.paths, hole.commands, s.errSum, s.paths, docCmdLen(s.doc))
 		}
-		if sum, err := scored(s.ctx, layer.doc, s.want); err == nil {
+		if sum, err := scored(ctx, layer.doc, s.want); err == nil {
 			layer.errSum = sum
 			layer.ok = acceptLexicographic(sum, layer.paths, layer.commands, s.errSum, s.paths, docCmdLen(s.doc))
 		}
@@ -260,7 +284,7 @@ func (r Ring) Applies() bool {
 	return len(leftoverRings(r.left.island, r.world.got, r.world.want, r.left.col)) > 0
 }
 
-func (r Ring) Run() (formPick, error) {
+func (r Ring) Run(ctx context.Context) (formPick, error) {
 	s := r.world
 	holes := leftoverRings(r.left.island, s.got, s.want, r.left.col)
 	if len(holes) == 0 {
@@ -271,7 +295,7 @@ func (r Ring) Run() (formPick, error) {
 	if len(g.ring) < 3 {
 		return nonePick(), nil
 	}
-	return s.addLayer(withHoles(filledPath(g.ring, g.fill), holes), g, OpRing)
+	return s.addLayer(ctx, withHoles(filledPath(g.ring, g.fill), holes), g, OpRing)
 }
 
 // Absorb paints leftover into a touching path as a 2-stop linear.
@@ -287,7 +311,7 @@ func (a Absorb) Applies() bool {
 	return a.left.big() && !a.left.paper && a.world.paths > 0
 }
 
-func (a *Absorb) Run() (formPick, error) {
+func (a *Absorb) Run(ctx context.Context) (formPick, error) {
 	s := a.world
 	works := a.left.grows
 	if works == nil {
@@ -295,6 +319,9 @@ func (a *Absorb) Run() (formPick, error) {
 	}
 	best := nonePick()
 	for _, g := range works {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		if !sameRampFamily(g.fill, a.left.col) {
 			continue
 		}
@@ -308,9 +335,13 @@ func (a *Absorb) Run() (formPick, error) {
 			continue
 		}
 		cand := p.WithLinearFill(grad)
-		pick, err := s.scoreCand(replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, OpAbsorb)
+		pick, err := s.scoreCand(ctx, replaceAt(s.doc, g.i+1, cand.Node()), cand.Node(), g, OpAbsorb)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -331,7 +362,7 @@ func (g Grow) Applies() bool {
 	return g.left.big() && !g.left.paper
 }
 
-func (g *Grow) Run() (formPick, error) {
+func (g *Grow) Run(ctx context.Context) (formPick, error) {
 	s := g.world
 	works := g.left.grows
 	if works == nil {
@@ -339,6 +370,9 @@ func (g *Grow) Run() (formPick, error) {
 	}
 	best := nonePick()
 	for _, work := range works {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		ring := hullRing(work.work)
 		if len(ring) < 3 {
 			continue
@@ -348,9 +382,13 @@ func (g *Grow) Run() (formPick, error) {
 		if lin, ok := s.doc.Children()[work.i+1].LinearFill(); ok {
 			cand = cand.WithLinearFill(lin)
 		}
-		pick, err := s.scoreCand(replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, OpGrow)
+		pick, err := s.scoreCand(ctx, replaceAt(s.doc, work.i+1, cand.Node()), cand.Node(), work, OpGrow)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -371,7 +409,7 @@ func (c Carve) Applies() bool {
 	return c.left.big() && c.world.paths > 0
 }
 
-func (c *Carve) Run() (formPick, error) {
+func (c *Carve) Run(ctx context.Context) (formPick, error) {
 	s := c.world
 	c.scratch.ensure(s.w * s.h)
 	hole := c.left.fresh.ring
@@ -382,10 +420,13 @@ func (c *Carve) Run() (formPick, error) {
 		return nonePick(), nil
 	}
 	if c.left.paper {
-		return c.paper(hole)
+		return c.paper(ctx, hole)
 	}
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		node := s.doc.Children()[i+1]
 		if !ownsAny(s.owner, c.left.island, s.w, uint16(i+1)) && !s.paintsIsland(node, c.left.island) {
 			continue
@@ -398,9 +439,13 @@ func (c *Carve) Run() (formPick, error) {
 		work := ownedMinus(s.owner, c.left.island, s.w, uint16(i+1), c.scratch.seen)
 		dirty0 := islandRect(c.left.island).Union(nodeRect(node))
 		gr := grow{i: i, work: work, fill: s.fills[i], dirty0: dirty0}
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
+		pick, err := s.scoreCand(ctx, replaceAt(s.doc, i+1, cand.Node()), cand.Node(), gr, OpCarve)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if pick.ok && pick.errSum > s.errSum {
 			pick.ok = false
@@ -412,7 +457,7 @@ func (c *Carve) Run() (formPick, error) {
 	return best, nil
 }
 
-func (c *Carve) paper(_ [][2]float64) (formPick, error) {
+func (c *Carve) paper(ctx context.Context, _ [][2]float64) (formPick, error) {
 	s := c.world
 	next := s.doc
 	reclaims := make([][]pix, s.paths)
@@ -420,6 +465,9 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 	dirty0 := islandRect(c.left.island)
 	var last svg.Node
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		node := s.doc.Children()[i+1]
 		if !ownsAny(s.owner, c.left.island, s.w, uint16(i+1)) && !s.paintsIsland(node, c.left.island) {
 			continue
@@ -463,9 +511,15 @@ func (c *Carve) paper(_ [][2]float64) (formPick, error) {
 		return nonePick(), nil
 	}
 	gr := grow{i: -1, work: c.left.island, fill: c.left.col, dirty0: dirty0}
-	pick, err := s.scoreCand(next, last, gr, OpCarve)
+	pick, err := s.scoreCand(ctx, next, last, gr, OpCarve)
 	if err != nil {
 		return nonePick(), err
+	}
+	if s.stashOn {
+		pick.reclaims = reclaims
+		pick.replace = -1
+		s.finishPropose(pick)
+		return nonePick(), nil
 	}
 	if pick.ok && pick.errSum > s.errSum {
 		pick.ok = false
@@ -494,10 +548,207 @@ func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
 
-func (s Simplify) Run() (formPick, error) {
+// fuzzSimplify throws a random handful of vertex drops at the ranker
+// and returns. It does not wait for the decisions. Refusals land on
+// the beam later and the next draw skips them.
+func (w *world) fuzzSimplify(ctx context.Context, board *beam, parent snapshot, proposals chan<- agentNote, started time.Time) (int, bool, error) {
+	if err := live(ctx); err != nil {
+		return 0, false, err
+	}
+	buckets := fillBuckets(w.owner, w.w, w.paths, nil)
+	tasks := w.straightTasks(buckets, nil)
+	if len(tasks) == 0 {
+		return 0, false, nil
+	}
+	rand.Shuffle(len(tasks), func(i, j int) {
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+	})
+	keys := make([]straightKey, len(tasks))
+	by := make(map[straightKey]straightTask, len(tasks))
+	for i, task := range tasks {
+		keys[i] = task.key
+		by[task.key] = task
+	}
+	chosen := board.reserveStraight(parent.id, keys, simplifyWindow)
+	if len(chosen) == 0 {
+		return 0, board.straightBusy(parent.id), nil
+	}
+	sent := 0
+	for _, key := range chosen {
+		pick := w.simplifyPick(buckets, by[key], w.simplifyMiss)
+		if pick.doc.Width() == 0 {
+			board.settleStraight(parent.id, key, false)
+			continue
+		}
+		pick.parent = parent
+		ch := make(chan bool, 1)
+		id := parent.id
+		go func(key straightKey, ch chan bool) {
+			ok := false
+			select {
+			case <-ctx.Done():
+			case ok = <-ch:
+			}
+			board.settleStraight(id, key, ok)
+		}(key, ch)
+		board.send(ctx, proposals, agentNote{
+			pick:    pick,
+			elapsed: time.Since(started),
+			verdict: ch,
+		})
+		sent++
+	}
+	return sent, true, nil
+}
+
+type straightTask struct {
+	key    straightKey
+	i, ri  int
+	v      int
+	rings  []pathRing
+	lin    svg.LinearFill
+	hasLin bool
+}
+
+func (w *world) straightTasks(buckets [][]pix, missed map[straightKey]struct{}) []straightTask {
+	var tasks []straightTask
+	for i := 0; i < w.paths; i++ {
+		node := w.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			for v := 0; v < len(ring.verts); v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				key := ringStraightKey(ring, v)
+				if _, seen := missed[key]; seen {
+					continue
+				}
+				tasks = append(tasks, straightTask{
+					key: key, i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin,
+				})
+			}
+		}
+	}
+	_ = buckets
+	return tasks
+}
+
+func (w *world) simplifyPick(buckets [][]pix, t straightTask, missed map[straightKey]struct{}) formPick {
+	ring := t.rings[t.ri]
+	moved := ring.dropVertex(t.v)
+	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+		return nonePick()
+	}
+	nextRings := append([]pathRing{}, t.rings...)
+	nextRings[t.ri] = moved
+	cand := filledRings(nextRings[0], nextRings[1:], w.fills[t.i])
+	if t.hasLin {
+		cand = cand.WithLinearFill(t.lin)
+	}
+	var work []pix
+	if t.i < len(buckets) {
+		work = buckets[t.i]
+	}
+	g := w.seedGrow(grow{i: t.i, work: work, fill: w.fills[t.i]})
+	g.dirty0 = t.key.scoreRect()
+	pick := w.draft(replaceAt(w.doc, t.i+1, cand.Node()), cand.Node(), g, OpSimplify)
+	if pick.doc.Width() == 0 {
+		return nonePick()
+	}
+	kept := cloneStraightMiss(missed)
+	forgetTouching(kept, t.key)
+	pick.simplifyMiss = kept
+	pick.hasStraight = true
+	pick.straightMiss = t.key
+	return pick
+}
+
+func (w *world) fanSimplify(ctx context.Context, buckets [][]pix) error {
+	missed := w.simplifyMiss
+	type task struct {
+		i, ri, v int
+		rings    []pathRing
+		lin      svg.LinearFill
+		hasLin   bool
+	}
+	var tasks []task
+	for i := 0; i < w.paths; i++ {
+		if err := live(ctx); err != nil {
+			return err
+		}
+		node := w.doc.Children()[i+1]
+		p, ok := node.Path()
+		if !ok {
+			continue
+		}
+		rings := parsePathRings(p)
+		lin, hasLin := node.LinearFill()
+		for ri, ring := range rings {
+			for v := 0; v < len(ring.verts); v++ {
+				if !ring.straightVertex(v) {
+					continue
+				}
+				if _, seen := missed[ringStraightKey(ring, v)]; seen {
+					continue
+				}
+				tasks = append(tasks, task{i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin})
+			}
+		}
+	}
+	return parallelEach(ctx, len(tasks), func(ctx context.Context, k int) error {
+		if err := live(ctx); err != nil {
+			return err
+		}
+		t := tasks[k]
+		ring := t.rings[t.ri]
+		key := ringStraightKey(ring, t.v)
+		moved := ring.dropVertex(t.v)
+		if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+			return nil
+		}
+		nextRings := append([]pathRing{}, t.rings...)
+		nextRings[t.ri] = moved
+		cand := filledRings(nextRings[0], nextRings[1:], w.fills[t.i])
+		if t.hasLin {
+			cand = cand.WithLinearFill(t.lin)
+		}
+		var work []pix
+		if t.i < len(buckets) {
+			work = buckets[t.i]
+		}
+		g := w.seedGrow(grow{i: t.i, work: work, fill: w.fills[t.i]})
+		g.dirty0 = key.scoreRect()
+		pick := w.draft(replaceAt(w.doc, t.i+1, cand.Node()), cand.Node(), g, OpSimplify)
+		if pick.doc.Width() == 0 {
+			return nil
+		}
+		kept := cloneStraightMiss(missed)
+		forgetTouching(kept, key)
+		pick.simplifyMiss = kept
+		w.finishPropose(pick)
+		return nil
+	})
+}
+
+func (s Simplify) Run(ctx context.Context) (formPick, error) {
 	w := s.world
+	if w != nil && w.stashOn && w.emitNow != nil {
+		if err := w.fanSimplify(ctx, s.buckets); err != nil {
+			return nonePick(), err
+		}
+		return nonePick(), nil
+	}
 	missed := cloneStraightMiss(w.simplifyMiss)
 	for i := 0; i < w.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
 		if !ok {
@@ -508,6 +759,9 @@ func (s Simplify) Run() (formPick, error) {
 		for ri, ring := range rings {
 			n := len(ring.verts)
 			for v := 0; v < n; v++ {
+				if err := live(ctx); err != nil {
+					return nonePick(), err
+				}
 				if !ring.straightVertex(v) {
 					continue
 				}
@@ -530,9 +784,16 @@ func (s Simplify) Run() (formPick, error) {
 				// drop only repaints this triangle; scoreCand
 				// insets the rect.
 				g.dirty0 = key.scoreRect()
-				pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, OpSimplify)
+				pick, err := w.scoreCand(ctx, replaceAt(w.doc, i+1, cand.Node()), cand.Node(), g, OpSimplify)
 				if err != nil {
 					return nonePick(), err
+				}
+				if w.stashOn {
+					kept := cloneStraightMiss(missed)
+					forgetTouching(kept, key)
+					pick.simplifyMiss = kept
+					w.finishPropose(pick)
+					continue
 				}
 				if !pick.scored {
 					continue
@@ -568,10 +829,13 @@ func (u Unhole) Applies() bool {
 	return u.world.paths > 0
 }
 
-func (u Unhole) Run() (formPick, error) {
+func (u Unhole) Run(ctx context.Context) (formPick, error) {
 	w := u.world
 	best := nonePick()
 	for i := 0; i < w.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		node := w.doc.Children()[i+1]
 		p, ok := node.Path()
 		if !ok {
@@ -595,9 +859,13 @@ func (u Unhole) Run() (formPick, error) {
 			}
 			lg := g
 			lg.dirty0 = pointsRect(rings[h].points())
-			pick, err := w.scoreCand(replaceAt(w.doc, i+1, cand.Node()), cand.Node(), lg, OpUnhole)
+			pick, err := w.scoreCand(ctx, replaceAt(w.doc, i+1, cand.Node()), cand.Node(), lg, OpUnhole)
 			if err != nil {
 				return nonePick(), err
+			}
+			if w.stashOn {
+				w.finishPropose(pick)
+				continue
 			}
 			if pick.ok && pick.errSum > w.errSum {
 				pick.ok = false
@@ -621,10 +889,13 @@ func (w Wash) Applies() bool {
 	return w.world.paths > 0
 }
 
-func (w Wash) Run() (formPick, error) {
+func (w Wash) Run(ctx context.Context) (formPick, error) {
 	s := w.world
 	best := nonePick()
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		work := w.buckets[i]
 		grad, ok := fitLinearStops(work, s.want)
 		if !ok {
@@ -636,9 +907,13 @@ func (w Wash) Run() (formPick, error) {
 		}
 		cand := p.WithLinearFill(grad)
 		g := s.seedGrow(grow{i: i, work: work, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpWash)
+		pick, err := s.scoreCand(ctx, replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpWash)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -659,7 +934,7 @@ func (j Join) Applies() bool {
 	return j.world.paths >= 2
 }
 
-func (j *Join) Run() (formPick, error) {
+func (j *Join) Run(ctx context.Context) (formPick, error) {
 	s := j.world
 	if s.paths < 2 {
 		return nonePick(), nil
@@ -687,7 +962,7 @@ func (j *Join) Run() (formPick, error) {
 		ra, rb := parsePathRings(pa), parsePathRings(pb)
 		if len(ra) > 0 && len(rb) > 0 {
 			if stitched, ok := stitchNearEdge(ra[0], rb[0]); ok {
-				return j.scoreJoin(s, i, jn, work, stitched, nil)
+				return j.scoreJoin(ctx, s, i, jn, work, stitched, nil)
 			}
 		}
 	}
@@ -702,10 +977,10 @@ func (j *Join) Run() (formPick, error) {
 	if len(ring) < 3 {
 		return nonePick(), nil
 	}
-	return j.scoreJoin(s, i, jn, work, polylineRing(ring), nil)
+	return j.scoreJoin(ctx, s, i, jn, work, polylineRing(ring), nil)
 }
 
-func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes []pathRing) (formPick, error) {
+func (j *Join) scoreJoin(ctx context.Context, s *world, i, jn int, work []pix, outer pathRing, holes []pathRing) (formPick, error) {
 	best := nonePick()
 	fills := []color.NRGBA{s.fills[i], s.fills[jn]}
 	if fills[0] == fills[1] {
@@ -719,6 +994,9 @@ func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes 
 		}
 	}
 	for _, fill := range fills {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		g := s.seedGrow(grow{i: i, work: work, fill: fill, ring: outer.points()})
 		g.dirty0 = g.dirty0.Union(nodeRect(s.doc.Children()[jn+1]))
 		cand := filledRings(outer, holes, fill)
@@ -727,9 +1005,15 @@ func (j *Join) scoreJoin(s *world, i, jn int, work []pix, outer pathRing, holes 
 		}
 		next := replaceAt(s.doc, i+1, cand.Node())
 		next = dropAt(next, jn+1)
-		pick, err := s.scoreCand(next, cand.Node(), g, OpJoin)
+		pick, err := s.scoreCand(ctx, next, cand.Node(), g, OpJoin)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			pick.mergeJ = jn
+			pick.work = work
+			s.finishPropose(pick)
+			continue
 		}
 		if pick.ok {
 			pick.mergeJ = jn
@@ -770,7 +1054,7 @@ func (s Subtract) Applies() bool {
 	return s.world.paths >= 2
 }
 
-func (s Subtract) Run() (formPick, error) {
+func (s Subtract) Run(ctx context.Context) (formPick, error) {
 	w := s.world
 	if w.paths < 2 {
 		return nonePick(), nil
@@ -801,6 +1085,9 @@ func (s Subtract) Run() (formPick, error) {
 	best := nonePick()
 	dropCutter := paperLeftover(w.fills[i])
 	for _, ring := range rings {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		cand := filledPath(ring, w.fills[j])
 		if lin, ok := node.LinearFill(); ok {
 			cand = cand.WithLinearFill(lin)
@@ -810,12 +1097,16 @@ func (s Subtract) Run() (formPick, error) {
 		if dropCutter {
 			next = dropAt(next, i+1)
 		}
-		pick, err := w.scoreCand(next, cand.Node(), g, OpSubtract)
+		pick, err := w.scoreCand(ctx, next, cand.Node(), g, OpSubtract)
 		if err != nil {
 			return nonePick(), err
 		}
 		if dropCutter {
 			pick.dropIdx = i
+		}
+		if w.stashOn {
+			w.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -835,9 +1126,19 @@ func (d Delete) Applies() bool {
 	return d.world.paths >= 2 && d.i >= 0 && d.i < d.world.paths
 }
 
-func (d Delete) Run() (formPick, error) {
+func (d Delete) Run(ctx context.Context) (formPick, error) {
 	s := d.world
+	if err := live(ctx); err != nil {
+		return nonePick(), err
+	}
 	next := dropAt(s.doc, d.i+1)
+	if s.stashOn {
+		s.finishPropose(formPick{
+			doc: next, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete,
+			dirty: nodeRect(s.doc.Children()[d.i+1]),
+		})
+		return nonePick(), nil
+	}
 	ngot, err := render.Scratch(next)
 	if err != nil {
 		return nonePick(), err
@@ -845,7 +1146,7 @@ func (d Delete) Run() (formPick, error) {
 	defer render.Release(ngot)
 	gotP := loss.Acquire(ngot)
 	dirty := nodeRect(s.doc.Children()[d.i+1]).Inset(-2)
-	nerr := s.scoreAfter(gotP, dirty)
+	nerr := s.scoreAfter(ctx, gotP, dirty)
 	loss.Release(gotP)
 	npaths := s.paths - 1
 	ncmds := docCmdLen(next)
@@ -864,8 +1165,11 @@ func (sl Slide) Applies() bool {
 	return sl.left.big() && sl.world.paths > 0
 }
 
-func (sl Slide) Run() (formPick, error) {
+func (sl Slide) Run(ctx context.Context) (formPick, error) {
 	s := sl.world
+	if err := live(ctx); err != nil {
+		return nonePick(), err
+	}
 	target := outline(sl.left.island)
 	if len(target) < 1 {
 		return nonePick(), nil
@@ -914,9 +1218,13 @@ func (sl Slide) Run() (formPick, error) {
 		cand = cand.WithLinearFill(lin)
 	}
 	g := s.seedGrow(grow{i: hit.i, work: sl.left.island, fill: s.fills[hit.i]})
-	pick, err := s.scoreCand(replaceAt(s.doc, hit.i+1, cand.Node()), cand.Node(), g, OpSlide)
+	pick, err := s.scoreCand(ctx, replaceAt(s.doc, hit.i+1, cand.Node()), cand.Node(), g, OpSlide)
 	if err != nil {
 		return nonePick(), err
+	}
+	if s.stashOn {
+		s.finishPropose(pick)
+		return nonePick(), nil
 	}
 	return pick, nil
 }
@@ -932,7 +1240,7 @@ func (b Bend) Applies() bool {
 	return b.left.big() && b.world.paths > 0
 }
 
-func (b Bend) Run() (formPick, error) {
+func (b Bend) Run(ctx context.Context) (formPick, error) {
 	s := b.world
 	shape := b.left.glow
 	if len(shape) == 0 {
@@ -945,6 +1253,9 @@ func (b Bend) Run() (formPick, error) {
 	best := nonePick()
 	hot := islandRect(b.left.island)
 	for i := 0; i < s.paths; i++ {
+		if err := live(ctx); err != nil {
+			return nonePick(), err
+		}
 		node := s.doc.Children()[i+1]
 		if !nodeRect(node).Overlaps(hot) {
 			continue
@@ -989,9 +1300,13 @@ func (b Bend) Run() (formPick, error) {
 			cand = cand.WithLinearFill(lin)
 		}
 		g := s.seedGrow(grow{i: i, work: b.left.island, fill: s.fills[i]})
-		pick, err := s.scoreCand(replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpBend)
+		pick, err := s.scoreCand(ctx, replaceAt(s.doc, i+1, cand.Node()), cand.Node(), g, OpBend)
 		if err != nil {
 			return nonePick(), err
+		}
+		if s.stashOn {
+			s.finishPropose(pick)
+			continue
 		}
 		if betterPick(pick, best) {
 			best = pick
@@ -1011,10 +1326,21 @@ func (sw Swap) Applies() bool {
 	return sw.i >= 0 && sw.j > sw.i && sw.j < sw.world.paths
 }
 
-func (sw Swap) Run() (formPick, error) {
+func (sw Swap) Run(ctx context.Context) (formPick, error) {
 	s := sw.world
+	if err := live(ctx); err != nil {
+		return nonePick(), err
+	}
 	next, fills, owner, ok := s.swapPaths(sw.i, sw.j)
 	if !ok {
+		return nonePick(), nil
+	}
+	if s.stashOn {
+		s.finishPropose(formPick{
+			doc: next, fills: fills, owner: owner,
+			replace: -1, insert: -1, dropIdx: -1, mergeJ: -1, op: OpSwap,
+			dirty: nodeRect(s.doc.Children()[sw.i+1]).Union(nodeRect(s.doc.Children()[sw.j+1])),
+		})
 		return nonePick(), nil
 	}
 	ngot, err := render.Scratch(next)
@@ -1024,7 +1350,7 @@ func (sw Swap) Run() (formPick, error) {
 	defer render.Release(ngot)
 	gotP := loss.Acquire(ngot)
 	dirty := nodeRect(s.doc.Children()[sw.i+1]).Union(nodeRect(s.doc.Children()[sw.j+1])).Inset(-2)
-	nerr := s.scoreAfter(gotP, dirty)
+	nerr := s.scoreAfter(ctx, gotP, dirty)
 	loss.Release(gotP)
 	npaths := s.paths
 	ncmds := docCmdLen(next)

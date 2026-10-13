@@ -26,7 +26,7 @@ func TestPickLineRanksKeepAheadOfReject(t *testing.T) {
 		{name: "carve", pick: none},
 		{name: "triangle", pick: keep},
 	}
-	sortResultsForTest(rows)
+	sortCandResults(rows)
 	line := rankSummary(rows, 3)
 	if !strings.HasPrefix(line, "#1 triangle") || !strings.Contains(line, "#2 outline") || !strings.Contains(line, "#3 carve") {
 		t.Fatalf("rank=%s", line)
@@ -34,18 +34,6 @@ func TestPickLineRanksKeepAheadOfReject(t *testing.T) {
 	arch := archiveLine([]snapshot{{operator: OpTriangle, errSum: 4, paths: 1, commands: 4}, {errSum: 9, paths: 1, commands: 1}})
 	if !strings.Contains(arch, "triangle 4.000/1p/4c") || !strings.Contains(arch, "plate 9.000/1p/1c") {
 		t.Fatalf("archive=%s", arch)
-	}
-}
-
-func sortResultsForTest(rows []candResult) {
-	for i := 1; i < len(rows); i++ {
-		row := rows[i]
-		j := i
-		for j > 0 && betterPick(row.pick, rows[j-1].pick) {
-			rows[j] = rows[j-1]
-			j--
-		}
-		rows[j] = row
 	}
 }
 
@@ -72,12 +60,31 @@ func TestSearchProgressShowsRank(t *testing.T) {
 			var lines []string
 			for time.Now().Before(deadline) {
 				lines = nil
-				for _, n := range sess.List(64) {
+				var job taskgroup.ID
+				var jobMsg string
+				var rankParent taskgroup.ID
+				rank := ""
+				proposers := 0
+				nodes := sess.List(64)
+				for _, n := range nodes {
 					lines = append(lines, n.Name+": "+n.Message)
-					if n.Name == "rank" && strings.Contains(n.Message, "#1") {
-						found <- n.Message
-						return nil
+					if n.Name == "job" {
+						job = n.ID
+						jobMsg = n.Message
 					}
+				}
+				for _, n := range nodes {
+					if n.Name == "rank" && strings.Contains(n.Message, "#1") {
+						rank = n.Message
+						rankParent = n.Parent
+					}
+					if job != 0 && n.Parent == job && n.Name != "rank" && n.Name != "leftovers" {
+						proposers++
+					}
+				}
+				if rank != "" && rankParent == job && proposers >= 2 && strings.Contains(jobMsg, "/") {
+					found <- rank
+					return nil
 				}
 				time.Sleep(time.Millisecond)
 			}

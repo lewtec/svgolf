@@ -20,7 +20,7 @@ func TestDebugFramesMarksHottestIsland(t *testing.T) {
 			want.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
 		}
 	}
-	heat, island := DebugFrames(got, want, nil, nil)
+	heat, island := DebugFrames(nil, got, want, nil, nil)
 	if heat == nil || island == nil {
 		t.Fatal("nil frames")
 	}
@@ -57,7 +57,7 @@ func TestDebugFramesMarksEveryDifference(t *testing.T) {
 			want.SetNRGBA(x, y, color.NRGBA{B: 255, A: 255})
 		}
 	}
-	_, isle := DebugFrames(got, want, nil, nil)
+	_, isle := DebugFrames(nil, got, want, nil, nil)
 	if c := isle.NRGBAAt(2, 2); c.R < 200 || c.G < 200 || c.B < 200 {
 		t.Fatalf("red miss %+v want white", c)
 	}
@@ -86,7 +86,7 @@ func TestDebugFramesPaintsMildDeltaBand(t *testing.T) {
 			want.SetNRGBA(x, y, c)
 		}
 	}
-	_, isle := DebugFrames(got, want, nil, nil)
+	_, isle := DebugFrames(nil, got, want, nil, nil)
 	if c := isle.NRGBAAt(8, 12); c.R < 200 || c.G < 200 || c.B < 200 {
 		t.Fatalf("mild strip %+v want white leftover mask", c)
 	}
@@ -108,7 +108,7 @@ func TestDebugFramesPaintsFittedTriangle(t *testing.T) {
 		want.SetNRGBA(p.x, p.y, color.NRGBA{B: 255, A: 255})
 	}
 	fitted := []pix{{2, 1}, {2, 2}}
-	_, isle := DebugFrames(got, want, nil, fitted)
+	_, isle := DebugFrames(nil, got, want, nil, fitted)
 	if c := isle.NRGBAAt(1, 1); c.R < 200 || c.G < 200 {
 		t.Fatalf("mask %+v want white", c)
 	}

@@ -4,6 +4,9 @@ import (
 	"image"
 	"image/color"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/lewtec/svgolf/internal/loss"
 	"github.com/lewtec/svgolf/pkg/render"
@@ -120,7 +123,7 @@ func TestSimplifyCollapsesStairToTriangle(t *testing.T) {
 	before := s.errSum
 	var last svg.Path
 	for step := 0; step < len(outline); step++ {
-		pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+		pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,7 +186,7 @@ func TestSimplifyDoesNotFillEll(t *testing.T) {
 	}
 	s.wantP.Ensure()
 	s.gotP.Ensure()
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,6 +309,50 @@ func TestForgetTouchingKeepsDistantTriple(t *testing.T) {
 	}
 }
 
+func TestSimplifyWindowSkipsRefusedVertices(t *testing.T) {
+	red := color.NRGBA{R: 255, A: 255}
+	ring := [][2]float64{{0, 0}, {2, 0}, {4, 0}, {6, 0}, {8, 0}, {8, 8}, {0, 8}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(ring, red).Node())
+	s := &world{
+		doc:   doc,
+		fills: []color.NRGBA{red},
+		paths: 1,
+		w:     16,
+		h:     16,
+	}
+	parent := s.snap()
+	board := newBeam(parent)
+	proposals := make(chan agentNote, 32)
+	go func() {
+		for note := range proposals {
+			if note.verdict != nil {
+				note.verdict <- false
+			}
+		}
+	}()
+	var sent int
+	for {
+		fork := board.list()[0].fork(nil, nil, 16, 16)
+		n, busy, err := fork.fuzzSimplify(t.Context(), board, board.list()[0], proposals, time.Now())
+		require.NoError(t, err)
+		require.LessOrEqual(t, n, simplifyWindow)
+		sent += n
+		if n == 0 && !busy {
+			break
+		}
+		if n == 0 && busy {
+			board.waitStraight(board.list()[0].id)
+		}
+	}
+	require.NotZero(t, sent)
+	fork := board.list()[0].fork(nil, nil, 16, 16)
+	n, busy, err := fork.fuzzSimplify(t.Context(), board, board.list()[0], proposals, time.Now())
+	require.NoError(t, err)
+	require.Zero(t, n)
+	require.False(t, busy)
+}
+
 func TestSimplifySkipsRememberedTriple(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
@@ -338,7 +385,7 @@ func TestSimplifySkipsRememberedTriple(t *testing.T) {
 	s.gotP.Ensure()
 	key := ringStraightKey(polylineRing(ring), 1)
 	s.simplifyMiss = map[straightKey]struct{}{key: {}}
-	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run()
+	pick, err := (Simplify{world: s, buckets: [][]pix{nil}}).Run(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

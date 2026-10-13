@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"context"
 	"image"
 	"image/color"
 
@@ -11,7 +12,7 @@ import (
 // (black match, red miss). Island is every leftover-band residual
 // (white), the color-glow leftover hypothesis (white), and the
 // inscribed triangle (orange).
-func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *image.NRGBA) {
+func DebugFrames(ctx context.Context, got, want *image.NRGBA, blob, fitted []pix) (heat, island *image.NRGBA) {
 	if want == nil {
 		return nil, nil
 	}
@@ -39,7 +40,7 @@ func DebugFrames(got, want *image.NRGBA, blob, fitted []pix) (heat, island *imag
 		}
 	}
 	s := &world{got: got, want: want, gotP: gotP, wantP: wantP, w: w, h: h}
-	for _, left := range s.leftovers() {
+	for _, left := range s.leftovers(ctx) {
 		if left.region {
 			continue
 		}

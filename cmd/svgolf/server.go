@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/lewkit/x/event"
 	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/lewkit/x/taskgroup/progress"
@@ -25,79 +26,76 @@ import (
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/internal/search/stack"
 	"github.com/lewtec/svgolf/pkg/render"
-	"github.com/spf13/cobra"
 )
 
-func newServerCmd() *cobra.Command {
-	var (
-		cache string
-		addr  string
-		algo  string
-	)
-	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "Watch Search converge from a cache folder",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if cache == "" {
-				return fmt.Errorf("server: --cache is required")
-			}
-			if err := os.MkdirAll(cache, 0o755); err != nil {
-				return err
-			}
-			ctx := cmd.Context()
-			if ctx == nil {
-				return fmt.Errorf("server: missing parent context")
-			}
-			sess, sctx := taskgroup.New(ctx, taskgroup.DefaultLimits())
-			return progress.Run(sess, sctx, func(ctx context.Context) error {
-				s := &server{cache: cache, algo: algo, ctx: ctx, all: event.New[jobEvent]()}
-				mux := http.NewServeMux()
-				mux.HandleFunc("GET /", s.watch(s.handleHome))
-				mux.HandleFunc("POST /jobs", s.watch(s.handleCreate))
-				mux.HandleFunc("GET /events", s.watch(s.handleAllEvents))
-				mux.HandleFunc("GET /jobs/{id}", s.watch(s.handleJob))
-				mux.HandleFunc("GET /jobs/{id}/events", s.watch(s.handleEvents))
-				mux.HandleFunc("GET /jobs/{id}/files/{name}", s.watch(s.handleFile))
-				srv := &http.Server{
-					Addr:    addr,
-					Handler: mux,
-					BaseContext: func(net.Listener) context.Context {
-						return ctx
-					},
-				}
-				cmd.Println("svgolf server", addr, "cache", cache)
-				if algo == "stack" {
-					stack.OpenDriver(ctx)
-				}
-				errc := make(chan error, 1)
-				go func() { errc <- srv.ListenAndServe() }()
-				select {
-				case <-ctx.Done():
-					shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-					defer cancel()
-					err := srv.Shutdown(shut)
-					<-errc
-					return err
-				case err := <-errc:
-					if err == http.ErrServerClosed {
-						return nil
-					}
-					return err
-				}
-			})
-		},
+type serverCmd struct {
+	Cache  cmd.StringArg `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
+	Addr   cmd.StringArg `long:"addr" default:":8080" help:"listen address"`
+	Search cmd.StringArg `long:"search" default:"stack" help:"Search adapter"`
+}
+
+func (serverCmd) Description() string {
+	return "Watch Search converge from a cache folder"
+}
+
+func (c *serverCmd) Run(ctx context.Context) error {
+	cache := c.Cache.Value()
+	if cache == "" {
+		return fmt.Errorf("server: --cache is required")
 	}
-	cmd.Flags().StringVar(&cache, "cache", "", "folder that stores every job and epoch frame")
-	cmd.Flags().StringVar(&addr, "addr", ":8080", "listen address")
-	cmd.Flags().StringVar(&algo, "search", "stack", "Search adapter")
-	_ = cmd.MarkFlagRequired("cache")
-	return cmd
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return err
+	}
+	if ctx == nil {
+		return fmt.Errorf("server: missing parent context")
+	}
+	addr := c.Addr.Value()
+	algo := c.Search.Value()
+	sess, sctx := taskgroup.New(ctx, taskgroup.DefaultLimits())
+	return progress.Run(sess, sctx, func(ctx context.Context) error {
+		s := &server{cache: cache, algo: algo, all: event.New[jobEvent]()}
+		mux := http.NewServeMux()
+		mountProfiles(mux)
+		mux.HandleFunc("GET /", s.watch(ctx, s.handleHome))
+		mux.HandleFunc("POST /jobs", s.watch(ctx, func(w http.ResponseWriter, r *http.Request) {
+			s.handleCreate(ctx, w, r)
+		}))
+		mux.HandleFunc("GET /events", s.watch(ctx, s.handleAllEvents))
+		mux.HandleFunc("GET /jobs/{id}", s.watch(ctx, s.handleJob))
+		mux.HandleFunc("GET /jobs/{id}/events", s.watch(ctx, s.handleEvents))
+		mux.HandleFunc("GET /jobs/{id}/files/{name}", s.watch(ctx, s.handleFile))
+		srv := &http.Server{
+			Addr:    addr,
+			Handler: mux,
+			BaseContext: func(net.Listener) context.Context {
+				return ctx
+			},
+		}
+		fmt.Println("svgolf server", addr, "cache", cache)
+		if algo == "stack" {
+			stack.OpenDriver(ctx)
+		}
+		errc := make(chan error, 1)
+		go func() { errc <- srv.ListenAndServe() }()
+		select {
+		case <-ctx.Done():
+			shut, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			err := srv.Shutdown(shut)
+			<-errc
+			return err
+		case err := <-errc:
+			if err == http.ErrServerClosed {
+				return nil
+			}
+			return err
+		}
+	})
 }
 
 type server struct {
 	cache string
 	algo  string
-	ctx   context.Context
 	mu    sync.Mutex
 	buses map[string]*event.Bus[jobEvent]
 	all   *event.Bus[jobEvent]
@@ -120,20 +118,22 @@ func newJobID(name string) string {
 }
 
 type jobMeta struct {
-	ID           string           `json:"id"`
-	Status       string           `json:"status"`
-	Search       string           `json:"search"`
-	Epochs       int              `json:"epochs"`
-	Operator     string           `json:"operator"`
-	Score        float64          `json:"score"`
-	Scores       []float64        `json:"scores,omitempty"`
-	Rounds       [][]search.Rated `json:"rounds,omitempty"`
-	Paths        int              `json:"paths"`
-	Vertices     int              `json:"vertices"`
-	PathCounts   []int            `json:"pathCounts,omitempty"`
-	VertexCounts []int            `json:"vertexCounts,omitempty"`
-	Elapsed      string           `json:"elapsed"`
-	Err          string           `json:"error,omitempty"`
+	ID           string            `json:"id"`
+	Status       string            `json:"status"`
+	Search       string            `json:"search"`
+	Epochs       int               `json:"epochs"`
+	Operator     string            `json:"operator"`
+	Score        float64           `json:"score"`
+	Scores       []float64         `json:"scores,omitempty"`
+	Rounds       [][]search.Rated  `json:"rounds,omitempty"`
+	Beam         []search.Slot     `json:"beam,omitempty"`
+	Proposals    []search.Proposal `json:"proposals,omitempty"`
+	Paths        int               `json:"paths"`
+	Vertices     int               `json:"vertices"`
+	PathCounts   []int             `json:"pathCounts,omitempty"`
+	VertexCounts []int             `json:"vertexCounts,omitempty"`
+	Elapsed      string            `json:"elapsed"`
+	Err          string            `json:"error,omitempty"`
 }
 
 func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +150,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 	_ = web.Home(toViews(jobs)).Render(r.Context(), w)
 }
 
-func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleCreate(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -188,18 +188,18 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jobBus(id)
-	s.startJob(dir, id, want)
+	s.startJob(ctx, dir, id, want)
 	http.Redirect(w, r, "/jobs/"+id, http.StatusSeeOther)
 }
 
-func (s *server) watch(h http.HandlerFunc) http.HandlerFunc {
+func (s *server) watch(parent context.Context, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.ctx == nil || taskgroup.FromContext(s.ctx) == nil {
+		if parent == nil || taskgroup.FromContext(parent) == nil {
 			h(w, r)
 			return
 		}
 		finished := make(chan struct{})
-		taskgroup.Go(s.ctx, r.Method+" "+r.URL.Path, taskgroup.Control, func(ctx context.Context, st *taskgroup.Status) error {
+		taskgroup.Go(parent, r.Method+" "+r.URL.Path, taskgroup.Control, func(ctx context.Context, st *taskgroup.Status) error {
 			st.Update(r.Method)
 			select {
 			case <-finished:
@@ -286,8 +286,7 @@ func (s *server) handleFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.cache, id, name))
 }
 
-func (s *server) startJob(dir, id string, want *image.NRGBA) {
-	parent := s.ctx
+func (s *server) startJob(parent context.Context, dir, id string, want *image.NRGBA) {
 	go func() {
 		if parent == nil || taskgroup.FromContext(parent) == nil {
 			_ = s.runJob(parent, nil, dir, id, want)
@@ -314,49 +313,62 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	ctx = stack.WithJobStatus(ctx, st)
 	stack.ShowFrames(true)
 	n := 0
-	var scores []float64
 	var rounds [][]search.Rated
 	var pathCounts []int
 	var vertexCounts []int
+	meta := jobMeta{ID: id, Status: "running", Search: s.algo}
+	ctx = stack.WithFrames(ctx, func(frame search.Frame) {
+		meta.Beam = frame.Beam
+		meta.Proposals = frame.Proposals
+		if len(frame.Loss) > 0 {
+			meta.Scores = frame.Loss
+		}
+		if len(frame.Beam) > 0 {
+			meta.Score = frame.Beam[0].Score
+		}
+		_ = writeMeta(dir, meta)
+		s.publish(id, "frame", meta)
+	})
 	for ep, err := range searcher.Search(ctx, want) {
 		if err != nil {
 			return s.stopJob(st, dir, id, err)
 		}
-		got, err := writeEpoch(dir, n, ep, want)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
+			return s.stopJob(st, dir, id, context.Cause(ctx))
+		}
+		if _, err := writeEpoch(ctx, dir, n, ep, want); err != nil {
 			return s.stopJob(st, dir, id, err)
 		}
 		n++
-		sc := stack.Score(ctx, got, want)
-		scores = append(scores, sc)
 		rounds = append(rounds, ep.Rated)
 		paths := documentPaths(ep.Document)
 		vertices := documentVertices(ep.Document)
 		pathCounts = append(pathCounts, paths)
 		vertexCounts = append(vertexCounts, vertices)
-		meta := jobMeta{
-			ID:           id,
-			Status:       "running",
-			Search:       s.algo,
-			Epochs:       n,
-			Operator:     ep.Operator.String(),
-			Score:        sc,
-			Scores:       scores,
-			Rounds:       rounds,
-			Paths:        paths,
-			Vertices:     vertices,
-			PathCounts:   pathCounts,
-			VertexCounts: vertexCounts,
-			Elapsed:      ep.Elapsed.String(),
+		meta.ID = id
+		meta.Status = "running"
+		meta.Search = s.algo
+		meta.Epochs = n
+		meta.Operator = ep.Operator.String()
+		if len(meta.Beam) > 0 {
+			meta.Score = meta.Beam[0].Score
 		}
+		meta.Rounds = rounds
+		meta.Paths = paths
+		meta.Vertices = vertices
+		meta.PathCounts = pathCounts
+		meta.VertexCounts = vertexCounts
+		meta.Elapsed = ep.Elapsed.String()
 		_ = writeMeta(dir, meta)
 		s.publish(id, "epoch", meta)
 		if st != nil {
-			st.Update(fmt.Sprintf("epoch %d · %s · %.3f", n, meta.Operator, sc))
+			st.Update(fmt.Sprintf("epoch %d · %s · %.3f", n, meta.Operator, meta.Score))
 			st.Progress(int64(n), -1)
 		}
 	}
-	meta, _ := readMeta(dir)
+	if err := ctx.Err(); err != nil {
+		return s.stopJob(st, dir, id, context.Cause(ctx))
+	}
 	meta.ID = id
 	meta.Status = "done"
 	_ = writeMeta(dir, meta)
@@ -370,7 +382,7 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	return nil
 }
 
-func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.NRGBA, error) {
+func writeEpoch(ctx context.Context, dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.NRGBA, error) {
 	pad := fmt.Sprintf("%03d", n)
 	if err := NewSVGFile(filepath.Join(dir, pad+".svg")).Render(ep.Document); err != nil {
 		return nil, err
@@ -390,7 +402,7 @@ func writeEpoch(dir string, n int, ep search.Epoch, want *image.NRGBA) (*image.N
 	}
 	heat, island := ep.Heat, ep.Island
 	if heat == nil || island == nil {
-		heat, island = stack.DebugFrames(got, want, nil, nil)
+		heat, island = stack.DebugFrames(ctx, got, want, nil, nil)
 	}
 	if err := writePNG(filepath.Join(dir, pad+"-error.png"), heat); err != nil {
 		return nil, err
@@ -455,6 +467,7 @@ func (s *server) publish(id, name string, meta jobMeta) {
 
 type queuedJob struct {
 	epoch *jobEvent
+	frame *jobEvent
 	done  *jobEvent
 }
 
@@ -494,6 +507,10 @@ func streamEvents(ctx context.Context, w http.ResponseWriter, fl http.Flusher, s
 		if slot.done != nil {
 			return
 		}
+		if ev.Name == "frame" {
+			slot.frame = &cp
+			return
+		}
 		slot.epoch = &cp
 	}
 	live := make(chan struct{})
@@ -520,6 +537,10 @@ func streamEvents(ctx context.Context, w http.ResponseWriter, fl http.Flusher, s
 	writeSlot := func(slot *queuedJob) bool {
 		if slot.epoch != nil {
 			writeSSE(w, slot.epoch.Name, slot.epoch.Meta)
+			fl.Flush()
+		}
+		if slot.frame != nil {
+			writeSSE(w, slot.frame.Name, slot.frame.Meta)
 			fl.Flush()
 		}
 		if slot.done != nil {
@@ -601,6 +622,8 @@ func epochPayload(m jobMeta) map[string]any {
 		"pathCounts":   pathCounts,
 		"vertexCounts": vertexCounts,
 		"elapsed":      m.Elapsed,
+		"beam":         m.Beam,
+		"proposals":    m.Proposals,
 	}
 }
 
@@ -708,6 +731,22 @@ func toView(m jobMeta) web.JobView {
 	if err != nil {
 		rb = []byte("[]")
 	}
+	beam := m.Beam
+	if beam == nil {
+		beam = []search.Slot{}
+	}
+	bb, err := json.Marshal(beam)
+	if err != nil {
+		bb = []byte("[]")
+	}
+	proposals := m.Proposals
+	if proposals == nil {
+		proposals = []search.Proposal{}
+	}
+	qb, err := json.Marshal(proposals)
+	if err != nil {
+		qb = []byte("[]")
+	}
 	pathCounts := m.PathCounts
 	if pathCounts == nil {
 		pathCounts = []int{}
@@ -733,6 +772,8 @@ func toView(m jobMeta) web.JobView {
 		Score:            strconv.FormatFloat(m.Score, 'f', 3, 64),
 		ScoresJSON:       string(b),
 		RoundsJSON:       string(rb),
+		BeamJSON:         string(bb),
+		ProposalsJSON:    string(qb),
 		PathCountsJSON:   string(pb),
 		VertexCountsJSON: string(vb),
 		Paths:            m.Paths,

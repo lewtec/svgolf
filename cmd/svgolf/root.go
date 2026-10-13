@@ -1,54 +1,49 @@
 package main
 
 import (
+	"log/slog"
+
 	_ "github.com/lewtec/svgolf/internal/search/prelude"
 
-	"github.com/spf13/cobra"
+	"github.com/lewtec/lewkit/x/cmd"
+	"github.com/lewtec/lewkit/x/driver/ndeval"
 )
 
-func newRootCmd() *cobra.Command {
-	var (
-		profileDir string
-		stopProf   func() error
-	)
-	cmd := &cobra.Command{
-		Use:   "svgolf",
-		Short: "Turn a PNG into a simple editable SVG",
-		Long: `svgolf turns a PNG, especially a model-generated logo, into a simple editable SVG.
+// root is the svgolf command. Flags are x/cmd fields. gpu is one ndarray
+// evaluator, resolved from an expression and stored on the context.
+type root struct {
+	GPU     ndeval.Arg    `long:"gpu" help:"evaluator expression, for example vulkan:integrated | cpu" ctx:"gpu"`
+	Profile cmd.StringArg `long:"profile" default:"" help:"directory to write cpu, heap, allocs, goroutine, mutex, block profiles and an execution trace"`
 
-Commands:
-  render      SVG file to PNG (in-process renderer)
-  verify      compare in-process render to resvg
-  vectorize   PNG to SVG (--search NAME)
-  preview     run Search on testdata/eval → testdata/preview
-  server      watch Search from a --cache folder
+	Render    *renderCmd
+	Verify    *verifyCmd
+	Vectorize *vectorizeCmd
+	Preview   *previewCmd
+	Server    *serverCmd
+
+	stopProf func() error
+}
+
+func (root) Description() string {
+	return `svgolf turns a PNG, especially a model-generated logo, into a simple editable SVG.
 
 Register a Search in its package init. Import search/prelude so it Registers. Then:
   mise exec -- go run ./cmd/svgolf preview --search NAME
 
-v1 ships Dumb via prelude. Run tests with: mise run test`,
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if profileDir == "" {
-				return nil
-			}
-			var err error
-			stopProf, err = startProfiles(profileDir)
-			return err
-		},
-		PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-			if stopProf == nil {
-				return nil
-			}
-			return stopProf()
-		},
+v1 ships Dumb via prelude. Run tests with: mise run test`
+}
+
+func (r *root) Setup() error {
+	if r.GPU.Value() != nil {
+		slog.Info("ndarray device", "name", r.GPU.Device(), "expr", r.GPU.Expression())
 	}
-	cmd.PersistentFlags().StringVar(&profileDir, "profile", "", "directory to write cpu, heap, allocs, goroutine, mutex, block profiles and an execution trace")
-	cmd.AddCommand(newRenderCmd())
-	cmd.AddCommand(newVerifyCmd())
-	cmd.AddCommand(newVectorizeCmd())
-	cmd.AddCommand(newPreviewCmd())
-	cmd.AddCommand(newServerCmd())
-	return cmd
+	if r.Profile.Value() == "" {
+		return nil
+	}
+	stop, err := startProfiles(r.Profile.Value())
+	if err != nil {
+		return err
+	}
+	r.stopProf = stop
+	return nil
 }

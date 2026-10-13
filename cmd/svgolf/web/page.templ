@@ -9,6 +9,8 @@ type JobView struct {
 	Score      string
 	ScoresJSON       string
 	RoundsJSON       string
+	BeamJSON         string
+	ProposalsJSON    string
 	PathCountsJSON   string
 	VertexCountsJSON string
 	Paths            int
@@ -84,30 +86,61 @@ templ JobPage(j JobView) {
 				<span id="meta" class="text-sm">{ j.Operator } · score { j.Score } · { j.Paths } paths · { j.Vertices } vertices</span>
 			</div>
 		</div>
-		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON } data-paths={ j.PathCountsJSON } data-vertices={ j.VertexCountsJSON }>
+		<main class="p-4 grid gap-4" data-job={ j.ID } data-scores={ j.ScoresJSON } data-rounds={ j.RoundsJSON } data-beam={ j.BeamJSON } data-proposals={ j.ProposalsJSON } data-paths={ j.PathCountsJSON } data-vertices={ j.VertexCountsJSON }>
 			<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
 				@frameCard("want", "/jobs/" + j.ID + "/files/want.png")
-				@frameCard("got", "/jobs/" + j.ID + "/files/last.png")
+				@frameCard("got", "/jobs/" + j.ID + "/files/last.svg")
 				@frameCard("HSV delta", "/jobs/" + j.ID + "/files/last-error.png")
 				@frameCard("leftover mask", "/jobs/" + j.ID + "/files/last-island.png")
 			</div>
 			<div class="card bg-base-200">
 				<div class="card-body">
 					<h2 class="card-title">Loss</h2>
-					<p id="loss-scale" class="text-sm opacity-70">one point per epoch</p>
-					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss over epochs"></svg>
+					<p id="loss-scale" class="text-sm opacity-70">one point each time a proposal is kept</p>
+					<svg id="loss" viewBox="0 0 800 200" class="w-full h-48 text-base-content" role="img" aria-label="loss of kept proposals"></svg>
 				</div>
 			</div>
-			<div class="card bg-base-200">
-				<div class="card-body">
-					<h2 class="card-title">Epochs</h2>
-					<div class="overflow-x-auto">
-						<table class="table table-xs table-pin-rows">
-							<thead>
-								<tr id="epoch-head"></tr>
-							</thead>
-							<tbody id="epochs"></tbody>
-						</table>
+			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+				<div class="card bg-base-200">
+					<div class="card-body">
+						<h2 class="card-title">Beam</h2>
+						<p class="text-sm opacity-70">The five documents the ranker keeps. Proposers claim the least busy one.</p>
+						<div class="overflow-x-auto">
+							<table class="table table-xs table-pin-rows">
+								<thead>
+									<tr>
+										<th>place</th>
+										<th>operator</th>
+										<th>score</th>
+										<th>paths</th>
+										<th>commands</th>
+										<th>vertices</th>
+									</tr>
+								</thead>
+								<tbody id="beam"></tbody>
+							</table>
+						</div>
+					</div>
+				</div>
+				<div class="card bg-base-200">
+					<div class="card-body">
+						<h2 class="card-title">Ranked batch</h2>
+						<p class="text-sm opacity-70">Proposals as the ranker scores them. Keep beat the parent. Slot took one of the five.</p>
+						<div class="overflow-x-auto">
+							<table class="table table-xs table-pin-rows">
+								<thead>
+									<tr>
+										<th>operator</th>
+										<th>score</th>
+										<th>paths</th>
+										<th>commands</th>
+										<th>vertices</th>
+										<th>decision</th>
+									</tr>
+								</thead>
+								<tbody id="proposals"></tbody>
+							</table>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -115,110 +148,98 @@ templ JobPage(j JobView) {
 		<script>
 			const root = document.querySelector("main");
 			const id = root.dataset.job;
-			const box = document.getElementById("epochs");
-			const head = document.getElementById("epoch-head");
+			const beamBody = document.getElementById("beam");
+			const proposalBody = document.getElementById("proposals");
 			let scores = [];
-			let rounds = [];
-			let pathCounts = [];
-			let vertexCounts = [];
+			let beam = [];
+			let proposals = [];
 			try { scores = JSON.parse(root.dataset.scores || "[]"); } catch (e) { scores = []; }
-			try { rounds = JSON.parse(root.dataset.rounds || "[]"); } catch (e) { rounds = []; }
-			try { pathCounts = JSON.parse(root.dataset.paths || "[]"); } catch (e) { pathCounts = []; }
-			try { vertexCounts = JSON.parse(root.dataset.vertices || "[]"); } catch (e) { vertexCounts = []; }
-			const names = [];
-			function remember(round) {
-				if (!Array.isArray(round)) return;
-				for (const r of round) {
-					if (r && r.name && !names.includes(r.name)) names.push(r.name);
-				}
+			try { beam = JSON.parse(root.dataset.beam || "[]"); } catch (e) { beam = []; }
+			try { proposals = JSON.parse(root.dataset.proposals || "[]"); } catch (e) { proposals = []; }
+			function cell(text, mono) {
+				const td = document.createElement("td");
+				if (mono) td.className = "font-mono";
+				td.textContent = text;
+				return td;
 			}
-			for (const round of rounds) remember(round);
-			function scoreOf(round, name) {
-				if (!Array.isArray(round)) return undefined;
-				for (const r of round) {
-					if (r && r.name === name) return r;
-				}
-				return undefined;
-			}
-			function bestNames(round) {
-				if (!Array.isArray(round)) return [];
-				const scored = round.filter((r) => r && r.score != null);
-				const flagged = scored.filter((r) => r.best).map((r) => r.name);
-				if (flagged.length >= 2) return flagged;
-				return scored.slice().sort((a, b) => a.score - b.score).slice(0, 3).map((r) => r.name);
-			}
-			function paintHead() {
-				head.replaceChildren();
-				const cols = ["epoch", "win", "paths", "vertices", ...names];
-				for (const name of cols) {
-					const th = document.createElement("th");
-					th.textContent = name;
-					head.appendChild(th);
-				}
-			}
-			function paintRows() {
-				box.replaceChildren();
-				paintHead();
-				for (let i = 0; i < scores.length; i++) {
+			function paintBeam() {
+				beamBody.replaceChildren();
+				const rows = Array.isArray(beam) ? beam : [];
+				if (rows.length === 0) {
 					const tr = document.createElement("tr");
-					const pad = String(i).padStart(3, "0");
-					const ep = document.createElement("th");
-					const a = document.createElement("a");
-					a.className = "link";
-					a.href = `/jobs/${id}/files/${pad}.png`;
-					a.textContent = pad;
-					ep.appendChild(a);
-					tr.appendChild(ep);
-					const win = document.createElement("td");
-					const last = rounds[i];
-					let chosen = "";
-					if (last) {
-						for (const r of last) {
-							if (r && r.chosen) chosen = r.name;
-						}
-						if (!chosen) {
-							for (const r of last) {
-								if (r && r.ok && r.score != null && (chosen === "" || r.score < scoreOf(last, chosen).score)) chosen = r.name;
-							}
-						}
+					const td = document.createElement("td");
+					td.colSpan = 6;
+					td.textContent = "waiting for the first kept document";
+					tr.appendChild(td);
+					beamBody.appendChild(tr);
+					return;
+				}
+				rows.forEach((slot, i) => {
+					const tr = document.createElement("tr");
+					tr.appendChild(cell(String(i + 1), true));
+					tr.appendChild(cell(slot.operator || "plate", false));
+					tr.appendChild(cell(fmt(slot.score), true));
+					tr.appendChild(cell(String(slot.paths), true));
+					tr.appendChild(cell(String(slot.commands), true));
+					tr.appendChild(cell(String(slot.vertices || 0), true));
+					beamBody.appendChild(tr);
+				});
+			}
+			function paintProposals() {
+				proposalBody.replaceChildren();
+				const rows = Array.isArray(proposals) ? proposals : [];
+				if (rows.length === 0) {
+					const tr = document.createElement("tr");
+					const td = document.createElement("td");
+					td.colSpan = 6;
+					td.textContent = "waiting for the ranker";
+					tr.appendChild(td);
+					proposalBody.appendChild(tr);
+					return;
+				}
+				for (const row of rows) {
+					const tr = document.createElement("tr");
+					tr.appendChild(cell(row.operator || "—", false));
+					tr.appendChild(cell(fmt(row.score), true));
+					tr.appendChild(cell(String(row.paths), true));
+					tr.appendChild(cell(String(row.commands), true));
+					tr.appendChild(cell(String(row.vertices || 0), true));
+					const decision = document.createElement("td");
+					const badge = document.createElement("span");
+					if (row.slot) {
+						badge.className = "badge badge-success badge-sm";
+						badge.textContent = "slot";
+					} else if (row.keep) {
+						badge.className = "badge badge-warning badge-sm";
+						badge.textContent = "keep";
+					} else {
+						badge.className = "badge badge-ghost badge-sm";
+						badge.textContent = "reject";
 					}
-					win.textContent = chosen || "—";
-					tr.appendChild(win);
-					const pathsCell = document.createElement("td");
-					pathsCell.className = "font-mono";
-					pathsCell.textContent = i < pathCounts.length ? String(pathCounts[i]) : "—";
-					tr.appendChild(pathsCell);
-					const verticesCell = document.createElement("td");
-					verticesCell.className = "font-mono";
-					verticesCell.textContent = i < vertexCounts.length ? String(vertexCounts[i]) : "—";
-					tr.appendChild(verticesCell);
-					const tops = bestNames(last);
-					for (const name of names) {
-						const td = document.createElement("td");
-						td.className = "font-mono";
-						const r = scoreOf(rounds[i], name);
-						if (!r) td.textContent = "";
-						else if (r.score == null) td.textContent = "—";
-						else {
-							td.textContent = fmt(r.score);
-							if (r.best || tops.includes(name)) td.classList.add("underline");
-							if (name === chosen) td.classList.add("font-bold");
-						}
-						tr.appendChild(td);
-					}
-					box.appendChild(tr);
+					decision.appendChild(badge);
+					tr.appendChild(decision);
+					proposalBody.appendChild(tr);
 				}
 			}
-			function show(n) {
+			function show() {
 				for (const [sel, name] of [
-					["got", "last.png"],
+					["got", "last.svg"],
 					["HSV delta", "last-error.png"],
 					["leftover mask", "last-island.png"],
 				]) {
 					const img = document.querySelector(`img[alt="${sel}"]`);
 					if (img) img.src = `/jobs/${id}/files/${name}?t=${Date.now()}`;
 				}
-				paintRows();
+				paintBeam();
+				paintProposals();
+			}
+			function takeFrame(d) {
+				if (Array.isArray(d.beam)) beam = d.beam;
+				if (Array.isArray(d.proposals)) proposals = d.proposals;
+				if (Array.isArray(d.scores) && d.scores.length) scores = d.scores;
+				paintBeam();
+				paintProposals();
+				drawLoss(scores);
 			}
 			function fmt(v) {
 				if (!Number.isFinite(v)) return "-";
@@ -232,7 +253,7 @@ templ JobPage(j JobView) {
 				const pad = { l: 64, r: 16, t: 16, b: 28 };
 				while (svg.firstChild) svg.removeChild(svg.firstChild);
 				if (!vals.length) {
-					note.textContent = "waiting for the first epoch";
+					note.textContent = "waiting for the first kept proposal";
 					return;
 				}
 				let ymin = Math.min.apply(null, vals), ymax = Math.max.apply(null, vals);
@@ -241,7 +262,7 @@ templ JobPage(j JobView) {
 					ymax = ymax * 1.1 || 1;
 				}
 				const log = ymin > 0 && ymax / ymin >= 10;
-				note.textContent = log ? "log10 score · one point per epoch" : "score · one point per epoch";
+				note.textContent = log ? "log10 score · kept proposals" : "score · kept proposals";
 				const yOf = (v) => {
 					const a = log ? Math.log10(v) : v;
 					const lo = log ? Math.log10(ymin) : ymin;
@@ -271,29 +292,25 @@ templ JobPage(j JobView) {
 					svg.appendChild(el("path", { d: d, fill: "none", stroke: "currentColor", "stroke-width": "2" }));
 					for (let i = 0; i < vals.length; i++) {
 						const c = el("circle", { cx: xOf(i), cy: yOf(vals[i]), r: 3, fill: "currentColor" });
-						c.appendChild(el("title")).textContent = "epoch " + i + " · " + fmt(vals[i]);
+						c.appendChild(el("title")).textContent = "kept " + i + " · " + fmt(vals[i]);
 						svg.appendChild(c);
 					}
 				}
 			}
 			drawLoss(scores);
-			paintRows();
+			paintBeam();
+			paintProposals();
 			const es = new EventSource(`/jobs/${id}/events`);
 			es.addEventListener("epoch", (ev) => {
 				const d = JSON.parse(ev.data);
 				document.getElementById("status").textContent = d.status;
 				document.getElementById("meta").textContent =
 					`${d.operator} · score ${d.score} · ${d.paths} paths · ${d.vertices} vertices · ${d.elapsed}`;
-				if (Array.isArray(d.scores)) scores = d.scores;
-				else if (d.n >= scores.length) scores.push(parseFloat(d.score));
-				if (Array.isArray(d.rounds)) {
-					rounds = d.rounds;
-					for (const round of rounds) remember(round);
-				}
-				if (Array.isArray(d.pathCounts)) pathCounts = d.pathCounts;
-				if (Array.isArray(d.vertexCounts)) vertexCounts = d.vertexCounts;
-				drawLoss(scores);
-				show(d.n);
+				takeFrame(d);
+				show();
+			});
+			es.addEventListener("frame", (ev) => {
+				takeFrame(JSON.parse(ev.data));
 			});
 			es.addEventListener("done", (ev) => {
 				const d = JSON.parse(ev.data);

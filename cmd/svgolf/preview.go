@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -9,60 +10,57 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/internal/resvg"
 	"github.com/lewtec/svgolf/internal/search"
-	"github.com/spf13/cobra"
 )
 
-func newPreviewCmd() *cobra.Command {
-	var (
-		algo string
-		eval string
-		out  string
-	)
-	cmd := &cobra.Command{
-		Use:   "preview",
-		Short: "Run a Search on testdata/eval and write testdata/preview",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := search.New(algo)
-			if err != nil {
-				return err
-			}
-			bin, err := resvg.LookPath()
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(out, 0o755); err != nil {
-				return err
-			}
-			ents, err := os.ReadDir(eval)
-			if err != nil {
-				return err
-			}
-			n := 0
-			for _, e := range ents {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".png") {
-					continue
-				}
-				n++
-				scene := strings.TrimSuffix(e.Name(), ".png")
-				if err := previewOne(cmd, s, bin, filepath.Join(eval, e.Name()), out, scene); err != nil {
-					return fmt.Errorf("%s: %w", scene, err)
-				}
-			}
-			if n == 0 {
-				return fmt.Errorf("preview: no png in %s", eval)
-			}
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&algo, "search", "dumb", "registered Search adapter")
-	cmd.Flags().StringVar(&eval, "eval", filepath.Join("testdata", "eval"), "eval PNG directory")
-	cmd.Flags().StringVar(&out, "out", filepath.Join("testdata", "preview"), "preview output directory")
-	return cmd
+type previewCmd struct {
+	Algo cmd.StringArg `long:"search" default:"dumb" help:"registered Search adapter"`
+	Eval cmd.StringArg `long:"eval" default:"testdata/eval" help:"eval PNG directory"`
+	Out  cmd.StringArg `long:"out" default:"testdata/preview" help:"preview output directory"`
 }
 
-func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene string) error {
+func (previewCmd) Description() string {
+	return "Run a Search on testdata/eval and write testdata/preview"
+}
+
+func (c *previewCmd) Run(ctx context.Context) error {
+	s, err := search.New(c.Algo.Value())
+	if err != nil {
+		return err
+	}
+	bin, err := resvg.LookPath()
+	if err != nil {
+		return err
+	}
+	out := c.Out.Value()
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
+	eval := c.Eval.Value()
+	ents, err := os.ReadDir(eval)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".png") {
+			continue
+		}
+		n++
+		scene := strings.TrimSuffix(e.Name(), ".png")
+		if err := previewOne(ctx, s, bin, filepath.Join(eval, e.Name()), out, scene); err != nil {
+			return fmt.Errorf("%s: %w", scene, err)
+		}
+	}
+	if n == 0 {
+		return fmt.Errorf("preview: no png in %s", eval)
+	}
+	return nil
+}
+
+func previewOne(ctx context.Context, s search.Search, resvgBin, src, out, scene string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -76,7 +74,7 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 	if err := writePNGFile(filepath.Join(out, "want-"+scene+".png"), want); err != nil {
 		return err
 	}
-	doc, err := search.Last(s.Search(cmd.Context(), want))
+	doc, err := search.Last(s.Search(ctx, want))
 	if err != nil {
 		return err
 	}
@@ -85,12 +83,12 @@ func previewOne(cmd *cobra.Command, s search.Search, resvgBin, src, out, scene s
 		return err
 	}
 	pngPath := filepath.Join(out, scene+".png")
-	c := exec.CommandContext(cmd.Context(), resvgBin, svgPath, pngPath)
-	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
+	command := exec.CommandContext(ctx, resvgBin, svgPath, pngPath)
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
 		return fmt.Errorf("resvg: %w", err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "%s kids=%d -> %s\n", scene, len(doc.Children()), pngPath)
+	fmt.Fprintf(os.Stdout, "%s kids=%d -> %s\n", scene, len(doc.Children()), pngPath)
 	return nil
 }
 

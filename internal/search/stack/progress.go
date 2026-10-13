@@ -46,11 +46,11 @@ type candNote struct {
 	tried int
 }
 
-func (s *world) noteCandidate(id Op, p *formPick, err *error) {
-	if s == nil || s.ctx == nil || p == nil || err == nil {
+func (s *world) noteCandidate(ctx context.Context, id Op, p *formPick, err *error) {
+	if s == nil || ctx == nil || p == nil || err == nil {
 		return
 	}
-	n, _ := s.ctx.Value(candNoteKey{}).(*candNote)
+	n, _ := ctx.Value(candNoteKey{}).(*candNote)
 	if n == nil || n.st == nil {
 		return
 	}
@@ -76,6 +76,18 @@ func pickLine(p formPick) string {
 		state = "keep"
 	}
 	return fmt.Sprintf("%.3f %s · %d paths · %d cmds", p.errSum, state, p.paths, p.commands)
+}
+
+func sortCandResults(rows []candResult) {
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+		j := i
+		for j > 0 && betterPick(row.pick, rows[j-1].pick) {
+			rows[j] = rows[j-1]
+			j--
+		}
+		rows[j] = row
+	}
 }
 
 func rankSummary(rows []candResult, limit int) string {
@@ -116,10 +128,10 @@ func archiveLine(sn []snapshot) string {
 	return b.String()
 }
 
-// fork carries this generator's task on ctx. Pixmaps stay shared.
-func (s *world) fork(ctx context.Context) *world {
+// fork is a shallow copy. The caller passes ctx into Run.
+// Pixmaps stay shared.
+func (s *world) fork() *world {
 	return &world{
-		ctx:          ctx,
 		want:         s.want,
 		got:          s.got,
 		wantP:        s.wantP,
@@ -232,14 +244,15 @@ func (s *world) runCandidate(ctx context.Context, job candJob, st *taskgroup.Sta
 	impl := job.op
 	if st != nil {
 		note := &candNote{st: st}
-		fork := s.fork(context.WithValue(ctx, candNoteKey{}, note))
+		fork := s.fork()
 		if bound, ok := impl.(op); ok {
 			bound.world = fork
 			impl = bound
 		}
+		ctx = context.WithValue(ctx, candNoteKey{}, note)
 	}
 	started := time.Now()
-	pick, err := impl.Run()
+	pick, err := impl.Run(ctx)
 	elapsed := time.Since(started)
 	if err != nil {
 		if st != nil {

@@ -26,6 +26,9 @@ const (
 	OpSwap
 	OpDelete
 	OpUnhole
+	OpSuggest
+	OpSquash
+	OpSpline
 	OpOutline
 	OpCount
 )
@@ -47,6 +50,9 @@ var operatorNames = [OpCount]string{
 	OpSwap:      "swap",
 	OpDelete:    "delete",
 	OpUnhole:    "unhole",
+	OpSuggest:   "suggest",
+	OpSquash:    "squash",
+	OpSpline:    "spline",
 	OpOutline:   "outline",
 }
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lewtec/lewkit/x/ndarray"
+	"github.com/stretchr/testify/require"
 )
 
 func TestErrTapeMatchesScalar(t *testing.T) {
@@ -39,26 +40,18 @@ func TestErrTapeMatchesScalar(t *testing.T) {
 		}
 	}
 	tape, err := newErrTape(n)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tape.load(got, want, got.Rect)
-	if _, err := tape.eval(t.Context(), ndarray.CPU, n); err != nil {
-		t.Fatal(err)
-	}
+	_, err = tape.eval(t.Context(), ndarray.CPU, n)
+	require.NoError(t, err)
 	for i := range n {
 		scalar := errAt(got.NRGBAAt(i, 0), want.NRGBAAt(i, 0))
 		nd := float64(tape.dst[i])
-		if scalar == 0 {
-			if nd != 0 {
-				t.Fatalf("pixel %d: scalar 0 tape %v", i, nd)
-			}
-			continue
+		delta := 0.0
+		if scalar != 0 {
+			delta = math.Max(1e-4*scalar, 1e-2)
 		}
-		rel := math.Abs(nd-scalar) / scalar
-		if rel > 1e-4 && math.Abs(nd-scalar) > 1e-2 {
-			t.Fatalf("pixel %d: scalar %v tape %v got %v want %v", i, scalar, nd, got.NRGBAAt(i, 0), want.NRGBAAt(i, 0))
-		}
+		require.InDelta(t, scalar, nd, delta, "pixel %d got %v want %v", i, got.NRGBAAt(i, 0), want.NRGBAAt(i, 0))
 	}
 }
 
@@ -80,30 +73,21 @@ func TestErrTapeRectMatchesScalar(t *testing.T) {
 	r := image.Rect(1, 1, 7, 5)
 	n := r.Dx() * r.Dy()
 	tape, err := newErrTape(n)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tape.load(got, want, r)
 	sum, err := tape.eval(t.Context(), ndarray.CPU, n)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var scalar float64
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		for x := r.Min.X; x < r.Max.X; x++ {
 			scalar += errAt(got.NRGBAAt(x, y), want.NRGBAAt(x, y))
 		}
 	}
-	if scalar == 0 {
-		if sum != 0 {
-			t.Fatalf("scalar 0 tape %v", sum)
-		}
-		return
+	delta := 0.0
+	if scalar != 0 {
+		delta = math.Max(1e-4*scalar, 1e-2)
 	}
-	rel := math.Abs(sum-scalar) / scalar
-	if rel > 1e-4 && math.Abs(sum-scalar) > 1e-2 {
-		t.Fatalf("scalar %v tape %v", scalar, sum)
-	}
+	require.InDelta(t, scalar, sum, delta)
 }
 
 func TestResidualMarkMatchesBand(t *testing.T) {
@@ -122,28 +106,20 @@ func TestResidualMarkMatchesBand(t *testing.T) {
 		want.SetNRGBA(i, 0, colors[(i+1)%n])
 	}
 	tape, err := newErrTape(n)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	const lo, hi = 64, 180
 	tape.load(got, want, got.Rect)
 	tape.lo.Buffer()[0] = lo
 	tape.hi.Buffer()[0] = hi
-	if err := tape.mark.Resize(ndarray.Shape{n}); err != nil {
-		t.Fatal(err)
-	}
-	if err := tape.mark.Eval(t.Context(), ndarray.CPU, tape.mask[:n]); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, tape.mark.Resize(ndarray.Shape{n}))
+	require.NoError(t, tape.mark.Eval(t.Context(), ndarray.CPU, tape.mask[:n]))
 	for i := range n {
 		e := colorErr(got.NRGBAAt(i, 0), want.NRGBAAt(i, 0))
 		wantMark := byte(0)
 		if e > lo && e <= hi {
 			wantMark = 1
 		}
-		if tape.mask[i] != wantMark {
-			t.Fatalf("pixel %d: err %v mark %d want %d", i, e, tape.mask[i], wantMark)
-		}
+		require.Equal(t, wantMark, tape.mask[i], "pixel %d err %v", i, e)
 	}
 }
 
@@ -168,9 +144,10 @@ func TestLogNDDriverNamesGPU(t *testing.T) {
 	buf := captureNDLog(t)
 	logNDDriver(labelEval{name: "vulkan:NVIDIA GeForce RTX 4090"}, nil)
 	got := buf.String()
-	if !strings.Contains(got, "ndarray driver") || !strings.Contains(got, "vulkan:NVIDIA GeForce RTX 4090") || !strings.Contains(got, "score=device") || !strings.Contains(got, "prefer=integrated") {
-		t.Fatalf("log=%s", got)
-	}
+	require.Contains(t, got, "ndarray driver")
+	require.Contains(t, got, "vulkan:NVIDIA GeForce RTX 4090")
+	require.Contains(t, got, "score=device")
+	require.Contains(t, got, "prefer=integrated")
 }
 
 func TestLatencyWeightsPreferIntegrated(t *testing.T) {
@@ -182,57 +159,46 @@ func TestLatencyWeightsPreferIntegrated(t *testing.T) {
 			break
 		}
 	}
-	if slot == nil {
-		t.Fatal("vulkan device weights missing")
-	}
-	if slot["vulkan"] != 50 {
-		t.Fatalf("vulkan factory weight=%d", slot["vulkan"])
-	}
-	if slot["vulkan:integrated"] <= 70 {
-		t.Fatalf("integrated weight=%d, dedicated offer stays 70", slot["vulkan:integrated"])
-	}
-	if err := applyLatencyWeights(); err != nil {
-		t.Fatal(err)
-	}
+	require.NotNil(t, slot)
+	require.Equal(t, 50, slot["vulkan"])
+	require.Greater(t, slot["vulkan:integrated"], 70)
+	require.NoError(t, applyLatencyWeights())
 }
 
 func TestLogNDDriverCPUStaysFloat64(t *testing.T) {
 	buf := captureNDLog(t)
 	logNDDriver(ndarray.CPU, nil)
 	got := buf.String()
-	if !strings.Contains(got, "name=cpu") || !strings.Contains(got, "score=float64") {
-		t.Fatalf("log=%s", got)
-	}
+	require.Contains(t, got, "name=cpu")
+	require.Contains(t, got, "score=float64")
 	logNDDriver(nil, errors.New("no device"))
 	got = buf.String()
-	if !strings.Contains(got, "no device") || strings.Count(got, "score=float64") != 2 {
-		t.Fatalf("log=%s", got)
-	}
+	require.Contains(t, got, "no device")
+	require.Equal(t, 2, strings.Count(got, "score=float64"))
+}
+
+func TestPixelBudgetLeavesTheDeviceOn(t *testing.T) {
+	before := gpuOff.Load()
+	_, err := gpuTapeFor(maxDevicePixels + 1)
+	require.ErrorIs(t, err, errPixelBudget)
+	noteDeviceErr(t.Context(), err)
+	require.Equal(t, before, gpuOff.Load())
 }
 
 func TestNilContextSkipsDevice(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
 	img.SetNRGBA(0, 0, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
-	if gpuEvaluator(nil) != nil {
-		t.Fatal("nil context returned a device")
-	}
-	if Score(nil, img, img) != 0 {
-		t.Fatal("nil context changed the float64 score")
-	}
+	require.Nil(t, gpuEvaluator(nil))
+	require.Zero(t, Score(nil, img, img))
 }
 
 func TestCancelledContextLeavesDeviceAlone(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	before := gpuOff.Load()
-	if gpuEvaluator(ctx) != nil {
-		t.Fatal("cancelled context returned a device")
-	}
+	require.Nil(t, gpuEvaluator(ctx))
 	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
-	if _, ok := ndScoreImages(ctx, img, img); ok {
-		t.Fatal("cancelled context took the device score")
-	}
-	if gpuOff.Load() != before {
-		t.Fatal("cancelled context changed gpuOff")
-	}
+	_, ok := ndScoreImages(ctx, img, img)
+	require.False(t, ok)
+	require.Equal(t, before, gpuOff.Load())
 }
