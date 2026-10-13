@@ -22,9 +22,9 @@ import (
 	"github.com/lewtec/lewkit/x/event"
 	"github.com/lewtec/lewkit/x/taskgroup"
 	"github.com/lewtec/lewkit/x/taskgroup/progress"
-	"github.com/lewtec/svgolf/cmd/svgolf/web"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/internal/search/stack"
+	"github.com/lewtec/svgolf/internal/web"
 	"github.com/lewtec/svgolf/pkg/render"
 )
 

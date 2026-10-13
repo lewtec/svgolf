@@ -2,7 +2,6 @@ package web
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,7 +9,7 @@ import (
 
 func TestJobPageShowsGotAsSVG(t *testing.T) {
 	var buf bytes.Buffer
-	err := JobPage(JobView{ID: "job1", Status: "running"}).Render(context.Background(), &buf)
+	err := JobPage(JobView{ID: "job1", Status: "running"}).Render(t.Context(), &buf)
 	require.NoError(t, err)
 	body := buf.String()
 	require.Contains(t, body, `/jobs/job1/files/last.svg`)
