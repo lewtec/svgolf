@@ -1,14 +1,18 @@
 package stack
 
 import (
+	"context"
+	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/lewtec/svgolf/internal/loss"
+	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
 )
@@ -309,7 +313,7 @@ func TestForgetTouchingKeepsDistantTriple(t *testing.T) {
 	}
 }
 
-func TestSimplifyWindowSkipsRefusedVertices(t *testing.T) {
+func TestSimplifyProposesEachVertexOnce(t *testing.T) {
 	red := color.NRGBA{R: 255, A: 255}
 	ring := [][2]float64{{0, 0}, {2, 0}, {4, 0}, {6, 0}, {8, 0}, {8, 8}, {0, 8}}
 	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
@@ -345,12 +349,158 @@ func TestSimplifyWindowSkipsRefusedVertices(t *testing.T) {
 			board.waitStraight(board.list()[0].id)
 		}
 	}
-	require.NotZero(t, sent)
+	require.Equal(t, len(ring), sent)
 	fork := board.list()[0].fork(nil, nil, 16, 16)
 	n, busy, err := fork.fuzzSimplify(t.Context(), board, board.list()[0], proposals, time.Now())
 	require.NoError(t, err)
 	require.Zero(t, n)
 	require.False(t, busy)
+}
+
+func TestApprovedSimplifyDropRetiresTheRestOfTheRun(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	s, err := newWorld(nil, img)
+	require.NoError(t, err)
+	red := color.NRGBA{R: 255, A: 255}
+	ring := [][2]float64{{0, 0}, {4, 0}, {8, 0}, {12, 0}, {12, 12}, {0, 12}}
+	s.doc = s.doc.Append(filledPath(ring, red).Node())
+	s.fills = []color.NRGBA{red}
+	s.paths = 1
+	s.errSum = 1_000_000
+	parent := s.snap()
+	board := newBeam(parent)
+	drops := (&world{doc: s.doc, fills: s.fills, paths: 1, w: 16, h: 16}).vertexDrops()
+	require.GreaterOrEqual(t, len(drops), 2)
+	first := (&world{doc: s.doc, fills: s.fills, paths: 1}).dropVertexPick(nil, drops[0])
+	second := (&world{doc: s.doc, fills: s.fills, paths: 1}).dropVertexPick(nil, drops[1])
+	for _, pick := range []*formPick{&first, &second} {
+		pick.op = OpSimplify
+		pick.parent = parent
+		pick.scored = true
+		pick.ok = true
+		pick.paths = 1
+		pick.commands = docCmdLen(pick.doc)
+	}
+	first.errSum = parent.errSum
+	second.errSum = 0
+	require.True(t, betterObjective(first.errSum, first.commands, parent.errSum, parent.commands))
+	require.True(t, betterObjective(second.errSum, second.commands, first.errSum, first.commands))
+	st := &rankState{bestByOp: map[Op]*namedPick{}}
+	s.rankNotes(t.Context(), board, st, []agentNote{{pick: first}, {pick: second}}, nil, nil, nil, func(Op, []pix, []pix, []search.Rated) bool {
+		return true
+	})
+	got := board.list()
+	require.Len(t, got, 1)
+	require.Equal(t, commandTrace(first.doc), commandTrace(got[0].doc))
+	require.NotEqual(t, commandTrace(second.doc), commandTrace(got[0].doc))
+}
+
+func TestKeptSimplifyVerdictCancelsOnlyTheRun(t *testing.T) {
+	board := simplifyRingBoard()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	proposals := make(chan agentNote)
+	type outcome struct {
+		sent int
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		fork := board.list()[0].fork(nil, nil, 16, 16)
+		n, _, err := fork.fuzzSimplify(ctx, board, board.list()[0], proposals, time.Now())
+		done <- outcome{n, err}
+	}()
+	wait, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	var note agentNote
+	select {
+	case note = <-proposals:
+	case <-wait.Done():
+	}
+	require.NotNil(t, note.verdict)
+	note.verdict <- true
+	var got outcome
+	finished := false
+	select {
+	case got = <-done:
+		finished = true
+	case <-wait.Done():
+	}
+	require.True(t, finished)
+	require.NoError(t, got.err)
+	require.NoError(t, ctx.Err())
+	require.Equal(t, 1, got.sent)
+	select {
+	case extra := <-proposals:
+		require.Failf(t, "extra", "operator %s arrived after the kept drop", extra.pick.op)
+	default:
+	}
+}
+
+func TestSimplifyRunStopsWhenTheSearchStops(t *testing.T) {
+	board := simplifyRingBoard()
+	ctx, cancel := context.WithCancel(t.Context())
+	proposals := make(chan agentNote)
+	type outcome struct {
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		fork := board.list()[0].fork(nil, nil, 16, 16)
+		_, _, err := fork.fuzzSimplify(ctx, board, board.list()[0], proposals, time.Now())
+		done <- outcome{err}
+	}()
+	wait, stop := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stop()
+	select {
+	case <-proposals:
+	case <-wait.Done():
+		require.NoError(t, wait.Err())
+	}
+	cancel()
+	var got outcome
+	received := false
+	select {
+	case got = <-done:
+		received = true
+	case <-wait.Done():
+	}
+	require.True(t, received)
+	require.ErrorIs(t, got.err, context.Canceled)
+}
+
+func simplifyRingBoard() *beam {
+	red := color.NRGBA{R: 255, A: 255}
+	ring := [][2]float64{{0, 0}, {4, 0}, {8, 0}, {8, 8}, {0, 8}}
+	doc := svg.NewDocument(16, 16).WithViewBox(0, 0, 16, 16)
+	doc = doc.Append(whitePane(16, 16).Node()).Append(filledPath(ring, red).Node())
+	parent := (&world{
+		doc:   doc,
+		fills: []color.NRGBA{red},
+		paths: 1,
+		w:     16,
+		h:     16,
+	}).snap()
+	return newBeam(parent)
+}
+
+func commandTrace(doc svg.Document) string {
+	var b strings.Builder
+	for _, node := range doc.Children() {
+		path, ok := node.Path()
+		if !ok {
+			continue
+		}
+		for _, c := range path.Commands() {
+			fmt.Fprintf(&b, "%d:%.0f,%.0f ", c.Kind, c.X, c.Y)
+		}
+	}
+	return b.String()
 }
 
 func TestSimplifySkipsRememberedTriple(t *testing.T) {

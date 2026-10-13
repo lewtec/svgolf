@@ -239,7 +239,7 @@ func (s *world) finishScore(ctx context.Context, drafts []formPick, rendered []*
 		if parentCmds == 0 && d.parent.doc.Width() != 0 {
 			parentCmds = docCmdLen(d.parent.doc)
 		}
-		ok := acceptLexicographic(nerr, npaths, ncmds, d.parent.errSum, d.parent.paths, parentCmds)
+		ok := betterObjective(nerr, ncmds, d.parent.errSum, parentCmds)
 		if ok {
 			d.got = rendered[i]
 		}

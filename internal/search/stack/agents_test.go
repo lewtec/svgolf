@@ -115,7 +115,7 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	emit := func(Op, []pix, []pix, []search.Rated) bool { return true }
 	s.rankNotes(ctx, board, st, []agentNote{{pick: full}}, nil, nil, nil, emit)
 	require.Len(t, st.loss, 1)
-	require.Less(t, st.loss[0], parent.errSum)
+	require.Less(t, st.loss[0], objective(parent.errSum, parent.commands))
 	require.NotEmpty(t, frames)
 	require.NotEmpty(t, frames[0].Proposals)
 	require.Equal(t, docVertices(full.doc), frames[0].Proposals[0].Vertices)
@@ -143,13 +143,11 @@ func TestKeptProposalPushesLoss(t *testing.T) {
 	half.parent = parent
 	half.dirty = img.Bounds()
 	s.rankNotes(ctx, board, st, []agentNote{{pick: half}}, nil, nil, nil, emit)
-	require.Len(t, st.loss, 2)
-	require.Greater(t, st.loss[1], st.loss[0])
-	require.NotEmpty(t, frames)
+	require.Len(t, st.loss, 1, "a partial plate that does not pay for its commands is not a slot, loss=%v", st.loss)
 	require.Len(t, frames[len(frames)-1].Loss, len(st.loss))
 	placed := frames[len(frames)-1].Proposals
 	require.NotEmpty(t, placed)
-	require.True(t, placed[len(placed)-1].Slot)
+	require.False(t, placed[len(placed)-1].Slot)
 }
 
 func TestInitialLeftoverFeedsTriangle(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lewtec/lewkit/x/ndarray"
+	"github.com/stretchr/testify/require"
 )
 
 func TestResidualMatchesScore(t *testing.T) {
@@ -47,32 +48,18 @@ func TestResidualHoleAndMiss(t *testing.T) {
 	}
 }
 
-func TestBeamKeepsFiveAndBalancesClaims(t *testing.T) {
+func TestBeamKeepsTheSingleBestDocument(t *testing.T) {
 	b := newBeam(snapshot{id: 1, errSum: 50})
 	for i, errSum := range []float64{40, 30, 20, 10, 5} {
-		if !b.offer(snapshot{id: i + 2, errSum: errSum}) {
-			t.Fatalf("offer %d", i)
-		}
+		require.Truef(t, b.offer(snapshot{id: i + 2, errSum: errSum}), "offer %d", i)
 	}
 	list := b.list()
-	if len(list) != beamWidth {
-		t.Fatalf("len=%d", len(list))
-	}
-	if list[0].errSum != 5 || list[len(list)-1].errSum != 40 {
-		t.Fatalf("order=%v", list)
-	}
-	if b.offer(snapshot{id: 99, errSum: 45}) {
-		t.Fatal("worse than the tail entered the beam")
-	}
+	require.Len(t, list, beamWidth)
+	require.Equal(t, 5.0, list[0].errSum)
+	require.False(t, b.offer(snapshot{id: 99, errSum: 45}))
 	first, ok := b.claim(OpTriangle)
-	if !ok {
-		t.Fatal("claim")
-	}
+	require.True(t, ok)
 	second, ok := b.claim(OpRectangle)
-	if !ok {
-		t.Fatal("claim")
-	}
-	if first.id == second.id {
-		t.Fatalf("both proposers took %d while another parent was free", first.id)
-	}
+	require.True(t, ok)
+	require.Equal(t, first.id, second.id)
 }

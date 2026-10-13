@@ -54,6 +54,17 @@ func (b *beam) list() []snapshot {
 	return append([]snapshot(nil), b.best...)
 }
 
+func (b *beam) holds(id int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, sn := range b.best {
+		if sn.id == id {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *beam) claim(op Op) (snapshot, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -330,6 +341,7 @@ func (sn snapshot) fork(want *image.NRGBA, wantP *loss.Plane, w, h int) *world {
 		w:            w,
 		h:            h,
 		simplifyMiss: cloneStraightMiss(sn.simplifyMiss),
+		facts:        sn.facts,
 	}
 	if sn.got != nil {
 		// The plane converts on first read. A proposer that only emits
@@ -412,7 +424,7 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	for _, kind := range agentKinds() {
 		copies := 1
 		if kind == OpSimplify || fuzzKind(kind) {
-			copies = beamWidth
+			copies = fuzzCopies
 		}
 		for range copies {
 			s.startProposer(ctx, &proposers, board, kind, proposals, slots)
@@ -657,6 +669,12 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 			replyVerdict(note, false)
 			continue
 		}
+		// A simplify run drops vertices of one document. Once one drop
+		// takes the slot, the rest of that run is the old ring.
+		if pick.op == OpSimplify && pick.parent.id != 0 && !board.holds(pick.parent.id) {
+			replyVerdict(note, false)
+			continue
+		}
 		if pick.hasStraight && !pick.ok {
 			board.noteMiss(pick.straightMiss)
 		}
@@ -685,7 +703,7 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		}
 		abs := st.pushProposal(search.Proposal{
 			Operator: id.String(),
-			Score:    pick.errSum,
+			Score:    objective(pick.errSum, pick.commands),
 			Paths:    pick.paths,
 			Commands: pick.commands,
 			Vertices: docVertices(pick.doc),
@@ -798,7 +816,7 @@ func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn s
 	if row := st.proposalAt(abs); row != nil {
 		row.Slot = true
 	}
-	st.loss = append(st.loss, sn.errSum)
+	st.loss = append(st.loss, objective(sn.errSum, sn.commands))
 	jobNote(ctx, archiveLine(board.list()))
 	st.pool = append(st.pool, pick)
 	s.publishRank(ctx, board, st)
@@ -983,7 +1001,7 @@ func beamSlots(list []snapshot) []search.Slot {
 		if name == "" {
 			name = "plate"
 		}
-		out[i] = search.Slot{Operator: name, Score: sn.errSum, Paths: sn.paths, Commands: sn.commands, Vertices: docVertices(sn.doc)}
+		out[i] = search.Slot{Operator: name, Score: objective(sn.errSum, sn.commands), Paths: sn.paths, Commands: sn.commands, Vertices: docVertices(sn.doc)}
 	}
 	return out
 }
@@ -1008,12 +1026,18 @@ func emitFrame(ctx context.Context, frame search.Frame) {
 	}
 }
 
-func (b *beam) send(ctx context.Context, proposals chan<- agentNote, note agentNote) {
+func (b *beam) send(ctx context.Context, proposals chan<- agentNote, note agentNote) bool {
 	b.account(1)
+	if ctx == nil {
+		proposals <- note
+		return true
+	}
 	select {
 	case <-ctx.Done():
 		b.account(-1)
+		return false
 	case proposals <- note:
+		return true
 	}
 }
 

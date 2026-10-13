@@ -334,11 +334,7 @@ func nearestMiss(lefts []leftover, point [2]float64) ([2]float64, bool) {
 	best := point
 	bestD := 0.0
 	for _, left := range lefts {
-		shape := left.glow
-		if len(shape) == 0 {
-			shape = left.island
-		}
-		target := outline(shape)
+		target := left.glowOutline()
 		if len(target) == 0 {
 			continue
 		}
@@ -393,7 +389,7 @@ func (s *world) emitKind(ctx context.Context, kind Op, lefts []leftover, emit fu
 	if err := live(ctx); err != nil {
 		return err
 	}
-	buckets := fillBuckets(s.owner, s.w, s.paths, nil)
+	buckets := s.pathBuckets()
 	switch kind {
 	case OpSuggest:
 		return Suggest{world: s, buckets: buckets}.Stream(ctx, emit)

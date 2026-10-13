@@ -17,6 +17,7 @@ import (
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPixSetDoesNotBlockWhenBusy(t *testing.T) {
@@ -146,36 +147,28 @@ func TestSimplifySkipsLoadBearingEars(t *testing.T) {
 	}
 }
 
-func TestAcceptLexicographicEqualErrorFewerCommands(t *testing.T) {
-	if !acceptLexicographic(100, 2, 8, 100, 2, 10) {
-		t.Fatal("equal error and fewer commands must be accepted")
-	}
-	if acceptLexicographic(120, 1, 4, 100, 2, 10) {
-		t.Fatal("higher error and fewer paths must be rejected")
-	}
-	if !acceptLexicographic(90, 3, 20, 100, 2, 10) {
-		t.Fatal("lower error must be accepted even with more paths")
-	}
-	if acceptLexicographic(100, 2, 10, 100, 2, 10) {
-		t.Fatal("equal error and equal complexity is a no-op")
-	}
+func TestObjectiveKeepsASplineThatPaysForItsLines(t *testing.T) {
+	const removed = 500
+	parentErr := 1.0e7
+	parentCmds := 600
+	// The pixels missed by the spline cost less than the lines it deletes.
+	require.True(t, betterObjective(parentErr+float64(removed)*commandCost-1, parentCmds-removed, parentErr, parentCmds))
+	require.False(t, betterObjective(parentErr+float64(removed)*commandCost+1, parentCmds-removed, parentErr, parentCmds))
+	require.False(t, betterObjective(parentErr, parentCmds, parentErr, parentCmds))
+	// A lower pixel error that adds more commands than those pixels are worth loses.
+	require.False(t, betterObjective(parentErr-1, parentCmds+1, parentErr, parentCmds))
 }
 
-func TestArchiveKeepsNondominated(t *testing.T) {
+func TestArchiveKeepsTheLowerObjective(t *testing.T) {
 	accurate := snapshot{id: 1, errSum: 10, paths: 3, commands: 20}
 	simple := snapshot{id: 2, errSum: 50, paths: 1, commands: 8}
 	got := mergeArchive([]snapshot{accurate}, []snapshot{simple})
-	if len(got) != 2 {
-		t.Fatalf("archive=%d want both nondominated points", len(got))
-	}
-	if got[0].id != accurate.id || got[1].id != simple.id {
-		t.Fatalf("lex order=%v,%v want accurate then simple", got[0].id, got[1].id)
-	}
-	winner := snapshot{id: 3, errSum: 10, paths: 1, commands: 8}
-	got = mergeArchive(got, []snapshot{winner})
-	if len(got) != 1 || got[0].id != winner.id {
-		t.Fatalf("archive=%v want only the dominating point", got)
-	}
+	require.Len(t, got, 1)
+	require.Equal(t, 2, got[0].id)
+	worse := snapshot{id: 3, errSum: 50 + 100*commandCost, paths: 1, commands: 8}
+	got = mergeArchive(got, []snapshot{worse})
+	require.Len(t, got, 1)
+	require.Equal(t, 2, got[0].id)
 }
 
 func TestTriangleAppliesOnPaperLeftover(t *testing.T) {

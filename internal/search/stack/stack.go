@@ -28,8 +28,12 @@ const (
 	// leftoverPicks = 3
 	leftoverPicks = 1
 	survivorPicks = 3
-	// beamWidth is the chooser's list. Proposers read it and pick one parent.
-	beamWidth = 5
+	// beamWidth is the chooser's list. One document, so every proposer
+	// tries to beat the current best instead of tending a runner-up.
+	beamWidth = 1
+	// fuzzCopies is how many workers of one fuzzing operator run. They
+	// all claim the single beam document.
+	fuzzCopies = 5
 	// polishBand is simplify-until-stall. Other bands do not
 	// schedule it, so a cheap vertex drop cannot starve join.
 	polishBand = 5
@@ -83,6 +87,9 @@ type world struct {
 	// simplifyMiss is the straight triples that raised Score on
 	// this picture. The next simplify skips them.
 	simplifyMiss map[straightKey]struct{}
+	// facts is the pixel buckets for this accepted document. Copies of
+	// the snapshot share the pointer, so the fill runs once.
+	facts *docFacts
 	// stashOn tells scoreCand to return a proposition. The operator
 	// finishes the structural fields and finishPropose stores it.
 	// The ranker scores the stash. Workers do not.
@@ -119,6 +126,64 @@ type leftover struct {
 	deltaHi float64
 	grows   []grow
 	fresh   grow
+	// islandTrace and glowTrace outline the miss once. Later claims
+	// share the pointer instead of walking the island again.
+	islandTrace *shapeTrace
+	glowTrace   *shapeTrace
+}
+
+// docFacts is the per-path pixel buckets of one accepted document.
+// snapshot is copied by value, so the sync.Once lives on this pointer.
+type docFacts struct {
+	once   sync.Once
+	owner  []uint16
+	w, n   int
+	cached [][]pix
+}
+
+func (d *docFacts) buckets() [][]pix {
+	if d == nil {
+		return nil
+	}
+	d.once.Do(func() {
+		d.cached = fillBuckets(d.owner, d.w, d.n, nil)
+	})
+	return d.cached
+}
+
+// shapeTrace is one island outline. The first caller traces it.
+type shapeTrace struct {
+	once sync.Once
+	pix  []pix
+	ring [][2]float64
+}
+
+func (t *shapeTrace) points() [][2]float64 {
+	if t == nil {
+		return nil
+	}
+	t.once.Do(func() {
+		t.ring = outline(t.pix)
+	})
+	return t.ring
+}
+
+func (left leftover) islandOutline() [][2]float64 {
+	if left.islandTrace != nil {
+		return left.islandTrace.points()
+	}
+	return outline(left.island)
+}
+
+func (left leftover) glowOutline() [][2]float64 {
+	if left.glowTrace != nil {
+		return left.glowTrace.points()
+	}
+	shape := left.glow
+	if len(shape) == 0 {
+		shape = left.island
+	}
+	return outline(shape)
 }
 
 type grow struct {
@@ -168,6 +233,7 @@ type snapshot struct {
 	operator     Op
 	lefts        []leftover
 	simplifyMiss map[straightKey]struct{}
+	facts        *docFacts
 }
 
 func nonePick() formPick {
@@ -202,55 +268,49 @@ func betterPick(n, old formPick) bool {
 }
 
 func lexicographicLessPick(n, old formPick) bool {
-	if n.errSum != old.errSum {
-		return n.errSum < old.errSum
-	}
-	if n.paths != old.paths {
-		return n.paths < old.paths
-	}
-	return n.commands < old.commands
+	return lessObjective(n.errSum, n.commands, n.paths, old.errSum, old.commands, old.paths)
 }
 
-// acceptLexicographic is true when the candidate beats the parent: lower
-// pixel error, or equal error and fewer paths, or equal error and paths
-// and fewer commands. Equal-error equal-complexity is a no-op.
-func acceptLexicographic(errSum float64, paths, commands int, parentErr float64, parentPaths, parentCommands int) bool {
-	if errSum < parentErr {
-		return true
+// commandCost is the squared error of one fully wrong pixel. errSum is a
+// sum of those squares, and each per-pixel term is at most 180². A command
+// pays for itself only when the pixels it fixes are worth more than that.
+const commandCost = 180 * 180
+
+func objective(errSum float64, commands int) float64 {
+	return errSum + float64(commands)*commandCost
+}
+
+// betterObjective is true when the candidate's combined score is lower.
+// Equal scores lose, so a no-op is not a keep.
+func betterObjective(errSum float64, commands int, parentErr float64, parentCommands int) bool {
+	return objective(errSum, commands) < objective(parentErr, parentCommands)
+}
+
+func lessObjective(errA float64, cmdA, pathsA int, errB float64, cmdB, pathsB int) bool {
+	ao, bo := objective(errA, cmdA), objective(errB, cmdB)
+	if ao != bo {
+		return ao < bo
 	}
-	if errSum != parentErr {
-		return false
+	if errA != errB {
+		return errA < errB
 	}
-	if paths < parentPaths {
-		return true
+	if cmdA != cmdB {
+		return cmdA < cmdB
 	}
-	if paths != parentPaths {
-		return false
-	}
-	return commands < parentCommands
+	return pathsA < pathsB
 }
 
 func lexicographicLessSnapshot(a, b snapshot) bool {
-	if a.errSum != b.errSum {
-		return a.errSum < b.errSum
-	}
-	if a.paths != b.paths {
-		return a.paths < b.paths
-	}
-	return a.commands < b.commands
+	return lessObjective(a.errSum, a.commands, a.paths, b.errSum, b.commands, b.paths)
 }
 
 func samePoint(a, b snapshot) bool {
 	return a.errSum == b.errSum && a.paths == b.paths && a.commands == b.commands
 }
 
-// dominates is true when a is at least as good as b on error, paths,
-// and commands, and strictly better on at least one.
+// dominates is true when a has a strictly lower combined score than b.
 func dominates(a, b snapshot) bool {
-	if a.errSum > b.errSum || a.paths > b.paths || a.commands > b.commands {
-		return false
-	}
-	return a.errSum < b.errSum || a.paths < b.paths || a.commands < b.commands
+	return objective(a.errSum, a.commands) < objective(b.errSum, b.commands)
 }
 
 func mergeArchive(archive []snapshot, cands []snapshot) []snapshot {
@@ -430,12 +490,38 @@ func (s *world) bindLeftovers(lefts []leftover) []leftover {
 	out := make([]leftover, len(lefts))
 	for i, left := range lefts {
 		left.grows = nil
+		left = left.withTraces()
 		if left.big() {
 			left.fresh = s.seedGrow(grow{i: -1, work: left.island, fill: left.col})
 		}
 		out[i] = left
 	}
 	return out
+}
+
+func (left leftover) withTraces() leftover {
+	if len(left.island) > 0 && left.islandTrace == nil {
+		left.islandTrace = &shapeTrace{pix: left.island}
+	}
+	shape := left.glow
+	if len(shape) == 0 {
+		shape = left.island
+	}
+	if len(shape) == 0 {
+		return left
+	}
+	if samePix(shape, left.island) {
+		left.glowTrace = left.islandTrace
+		return left
+	}
+	if left.glowTrace == nil {
+		left.glowTrace = &shapeTrace{pix: shape}
+	}
+	return left
+}
+
+func samePix(a, b []pix) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 func (s *world) seedGrow(g grow) grow {
@@ -448,17 +534,37 @@ func (s *world) seedGrow(g grow) grow {
 
 func (s *world) snap() snapshot {
 	s.snapID++
+	owner := append([]uint16(nil), s.owner...)
+	facts := s.facts
+	if facts == nil && s.w > 0 && s.paths > 0 && len(owner) > 0 {
+		facts = &docFacts{owner: owner, w: s.w, n: s.paths}
+		s.facts = facts
+	}
 	return snapshot{
 		id:           s.snapID,
 		doc:          s.doc,
 		got:          s.got,
 		fills:        append([]color.NRGBA(nil), s.fills...),
-		owner:        append([]uint16(nil), s.owner...),
+		owner:        owner,
 		errSum:       s.errSum,
 		paths:        s.paths,
 		commands:     docCmdLen(s.doc),
 		simplifyMiss: s.simplifyMiss,
+		facts:        facts,
 	}
+}
+
+func (s *world) pathBuckets() [][]pix {
+	if s == nil {
+		return nil
+	}
+	if s.facts != nil {
+		return s.facts.buckets()
+	}
+	if s.w <= 0 || s.paths <= 0 || len(s.owner) == 0 {
+		return nil
+	}
+	return fillBuckets(s.owner, s.w, s.paths, nil)
 }
 
 func (s *world) load(sn snapshot) {
@@ -469,6 +575,7 @@ func (s *world) load(sn snapshot) {
 	s.errSum = sn.errSum
 	s.paths = sn.paths
 	s.simplifyMiss = sn.simplifyMiss
+	s.facts = sn.facts
 	if s.gotP == nil {
 		s.gotP = loss.NewPlane(s.got)
 	} else {
@@ -622,6 +729,9 @@ func (s *world) apply(pick formPick) {
 		s.gotP.Reset(s.got)
 	}
 	s.gotP.Ensure()
+	// The owner grid just changed. The next snap gets a new facts
+	// pointer. Copies of the previous document keep the old one.
+	s.facts = nil
 }
 
 // swapPaths exchanges path i with path j. Pane stays first.
@@ -717,7 +827,7 @@ func (s *world) scoreCand(ctx context.Context, next svg.Document, cand svg.Node,
 	nerr := s.scoreAfter(ctx, gotP, dirty.Inset(-2))
 	npaths := docPaths(next)
 	ncmds := docCmdLen(next)
-	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
+	ok := betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
 }
 

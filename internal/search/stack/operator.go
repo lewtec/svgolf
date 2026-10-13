@@ -244,16 +244,16 @@ func (o Outline) Run(ctx context.Context) (formPick, error) {
 		return nonePick(), err
 	}
 	// scoreAfter can leave a fraction of a pixel between two
-	// rasters of the same outline. Lex would then keep the extra
-	// path. The full sum is the same Score the archive stores.
+	// rasters of the same outline. The full sum is the error the
+	// combined score uses.
 	if s.want != nil && hole.scored && layer.scored {
 		if sum, err := scored(ctx, hole.doc, s.want); err == nil {
 			hole.errSum = sum
-			hole.ok = acceptLexicographic(sum, hole.paths, hole.commands, s.errSum, s.paths, docCmdLen(s.doc))
+			hole.ok = betterObjective(sum, hole.commands, s.errSum, docCmdLen(s.doc))
 		}
 		if sum, err := scored(ctx, layer.doc, s.want); err == nil {
 			layer.errSum = sum
-			layer.ok = acceptLexicographic(sum, layer.paths, layer.commands, s.errSum, s.paths, docCmdLen(s.doc))
+			layer.ok = betterObjective(sum, layer.commands, s.errSum, docCmdLen(s.doc))
 		}
 	}
 	if betterPick(hole, layer) {
@@ -548,125 +548,144 @@ func (s Simplify) Applies() bool {
 	return s.world.paths > 0
 }
 
-// fuzzSimplify throws a random handful of vertex drops at the ranker
-// and returns. It does not wait for the decisions. Refusals land on
-// the beam later and the next draw skips them.
+// fuzzSimplify deletes a random handful of vertices and returns.
+// It does not test whether a vertex is straight. The ranker keeps a
+// drop only when the combined score falls. The run context is a child
+// of ctx. A kept drop cancels that child, so the rest of this ring is
+// not sent, and the search context stays open for the new document.
+// Cancelling ctx cancels the run and comes back as that error. A nil
+// context has no parent to cancel. A document already sent for this
+// parent is skipped. The operator finishes only when every vertex of
+// this document has been sent.
 func (w *world) fuzzSimplify(ctx context.Context, board *beam, parent snapshot, proposals chan<- agentNote, started time.Time) (int, bool, error) {
 	if err := live(ctx); err != nil {
 		return 0, false, err
 	}
-	buckets := fillBuckets(w.owner, w.w, w.paths, nil)
-	tasks := w.straightTasks(buckets, nil)
+	runCtx, cancelRun := ctx, func() {}
+	if ctx != nil {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithCancel(ctx)
+		cancelRun = cancel
+	}
+	defer cancelRun()
+	tasks := w.vertexDrops()
 	if len(tasks) == 0 {
-		return 0, false, nil
+		return 0, false, live(ctx)
 	}
 	rand.Shuffle(len(tasks), func(i, j int) {
 		tasks[i], tasks[j] = tasks[j], tasks[i]
 	})
-	keys := make([]straightKey, len(tasks))
-	by := make(map[straightKey]straightTask, len(tasks))
-	for i, task := range tasks {
-		keys[i] = task.key
-		by[task.key] = task
-	}
-	chosen := board.reserveStraight(parent.id, keys, simplifyWindow)
-	if len(chosen) == 0 {
-		return 0, board.straightBusy(parent.id), nil
-	}
+	buckets := w.pathBuckets()
 	sent := 0
-	for _, key := range chosen {
-		pick := w.simplifyPick(buckets, by[key], w.simplifyMiss)
+	for _, task := range tasks {
+		if err := live(ctx); err != nil {
+			return sent, false, err
+		}
+		if (runCtx != nil && runCtx.Err() != nil) || sent == simplifyWindow || !board.holds(parent.id) {
+			break
+		}
+		pick := w.dropVertexPick(buckets, task)
 		if pick.doc.Width() == 0 {
-			board.settleStraight(parent.id, key, false)
+			continue
+		}
+		if !board.remember(OpSimplify, parent.id, docKey(pick.doc)) {
 			continue
 		}
 		pick.parent = parent
-		ch := make(chan bool, 1)
-		id := parent.id
-		go func(key straightKey, ch chan bool) {
+		verdict := make(chan bool, 1)
+		go func() {
 			ok := false
-			select {
-			case <-ctx.Done():
-			case ok = <-ch:
+			if ctx == nil {
+				ok = <-verdict
+			} else {
+				select {
+				case <-ctx.Done():
+					return
+				case <-runCtx.Done():
+					return
+				case ok = <-verdict:
+				}
 			}
-			board.settleStraight(id, key, ok)
-		}(key, ch)
-		board.send(ctx, proposals, agentNote{
+			if ok {
+				cancelRun()
+			}
+		}()
+		if !board.send(runCtx, proposals, agentNote{
 			pick:    pick,
 			elapsed: time.Since(started),
-			verdict: ch,
-		})
+			verdict: verdict,
+		}) {
+			break
+		}
 		sent++
 	}
-	return sent, true, nil
+	if err := live(ctx); err != nil {
+		return sent, false, err
+	}
+	return sent, false, nil
 }
 
-type straightTask struct {
-	key    straightKey
-	i, ri  int
-	v      int
-	rings  []pathRing
-	lin    svg.LinearFill
-	hasLin bool
+type vertexDrop struct {
+	i, ri, v int
+	rings    []pathRing
+	lin      svg.LinearFill
+	hasLin   bool
 }
 
-func (w *world) straightTasks(buckets [][]pix, missed map[straightKey]struct{}) []straightTask {
-	var tasks []straightTask
+func (w *world) vertexDrops() []vertexDrop {
+	var tasks []vertexDrop
 	for i := 0; i < w.paths; i++ {
 		node := w.doc.Children()[i+1]
-		p, ok := node.Path()
+		path, ok := node.Path()
 		if !ok {
 			continue
 		}
-		rings := parsePathRings(p)
+		rings := parsePathRings(path)
 		lin, hasLin := node.LinearFill()
 		for ri, ring := range rings {
-			for v := 0; v < len(ring.verts); v++ {
-				if !ring.straightVertex(v) {
-					continue
-				}
-				key := ringStraightKey(ring, v)
-				if _, seen := missed[key]; seen {
-					continue
-				}
-				tasks = append(tasks, straightTask{
-					key: key, i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin,
+			if len(ring.verts) < 4 || len(ring.edges) != len(ring.verts) {
+				continue
+			}
+			for v := range ring.verts {
+				tasks = append(tasks, vertexDrop{
+					i: i, ri: ri, v: v, rings: rings, lin: lin, hasLin: hasLin,
 				})
 			}
 		}
 	}
-	_ = buckets
 	return tasks
 }
 
-func (w *world) simplifyPick(buckets [][]pix, t straightTask, missed map[straightKey]struct{}) formPick {
-	ring := t.rings[t.ri]
-	moved := ring.dropVertex(t.v)
-	if len(moved.verts) < 3 || ringCrosses(moved.points()) {
+func (w *world) dropVertexPick(buckets [][]pix, task vertexDrop) formPick {
+	ring := task.rings[task.ri]
+	moved := ring.dropVertex(task.v)
+	if len(moved.verts) < 3 {
 		return nonePick()
 	}
-	nextRings := append([]pathRing{}, t.rings...)
-	nextRings[t.ri] = moved
-	cand := filledRings(nextRings[0], nextRings[1:], w.fills[t.i])
-	if t.hasLin {
-		cand = cand.WithLinearFill(t.lin)
+	nextRings := append([]pathRing{}, task.rings...)
+	nextRings[task.ri] = moved
+	cand := filledRings(nextRings[0], nextRings[1:], w.fills[task.i])
+	if task.hasLin {
+		cand = cand.WithLinearFill(task.lin)
 	}
 	var work []pix
-	if t.i < len(buckets) {
-		work = buckets[t.i]
+	if task.i < len(buckets) {
+		work = buckets[task.i]
 	}
-	g := w.seedGrow(grow{i: t.i, work: work, fill: w.fills[t.i]})
-	g.dirty0 = t.key.scoreRect()
-	pick := w.draft(replaceAt(w.doc, t.i+1, cand.Node()), cand.Node(), g, OpSimplify)
-	if pick.doc.Width() == 0 {
-		return nonePick()
+	n := len(ring.verts)
+	prev := ring.verts[(task.v-1+n)%n]
+	next := ring.verts[(task.v+1)%n]
+	return formPick{
+		doc:     replaceAt(w.doc, task.i+1, cand.Node()),
+		replace: task.i,
+		insert:  -1,
+		work:    work,
+		fill:    w.fills[task.i],
+		dropIdx: -1,
+		mergeJ:  -1,
+		op:      OpSimplify,
+		dirty:   pointsRect([][2]float64{prev, ring.verts[task.v], next}),
 	}
-	kept := cloneStraightMiss(missed)
-	forgetTouching(kept, t.key)
-	pick.simplifyMiss = kept
-	pick.hasStraight = true
-	pick.straightMiss = t.key
-	return pick
 }
 
 func (w *world) fanSimplify(ctx context.Context, buckets [][]pix) error {
@@ -1150,7 +1169,7 @@ func (d Delete) Run(ctx context.Context) (formPick, error) {
 	loss.Release(gotP)
 	npaths := s.paths - 1
 	ncmds := docCmdLen(next)
-	ok := acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc)) && nerr <= s.errSum
+	ok := betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
 }
 
@@ -1170,7 +1189,7 @@ func (sl Slide) Run(ctx context.Context) (formPick, error) {
 	if err := live(ctx); err != nil {
 		return nonePick(), err
 	}
-	target := outline(sl.left.island)
+	target := sl.left.islandOutline()
 	if len(target) < 1 {
 		return nonePick(), nil
 	}
@@ -1242,11 +1261,7 @@ func (b Bend) Applies() bool {
 
 func (b Bend) Run(ctx context.Context) (formPick, error) {
 	s := b.world
-	shape := b.left.glow
-	if len(shape) == 0 {
-		shape = b.left.island
-	}
-	target := outline(shape)
+	target := b.left.glowOutline()
 	if len(target) < 1 {
 		return nonePick(), nil
 	}
@@ -1354,7 +1369,7 @@ func (sw Swap) Run(ctx context.Context) (formPick, error) {
 	loss.Release(gotP)
 	npaths := s.paths
 	ncmds := docCmdLen(next)
-	ok = acceptLexicographic(nerr, npaths, ncmds, s.errSum, s.paths, docCmdLen(s.doc))
+	ok = betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{
 		doc: next, errSum: nerr, paths: npaths, commands: ncmds,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
@@ -1616,10 +1631,7 @@ func (s *world) worldOperators(band int) []Operator {
 	if band != 2 && band != polishBand {
 		return nil
 	}
-	var buckets [][]pix
-	if s.paths > 0 {
-		buckets = fillBuckets(s.owner, s.w, s.paths, nil)
-	}
+	buckets := s.pathBuckets()
 	if band == polishBand {
 		return []Operator{
 			op{id: OpSimplify, world: s, buckets: buckets},
