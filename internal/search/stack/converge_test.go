@@ -22,6 +22,7 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 		w, h    int
 		inside  func(x, y int) bool
 		outline bool
+		stroke  bool
 	}{
 		{
 			name: "ell", w: 40, h: 40, outline: true,
@@ -45,7 +46,7 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 			},
 		},
 		{
-			name: "stroke", w: 36, h: 16, outline: true,
+			name: "stroke", w: 36, h: 16, stroke: true,
 			inside: func(x, y int) bool {
 				return y >= 7 && y < 9 && x >= 4 && x < 32
 			},
@@ -77,6 +78,7 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 			}
 			outlined := false
 			var got *image.NRGBA
+			var doc svg.Document
 			epochs := 0
 			for ep, err := range (Stack{}).Search(mustCtx(t), img) {
 				if err != nil {
@@ -86,6 +88,7 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 				if ep.Operator == OpOutline {
 					outlined = true
 				}
+				doc = ep.Document
 				got, err = render.Render(ep.Document)
 				if err != nil {
 					t.Fatal(err)
@@ -100,6 +103,9 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 			if tc.outline && !outlined {
 				t.Fatal("outline was not accepted")
 			}
+			if tc.stroke && !documentHasStroke(doc) {
+				t.Fatal("stroke was not accepted")
+			}
 		})
 	}
 }
@@ -107,6 +113,19 @@ func TestOutlineConvergesFlatShapes(t *testing.T) {
 // A paper letter on a flat field is one plate with a hole. The
 // convex hull spills into the missing corner, so the hole has to
 // be the mask outline or Score keeps a second path.
+func documentHasStroke(doc svg.Document) bool {
+	for _, node := range forms(doc) {
+		path, ok := node.Path()
+		if !ok {
+			continue
+		}
+		if _, on := path.Stroke(); on {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPaperLetterConvergesToOneShape(t *testing.T) {
 	red := color.NRGBA{R: 172, G: 19, B: 12, A: 255}
 	const w, h = 40, 40
@@ -181,7 +200,7 @@ func TestPaperLeftoverDoesNotAddAPath(t *testing.T) {
 	for band := 1; band <= 4; band++ {
 		for _, op := range s.leftoverOperators(left, band) {
 			switch op.ID() {
-			case OpTriangle, OpRectangle, OpRing, OpOutline:
+			case OpTriangle, OpRectangle, OpRing, OpOutline, OpStroke:
 				t.Fatalf("band %d scheduled %s for a paper leftover", band, op.ID())
 			}
 		}
@@ -233,19 +252,19 @@ func TestOnBlendIsTheSeamNotAThirdFlat(t *testing.T) {
 	blue := color.NRGBA{R: 20, G: 90, B: 180, A: 255}
 	black := color.NRGBA{A: 255}
 	paints := []color.NRGBA{red, paper}
-	if !onBlend(mixColor(red, paper, 0.5), paints) {
+	if !onBlend(mixColor(red, paper, 0.5), paints, float64(minErr)) {
 		t.Fatal("mid blend was not a seam")
 	}
-	if onBlend(red, paints) {
+	if onBlend(red, paints, float64(minErr)) {
 		t.Fatal("field color was called a seam")
 	}
-	if onBlend(paper, paints) {
+	if onBlend(paper, paints, float64(minErr)) {
 		t.Fatal("paper was called a seam")
 	}
-	if onBlend(blue, paints) {
+	if onBlend(blue, paints, float64(minErr)) {
 		t.Fatal("a third flat on the field was called a seam")
 	}
-	if onBlend(black, paints) {
+	if onBlend(black, paints, float64(minErr)) {
 		t.Fatal("black mark was called a seam")
 	}
 }

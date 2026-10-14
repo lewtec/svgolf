@@ -12,6 +12,7 @@ import (
 	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTraceOverwritesLast(t *testing.T) {
@@ -70,6 +71,19 @@ func sameFile(t *testing.T, a, b string) {
 	if !bytes.Equal(xa, xb) {
 		t.Fatalf("%s != %s", a, b)
 	}
+}
+
+func TestVectorizeSearchOpt(t *testing.T) {
+	app, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search", "stack", "--search-opt", "epochs", "1", "--search-opt", "beam", "2")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"epochs": "1", "beam": "2"}, cmd.Map(app.Args.Vectorize.Opt))
+	_, err = cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search-opt", "epochs")
+	require.Error(t, err)
+	dup, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search-opt", "epochs", "1", "--search-opt", "epochs", "2")
+	require.NoError(t, err)
+	err = tuneSearch(nil, dup.Args.Vectorize.Opt)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "duplicate")
 }
 
 func TestVectorizeUnknownSearch(t *testing.T) {

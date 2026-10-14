@@ -806,9 +806,21 @@ A new adapter is a subpackage plus `init { Register("name", ...) }`. Blank-impor
 Search is the whole problem: `want` pixmap in, one `Epoch` per step. Host does not scale. Only a Search adapter may scale, as its own algorithm; it reports that scale on `Epoch.Scale` (`1` = native). A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject them. `--search` selects the registry name. Default `dumb` (via prelude). `vectorize` and `preview` Encode `Last` (the last successful epoch's Document). Zero epochs or a yielded error fail.
 
 ```
-svgolf vectorize in.png -o out.svg --search NAME
-svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview]
+svgolf vectorize in.png -o out.svg --search NAME [--search-opt KEY VALUE]
+svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview] [--search-opt KEY VALUE]
 ```
+
+`--search-opt` repeats. Each use takes a key and a value. The CLI forwards the pairs and does not interpret them. An adapter that does not implement `Tunable` rejects a non-empty map. `stack` keys, with the built-in value when the key is omitted:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `epochs` | 0 | Stop after this many epochs. 0 runs until the search stops. |
+| `beam` | 1 | Documents the chooser keeps. |
+| `command-cost` | 180² | Added to the error sum once per command. One fully wrong pixel. |
+| `minimum-island` | 8 | Leftover pixel count an operator will try. |
+| `minimum-error` | 8 | HSV distance that still counts as the same paint. |
+
+`stack` may emit an open path with no fill and a butt stroke when that stroke paints the leftover and no other pixel. It competes on the same score as the other operators.
 
 `preview` walks eval PNGs at native size, writes `want-<scene>.png`, `<scene>.svg`, and `<scene>.png` via `resvg` (intrinsic size). Host does not scale. Only a Search adapter may scale, as its own algorithm.
 

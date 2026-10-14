@@ -239,7 +239,7 @@ func (s *world) finishScore(ctx context.Context, drafts []formPick, rendered []*
 		if parentCmds == 0 && d.parent.doc.Width() != 0 {
 			parentCmds = docCmdLen(d.parent.doc)
 		}
-		ok := betterObjective(nerr, ncmds, d.parent.errSum, parentCmds)
+		ok := s.better(nerr, ncmds, d.parent.errSum, parentCmds)
 		if ok {
 			d.got = rendered[i]
 		}

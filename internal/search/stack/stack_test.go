@@ -1401,6 +1401,9 @@ func TestStackGapGetsTriangle(t *testing.T) {
 		if !ok {
 			t.Fatal("not a path")
 		}
+		if _, on := p.Stroke(); on {
+			return
+		}
 		n := 0
 		for _, c := range p.Commands() {
 			if c.Kind != svg.CmdClose {
@@ -2873,7 +2876,7 @@ func TestCandidateLogLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "\ttriangle elapsed=") || !strings.Contains(got, "score=") {
+	if !strings.Contains(got, "\t") || !strings.Contains(got, " elapsed=") || !strings.Contains(got, "score=") {
 		t.Fatalf("candidate log=%q", got)
 	}
 }
@@ -3115,6 +3118,9 @@ func TestStackFirstFormIsPoly(t *testing.T) {
 		p, ok := fk[0].Path()
 		if !ok {
 			t.Fatal("not a path")
+		}
+		if _, on := p.Stroke(); on {
+			return
 		}
 		n := 0
 		for _, c := range p.Commands() {
