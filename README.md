@@ -38,7 +38,7 @@ svgolf preview   --search NAME [--search-opt key=value]
 
 `verify` exits 0 only when every pixel matches resvg (and Encode does not drift). On a pixel mismatch it writes `<input>.diff.png`.
 
-`vectorize` is PNG → `FromImage` → `search.New` → epochs → Encode `Last`. Native size. Only a Search adapter may scale. `--epochs DIR` writes each epoch as `NNN.svg` + `NNN.png` and overwrites `last.svg` + `last.png`. `--search-opt key=value` repeats. The CLI forwards the pairs. `stack` accepts `epochs` (0 is no cap), `beam`, `command-cost`, `minimum-island`, and `minimum-error`. Unset keys keep the built-in search. Register with `search.Register` in the adapter `init`; blank-import `search/prelude`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + resvg at intrinsic size). Ships `dumb` and `stack`.
+`vectorize` is PNG → `FromImage` → `search.New` → epochs → Encode `Last`. Native size. Only a Search adapter may scale. `--epochs DIR` writes each epoch as `NNN.svg` + `NNN.png` and overwrites `last.svg` + `last.png`. `--search-opt key=value` repeats. The CLI forwards the pairs. `stack` accepts `epochs` (0 is no cap), `beam`, `command-cost`, `minimum-island`, and `minimum-error`. Unset keys keep the built-in search. `stack` may emit an open stroked path when that stroke paints the island and nothing else. Register with `search.Register` in the adapter `init`; blank-import `search/prelude`. `preview` runs that Search on `testdata/eval` into `testdata/preview` (want + SVG + resvg at intrinsic size). Ships `dumb` and `stack`.
 
 ## Layout
 

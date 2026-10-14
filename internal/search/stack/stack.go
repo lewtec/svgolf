@@ -617,7 +617,7 @@ func (s *world) load(sn snapshot) {
 }
 
 func leftoverAdd(id Op) bool {
-	return id == OpTriangle || id == OpRectangle || id == OpRing || id == OpOutline
+	return id == OpTriangle || id == OpRectangle || id == OpRing || id == OpOutline || id == OpStroke
 }
 
 func (s *world) archiveUpdate(archive []snapshot, pool []formPick, band int) ([]snapshot, bool) {
@@ -1499,6 +1499,12 @@ func docKey(d svg.Document) uint64 {
 			c0, c1 := g.C0(), g.C1()
 			mix(uint64(c0.R) | uint64(c0.G)<<8 | uint64(c0.B)<<16)
 			mix(uint64(c1.R) | uint64(c1.G)<<8 | uint64(c1.B)<<16)
+		}
+		if st, ok := p.Stroke(); ok {
+			col := st.Color()
+			mix(uint64(col.R) | uint64(col.G)<<8 | uint64(col.B)<<16 | uint64(col.A)<<24)
+			mix(math.Float64bits(st.Width()))
+			mix(uint64(st.Cap()) + 1)
 		}
 		for _, c := range p.Commands() {
 			mix(uint64(c.Kind))

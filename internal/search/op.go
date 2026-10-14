@@ -30,6 +30,7 @@ const (
 	OpSquash
 	OpSpline
 	OpOutline
+	OpStroke
 	OpCount
 )
 
@@ -54,6 +55,7 @@ var operatorNames = [OpCount]string{
 	OpSquash:    "squash",
 	OpSpline:    "spline",
 	OpOutline:   "outline",
+	OpStroke:    "stroke",
 }
 
 func (id Op) String() string {

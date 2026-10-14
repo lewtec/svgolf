@@ -48,6 +48,7 @@ const (
 	OpSquash    = search.OpSquash
 	OpSpline    = search.OpSpline
 	OpOutline   = search.OpOutline
+	OpStroke    = search.OpStroke
 	opCount     = search.OpCount
 )
 
@@ -101,6 +102,8 @@ func (o op) impl() Operator {
 		return Spline{world: o.world, buckets: o.buckets}
 	case OpOutline:
 		return Outline{world: o.world, left: o.left}
+	case OpStroke:
+		return Stroke{world: o.world, left: o.left}
 	default:
 		return nil
 	}
@@ -1547,6 +1550,7 @@ func leftoverAddOperators(s *world, left leftover) []Operator {
 		op{id: OpRectangle, world: s, left: left},
 		op{id: OpRing, world: s, left: left},
 		op{id: OpOutline, world: s, left: left},
+		op{id: OpStroke, world: s, left: left},
 	}
 }
 

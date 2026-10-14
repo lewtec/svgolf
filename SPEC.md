@@ -820,6 +820,8 @@ svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview] [--
 | `minimum-island` | 8 | Leftover pixel count an operator will try. |
 | `minimum-error` | 8 | HSV distance that still counts as the same paint. |
 
+`stack` may emit an open path with no fill and a butt stroke when that stroke paints the leftover and no other pixel. It competes on the same score as the other operators.
+
 `preview` walks eval PNGs at native size, writes `want-<scene>.png`, `<scene>.svg`, and `<scene>.png` via `resvg` (intrinsic size). Host does not scale. Only a Search adapter may scale, as its own algorithm.
 
 `mise run preview -- --search NAME`

@@ -470,7 +470,7 @@ func proposeOne(ctx context.Context, oper Operator, emit func(formPick)) error {
 
 func agentKinds() []Op {
 	return []Op{
-		OpTriangle, OpRectangle, OpRing, OpOutline,
+		OpTriangle, OpRectangle, OpRing, OpOutline, OpStroke,
 		OpGrow, OpCarve, OpSlide, OpBend,
 		OpSimplify, OpUnhole,
 		OpWash, OpJoin, OpSubtract, OpSwap, OpDelete,
