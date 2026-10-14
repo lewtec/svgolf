@@ -16,9 +16,10 @@ import (
 )
 
 type previewCmd struct {
-	Algo cmd.StringArg `long:"search" default:"dumb" help:"registered Search adapter"`
-	Eval cmd.StringArg `long:"eval" default:"testdata/eval" help:"eval PNG directory"`
-	Out  cmd.StringArg `long:"out" default:"testdata/preview" help:"preview output directory"`
+	Algo cmd.StringArg   `long:"search" default:"dumb" help:"registered Search adapter"`
+	Opt  []cmd.StringArg `long:"search-opt" help:"Search option key=value"`
+	Eval cmd.StringArg   `long:"eval" default:"testdata/eval" help:"eval PNG directory"`
+	Out  cmd.StringArg   `long:"out" default:"testdata/preview" help:"preview output directory"`
 }
 
 func (previewCmd) Description() string {
@@ -28,6 +29,9 @@ func (previewCmd) Description() string {
 func (c *previewCmd) Run(ctx context.Context) error {
 	s, err := search.New(c.Algo.Value())
 	if err != nil {
+		return err
+	}
+	if err := tuneSearch(s, c.Opt); err != nil {
 		return err
 	}
 	bin, err := resvg.LookPath()

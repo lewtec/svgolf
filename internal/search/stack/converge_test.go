@@ -233,19 +233,19 @@ func TestOnBlendIsTheSeamNotAThirdFlat(t *testing.T) {
 	blue := color.NRGBA{R: 20, G: 90, B: 180, A: 255}
 	black := color.NRGBA{A: 255}
 	paints := []color.NRGBA{red, paper}
-	if !onBlend(mixColor(red, paper, 0.5), paints) {
+	if !onBlend(mixColor(red, paper, 0.5), paints, float64(minErr)) {
 		t.Fatal("mid blend was not a seam")
 	}
-	if onBlend(red, paints) {
+	if onBlend(red, paints, float64(minErr)) {
 		t.Fatal("field color was called a seam")
 	}
-	if onBlend(paper, paints) {
+	if onBlend(paper, paints, float64(minErr)) {
 		t.Fatal("paper was called a seam")
 	}
-	if onBlend(blue, paints) {
+	if onBlend(blue, paints, float64(minErr)) {
 		t.Fatal("a third flat on the field was called a seam")
 	}
-	if onBlend(black, paints) {
+	if onBlend(black, paints, float64(minErr)) {
 		t.Fatal("black mark was called a seam")
 	}
 }

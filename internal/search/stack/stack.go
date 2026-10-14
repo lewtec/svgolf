@@ -51,13 +51,16 @@ var leftoverDeltaBands = [][2]float64{
 }
 
 // Stack is variable neighborhood descent on a tiny non-dominated archive.
-// Want stays native.
-type Stack struct{}
+// Want stays native. knob is empty unless Tune set it.
+type Stack struct {
+	knob knob
+}
 
 var _ search.Search = Stack{}
+var _ search.Tunable = (*Stack)(nil)
 
 func init() {
-	search.Register("stack", func() search.Search { return Stack{} })
+	search.Register("stack", func() search.Search { return &Stack{} })
 }
 
 // showFrames keeps Heat and Island on each epoch. Vectorize does
@@ -96,6 +99,7 @@ type world struct {
 	stashOn  bool
 	markFull bool
 	stash    []formPick
+	knob     knob
 	// emitNow hands a proposition to the painters immediately.
 	// The operator can keep generating on the other cores.
 	emitNow func(formPick)
@@ -234,6 +238,7 @@ type snapshot struct {
 	lefts        []leftover
 	simplifyMiss map[straightKey]struct{}
 	facts        *docFacts
+	knob         knob
 }
 
 func nonePick() formPick {
@@ -277,7 +282,11 @@ func lexicographicLessPick(n, old formPick) bool {
 const commandCost = 180 * 180
 
 func objective(errSum float64, commands int) float64 {
-	return errSum + float64(commands)*commandCost
+	return objectiveCost(errSum, commands, commandCost)
+}
+
+func objectiveCost(errSum float64, commands int, cost float64) float64 {
+	return errSum + float64(commands)*cost
 }
 
 // betterObjective is true when the candidate's combined score is lower.
@@ -287,7 +296,11 @@ func betterObjective(errSum float64, commands int, parentErr float64, parentComm
 }
 
 func lessObjective(errA float64, cmdA, pathsA int, errB float64, cmdB, pathsB int) bool {
-	ao, bo := objective(errA, cmdA), objective(errB, cmdB)
+	return lessObjectiveCost(errA, cmdA, pathsA, errB, cmdB, pathsB, commandCost)
+}
+
+func lessObjectiveCost(errA float64, cmdA, pathsA int, errB float64, cmdB, pathsB int, cost float64) bool {
+	ao, bo := objectiveCost(errA, cmdA, cost), objectiveCost(errB, cmdB, cost)
 	if ao != bo {
 		return ao < bo
 	}
@@ -384,7 +397,7 @@ func newWorld(ctx context.Context, target *image.NRGBA) (*world, error) {
 	}, nil
 }
 
-func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
+func (st Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.Epoch, error] {
 	return func(yield func(search.Epoch, error) bool) {
 		if err := ctx.Err(); err != nil {
 			yield(search.Epoch{}, err)
@@ -396,6 +409,7 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return
 		}
+		s.knob = st.knob
 		s.candidateLog = candidateLog
 		s.rank = &liveRank{}
 		defer s.rank.stop()
@@ -410,6 +424,8 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			yield(search.Epoch{}, err)
 			return true
 		}
+		emitted := 0
+		limit := s.knob.epochLimit()
 		emit := func(id Op, blob, fitted []pix, rated []search.Rated) bool {
 			ep := epochOf(s.doc, id)
 			ep.Elapsed = time.Since(started)
@@ -418,8 +434,15 @@ func (Stack) Search(ctx context.Context, target *image.NRGBA) iter.Seq2[search.E
 			}
 			ep.Rated = rated
 			ok := yield(ep, nil)
+			emitted++
 			started = time.Now()
-			return ok
+			if !ok {
+				return false
+			}
+			if limit > 0 && emitted >= limit {
+				return false
+			}
+			return true
 		}
 		ok, err := s.runAgents(ctx, emit)
 		if err != nil {
@@ -439,7 +462,15 @@ func epochOf(doc svg.Document, id Op) search.Epoch {
 }
 
 func (left leftover) big() bool {
-	return len(left.island) >= minIsland
+	return left.bigAt(minIsland)
+}
+
+func (left leftover) bigAt(min int) bool {
+	return len(left.island) >= min
+}
+
+func (s *world) big(left leftover) bool {
+	return left.bigAt(s.islandMin())
 }
 
 func (s *world) leftovers(ctx context.Context) []leftover {
@@ -453,7 +484,7 @@ func (s *world) leftovers(ctx context.Context) []leftover {
 func (s *world) leftoversFrom(blobs []leftoverBlob, lo, hi float64) []leftover {
 	out := make([]leftover, 0, len(blobs)*2)
 	for _, b := range blobs {
-		left := leftover{island: b.island, col: b.col, paper: paperLeftover(b.col), deltaLo: lo, deltaHi: hi}
+		left := leftover{island: b.island, col: b.col, paper: s.paperColor(b.col), deltaLo: lo, deltaHi: hi}
 		left.glow = b.island
 		var regions []leftover
 		if !left.paper {
@@ -491,7 +522,7 @@ func (s *world) bindLeftovers(lefts []leftover) []leftover {
 	for i, left := range lefts {
 		left.grows = nil
 		left = left.withTraces()
-		if left.big() {
+		if s.big(left) {
 			left.fresh = s.seedGrow(grow{i: -1, work: left.island, fill: left.col})
 		}
 		out[i] = left
@@ -551,6 +582,7 @@ func (s *world) snap() snapshot {
 		commands:     docCmdLen(s.doc),
 		simplifyMiss: s.simplifyMiss,
 		facts:        facts,
+		knob:         s.knob,
 	}
 }
 
@@ -827,7 +859,7 @@ func (s *world) scoreCand(ctx context.Context, next svg.Document, cand svg.Node,
 	nerr := s.scoreAfter(ctx, gotP, dirty.Inset(-2))
 	npaths := docPaths(next)
 	ncmds := docCmdLen(next)
-	ok := betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
+	ok := s.better(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: g.i, insert: -1, work: g.work, fill: g.fill, dropIdx: -1, mergeJ: -1, op: id, ok: ok, scored: true}, nil
 }
 
@@ -1007,16 +1039,16 @@ func whitePane(w, h int) svg.Path {
 // and are already painted. A paper hole waits for carve. A painted
 // interior is part of the leftover outline (visor on a plate). An
 // unpainted void is another leftover, not a hole in this plate.
-func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA) [][][2]float64 {
+func leftoverRings(island []pix, got, want *image.NRGBA, col color.NRGBA, limit float64) [][][2]float64 {
 	var rings [][][2]float64
 	for _, h := range voids(island) {
-		if paperLeftover(modeFill(want, h)) {
+		if loss.ColorAt(modeFill(want, h), paper) <= limit {
 			continue
 		}
-		if loss.ColorAt(modeFill(want, h), col) <= minErr {
+		if loss.ColorAt(modeFill(want, h), col) <= limit {
 			continue
 		}
-		if !holePainted(got, want, h) {
+		if !holePainted(got, want, h, limit) {
 			continue
 		}
 		r := coverRing(h)
@@ -1039,13 +1071,13 @@ func sameColorHollow(island []pix, want *image.NRGBA, col color.NRGBA) bool {
 	return false
 }
 
-func holePainted(got, want *image.NRGBA, hole []pix) bool {
+func holePainted(got, want *image.NRGBA, hole []pix, limit float64) bool {
 	if got == nil || want == nil || len(hole) == 0 {
 		return false
 	}
 	w := want.Bounds().Dx()
 	for _, p := range hole {
-		if residual(got, want, p.x, p.y, w) {
+		if residualLimit(got, want, p.x, p.y, w, limit) {
 			return false
 		}
 	}

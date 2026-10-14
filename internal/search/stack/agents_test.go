@@ -15,7 +15,7 @@ import (
 func TestBeamSlotCountsVertices(t *testing.T) {
 	doc := svg.NewDocument(4, 4).WithViewBox(0, 0, 4, 4).Append(whitePane(4, 4).Node())
 	doc = doc.Append(filledPath([][2]float64{{0, 0}, {4, 0}, {2, 3}}, color.NRGBA{R: 255, A: 255}).Node())
-	slots := beamSlots([]snapshot{{doc: doc, paths: 1, commands: 3, errSum: 1, operator: OpTriangle}})
+	slots := beamSlots([]snapshot{{doc: doc, paths: 1, commands: 3, errSum: 1, operator: OpTriangle}}, commandCost)
 	require.Len(t, slots, 1)
 	require.Equal(t, 3, slots[0].Vertices)
 	require.Equal(t, "triangle", slots[0].Operator)

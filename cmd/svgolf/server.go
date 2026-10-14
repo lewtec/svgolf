@@ -29,9 +29,10 @@ import (
 )
 
 type serverCmd struct {
-	Cache  cmd.StringArg `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
-	Addr   cmd.StringArg `long:"addr" default:":8080" help:"listen address"`
-	Search cmd.StringArg `long:"search" default:"stack" help:"Search adapter"`
+	Cache  cmd.StringArg   `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
+	Addr   cmd.StringArg   `long:"addr" default:":8080" help:"listen address"`
+	Search cmd.StringArg   `long:"search" default:"stack" help:"Search adapter"`
+	Opt    []cmd.StringArg `long:"search-opt" help:"Search option key=value"`
 }
 
 func (serverCmd) Description() string {
@@ -51,9 +52,16 @@ func (c *serverCmd) Run(ctx context.Context) error {
 	}
 	addr := c.Addr.Value()
 	algo := c.Search.Value()
+	probe, err := search.New(algo)
+	if err != nil {
+		return err
+	}
+	if err := tuneSearch(probe, c.Opt); err != nil {
+		return err
+	}
 	sess, sctx := taskgroup.New(ctx, taskgroup.DefaultLimits())
 	return progress.Run(sess, sctx, func(ctx context.Context) error {
-		s := &server{cache: cache, algo: algo, all: event.New[jobEvent]()}
+		s := &server{cache: cache, algo: algo, opts: c.Opt, all: event.New[jobEvent]()}
 		mux := http.NewServeMux()
 		mountProfiles(mux)
 		mux.HandleFunc("GET /", s.watch(ctx, s.handleHome))
@@ -96,6 +104,7 @@ func (c *serverCmd) Run(ctx context.Context) error {
 type server struct {
 	cache string
 	algo  string
+	opts  []cmd.StringArg
 	mu    sync.Mutex
 	buses map[string]*event.Bus[jobEvent]
 	all   *event.Bus[jobEvent]
@@ -308,6 +317,9 @@ func (s *server) runJob(ctx context.Context, st *taskgroup.Status, dir, id strin
 	}
 	searcher, err := search.New(s.algo)
 	if err != nil {
+		return s.stopJob(st, dir, id, err)
+	}
+	if err := tuneSearch(searcher, s.opts); err != nil {
 		return s.stopJob(st, dir, id, err)
 	}
 	ctx = stack.WithJobStatus(ctx, st)

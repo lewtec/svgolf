@@ -33,6 +33,8 @@ type beam struct {
 	head    int
 	trying  map[int]map[straightKey]struct{}
 	seen    map[Op]map[int]map[uint64]struct{}
+	width   int
+	cost    float64
 }
 
 func newBeam(first snapshot) *beam {
@@ -43,9 +45,15 @@ func newBeam(first snapshot) *beam {
 		trying: map[int]map[straightKey]struct{}{},
 		seen:   map[Op]map[int]map[uint64]struct{}{},
 		head:   first.id,
+		width:  beamWidth,
+		cost:   commandCost,
 	}
 	b.cond = sync.NewCond(&b.mu)
 	return b
+}
+
+func (b *beam) lessSnap(a, c snapshot) bool {
+	return lessObjectiveCost(a.errSum, a.commands, a.paths, c.errSum, c.commands, c.paths, b.cost)
 }
 
 func (b *beam) list() []snapshot {
@@ -239,13 +247,17 @@ func (b *beam) offer(sn snapshot) bool {
 	next := append(append([]snapshot{}, b.best...), sn)
 	for i := 1; i < len(next); i++ {
 		j := i
-		for j > 0 && lexicographicLessSnapshot(next[j], next[j-1]) {
+		for j > 0 && b.lessSnap(next[j], next[j-1]) {
 			next[j], next[j-1] = next[j-1], next[j]
 			j--
 		}
 	}
-	if len(next) > beamWidth {
-		next = next[:beamWidth]
+	limit := b.width
+	if limit <= 0 {
+		limit = beamWidth
+	}
+	if len(next) > limit {
+		next = next[:limit]
 	}
 	kept := false
 	for _, old := range next {
@@ -342,6 +354,7 @@ func (sn snapshot) fork(want *image.NRGBA, wantP *loss.Plane, w, h int) *world {
 		h:            h,
 		simplifyMiss: cloneStraightMiss(sn.simplifyMiss),
 		facts:        sn.facts,
+		knob:         sn.knob,
 	}
 	if sn.got != nil {
 		// The plane converts on first read. A proposer that only emits
@@ -407,6 +420,8 @@ func (s *world) runAgents(ctx context.Context, emit func(Op, []pix, []pix, []sea
 	first := s.snap()
 	first.lefts = s.watchLeftovers(ctx)
 	board := newBeam(first)
+	board.width = s.knob.beamWidth()
+	board.cost = s.knob.cost()
 	proposals := make(chan agentNote, proposalBuffer)
 	pixmaps := make(chan pixmapNote, renderAhead)
 	ready := make(chan pendingKeep, simplifyWindow)
@@ -699,11 +714,11 @@ func (s *world) rankNotes(ctx context.Context, board *beam, st *rankState, notes
 		if s.rank != nil {
 			rows := append([]candResult(nil), st.recent...)
 			sortCandResults(rows)
-			s.rank.show(ctx, rankSummary(rows, beamWidth))
+			s.rank.show(ctx, rankSummary(rows, s.knob.beamWidth()))
 		}
 		abs := st.pushProposal(search.Proposal{
 			Operator: id.String(),
-			Score:    objective(pick.errSum, pick.commands),
+			Score:    objectiveCost(pick.errSum, pick.commands, s.knob.cost()),
 			Paths:    pick.paths,
 			Commands: pick.commands,
 			Vertices: docVertices(pick.doc),
@@ -765,6 +780,7 @@ func (s *world) leftoversOf(sn snapshot) []leftover {
 		paths: sn.paths,
 		w:     s.w,
 		h:     s.h,
+		knob:  s.knob,
 	}
 	if sn.got != nil {
 		w.gotP = loss.NewPlane(sn.got)
@@ -816,7 +832,7 @@ func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn s
 	if row := st.proposalAt(abs); row != nil {
 		row.Slot = true
 	}
-	st.loss = append(st.loss, objective(sn.errSum, sn.commands))
+	st.loss = append(st.loss, objectiveCost(sn.errSum, sn.commands, s.knob.cost()))
 	jobNote(ctx, archiveLine(board.list()))
 	st.pool = append(st.pool, pick)
 	s.publishRank(ctx, board, st)
@@ -841,7 +857,7 @@ func (s *world) retainKept(ctx context.Context, board *beam, st *rankState, sn s
 
 func (s *world) publishRank(ctx context.Context, board *beam, st *rankState) {
 	emitFrame(ctx, search.Frame{
-		Beam:      beamSlots(board.list()),
+		Beam:      beamSlots(board.list(), s.knob.cost()),
 		Proposals: append([]search.Proposal(nil), st.log...),
 		Loss:      append([]float64(nil), st.loss...),
 	})
@@ -994,14 +1010,14 @@ func fuzzKind(kind Op) bool {
 	}
 }
 
-func beamSlots(list []snapshot) []search.Slot {
+func beamSlots(list []snapshot, cost float64) []search.Slot {
 	out := make([]search.Slot, len(list))
 	for i, sn := range list {
 		name := sn.operator.String()
 		if name == "" {
 			name = "plate"
 		}
-		out[i] = search.Slot{Operator: name, Score: objective(sn.errSum, sn.commands), Paths: sn.paths, Commands: sn.commands, Vertices: docVertices(sn.doc)}
+		out[i] = search.Slot{Operator: name, Score: objectiveCost(sn.errSum, sn.commands, cost), Paths: sn.paths, Commands: sn.commands, Vertices: docVertices(sn.doc)}
 	}
 	return out
 }

@@ -132,7 +132,7 @@ type Triangle struct {
 
 func (Triangle) ID() Op { return OpTriangle }
 func (tr Triangle) Applies() bool {
-	return tr.left.big() && !tr.left.region && hasInterior(tr.left.island) && tr.world.paths < maxPaths
+	return tr.world.big(tr.left) && !tr.left.region && hasInterior(tr.left.island) && tr.world.paths < maxPaths
 }
 
 func (tr Triangle) Run(ctx context.Context) (formPick, error) {
@@ -163,7 +163,7 @@ type Rectangle struct {
 
 func (Rectangle) ID() Op { return OpRectangle }
 func (rc Rectangle) Applies() bool {
-	return rc.left.big() && !rc.left.region && hasInterior(rc.left.island) && rc.world.paths < maxPaths
+	return rc.world.big(rc.left) && !rc.left.region && hasInterior(rc.left.island) && rc.world.paths < maxPaths
 }
 
 func (rc Rectangle) Run(ctx context.Context) (formPick, error) {
@@ -201,7 +201,7 @@ func (o Outline) Applies() bool {
 	// Interior is not required. A trace or a fringe has no pixel
 	// with four neighbors, and skipping it leaves a real miss.
 	// Score still rejects a rim whose plate does not help.
-	return o.left.big() && o.world.paths < maxPaths
+	return o.world.big(o.left) && o.world.paths < maxPaths
 }
 
 func (o Outline) Run(ctx context.Context) (formPick, error) {
@@ -223,7 +223,7 @@ func (o Outline) Run(ctx context.Context) (formPick, error) {
 		if _, err := s.addLayer(ctx, filledPath(ring, g.fill), g, OpOutline); err != nil {
 			return nonePick(), err
 		}
-		if s.paths != 0 && (o.left.paper || paperLeftover(g.fill)) {
+		if s.paths != 0 && (o.left.paper || s.paperColor(g.fill)) {
 			if _, err := (&Carve{world: s, left: o.left}).Run(ctx); err != nil {
 				return nonePick(), err
 			}
@@ -234,7 +234,7 @@ func (o Outline) Run(ctx context.Context) (formPick, error) {
 	if err != nil {
 		return nonePick(), err
 	}
-	if s.paths == 0 || (!o.left.paper && !paperLeftover(g.fill)) {
+	if s.paths == 0 || (!o.left.paper && !s.paperColor(g.fill)) {
 		return layer, nil
 	}
 	// The pane already is this color. Punching the same outline out
@@ -249,11 +249,11 @@ func (o Outline) Run(ctx context.Context) (formPick, error) {
 	if s.want != nil && hole.scored && layer.scored {
 		if sum, err := scored(ctx, hole.doc, s.want); err == nil {
 			hole.errSum = sum
-			hole.ok = betterObjective(sum, hole.commands, s.errSum, docCmdLen(s.doc))
+			hole.ok = s.better(sum, hole.commands, s.errSum, docCmdLen(s.doc))
 		}
 		if sum, err := scored(ctx, layer.doc, s.want); err == nil {
 			layer.errSum = sum
-			layer.ok = betterObjective(sum, layer.commands, s.errSum, docCmdLen(s.doc))
+			layer.ok = s.better(sum, layer.commands, s.errSum, docCmdLen(s.doc))
 		}
 	}
 	if betterPick(hole, layer) {
@@ -278,15 +278,15 @@ type Ring struct {
 
 func (Ring) ID() Op { return OpRing }
 func (r Ring) Applies() bool {
-	if !r.left.big() || r.left.paper || r.world.paths >= maxPaths {
+	if !r.world.big(r.left) || r.left.paper || r.world.paths >= maxPaths {
 		return false
 	}
-	return len(leftoverRings(r.left.island, r.world.got, r.world.want, r.left.col)) > 0
+	return len(leftoverRings(r.left.island, r.world.got, r.world.want, r.left.col, r.world.errLimit())) > 0
 }
 
 func (r Ring) Run(ctx context.Context) (formPick, error) {
 	s := r.world
-	holes := leftoverRings(r.left.island, s.got, s.want, r.left.col)
+	holes := leftoverRings(r.left.island, s.got, s.want, r.left.col, s.errLimit())
 	if len(holes) == 0 {
 		return nonePick(), nil
 	}
@@ -308,7 +308,7 @@ type Absorb struct {
 
 func (Absorb) ID() Op { return OpAbsorb }
 func (a Absorb) Applies() bool {
-	return a.left.big() && !a.left.paper && a.world.paths > 0
+	return a.world.big(a.left) && !a.left.paper && a.world.paths > 0
 }
 
 func (a *Absorb) Run(ctx context.Context) (formPick, error) {
@@ -359,7 +359,7 @@ type Grow struct {
 
 func (g Grow) ID() Op { return OpGrow }
 func (g Grow) Applies() bool {
-	return g.left.big() && !g.left.paper
+	return g.world.big(g.left) && !g.left.paper
 }
 
 func (g *Grow) Run(ctx context.Context) (formPick, error) {
@@ -406,7 +406,7 @@ type Carve struct {
 
 func (c Carve) ID() Op { return OpCarve }
 func (c Carve) Applies() bool {
-	return c.left.big() && c.world.paths > 0
+	return c.world.big(c.left) && c.world.paths > 0
 }
 
 func (c *Carve) Run(ctx context.Context) (formPick, error) {
@@ -1102,7 +1102,7 @@ func (s Subtract) Run(ctx context.Context) (formPick, error) {
 		rings = append(rings, shrunk)
 	}
 	best := nonePick()
-	dropCutter := paperLeftover(w.fills[i])
+	dropCutter := w.paperColor(w.fills[i])
 	for _, ring := range rings {
 		if err := live(ctx); err != nil {
 			return nonePick(), err
@@ -1169,7 +1169,7 @@ func (d Delete) Run(ctx context.Context) (formPick, error) {
 	loss.Release(gotP)
 	npaths := s.paths - 1
 	ncmds := docCmdLen(next)
-	ok := betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
+	ok := s.better(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{doc: next, errSum: nerr, paths: npaths, commands: ncmds, replace: -1, insert: -1, dropIdx: d.i, mergeJ: -1, op: OpDelete, ok: ok, scored: true}, nil
 }
 
@@ -1181,7 +1181,7 @@ type Slide struct {
 
 func (Slide) ID() Op { return OpSlide }
 func (sl Slide) Applies() bool {
-	return sl.left.big() && sl.world.paths > 0
+	return sl.world.big(sl.left) && sl.world.paths > 0
 }
 
 func (sl Slide) Run(ctx context.Context) (formPick, error) {
@@ -1256,7 +1256,7 @@ type Bend struct {
 
 func (Bend) ID() Op { return OpBend }
 func (b Bend) Applies() bool {
-	return b.left.big() && b.world.paths > 0
+	return b.world.big(b.left) && b.world.paths > 0
 }
 
 func (b Bend) Run(ctx context.Context) (formPick, error) {
@@ -1369,7 +1369,7 @@ func (sw Swap) Run(ctx context.Context) (formPick, error) {
 	loss.Release(gotP)
 	npaths := s.paths
 	ncmds := docCmdLen(next)
-	ok = betterObjective(nerr, ncmds, s.errSum, docCmdLen(s.doc))
+	ok = s.better(nerr, ncmds, s.errSum, docCmdLen(s.doc))
 	return formPick{
 		doc: next, errSum: nerr, paths: npaths, commands: ncmds,
 		replace: -1, insert: -1, dropIdx: -1, mergeJ: -1,
@@ -1383,20 +1383,20 @@ func (sw Swap) Run(ctx context.Context) (formPick, error) {
 // to decide that a pixel is a paint. ColorAt jumps to 180 when only
 // one side still has hue, so a channel gap of that same size counts
 // too. An endpoint is the paint itself and is not a mix.
-func onBlend(c color.NRGBA, paints []color.NRGBA) bool {
+func onBlend(c color.NRGBA, paints []color.NRGBA, match float64) bool {
 	for _, paint := range paints {
-		if loss.ColorAt(c, paint) <= float64(minErr) {
+		if loss.ColorAt(c, paint) <= match {
 			return false
 		}
 	}
-	limit := minErr * 255 / 180
+	limit := int(match * 255 / 180)
 	for i := range paints {
 		for j := i + 1; j < len(paints); j++ {
 			t, blend := projectBlend(paints[i], paints[j], c)
 			if t <= 0 || t >= 1 {
 				continue
 			}
-			if loss.ColorAt(c, blend) <= float64(minErr) || channelGap(c, blend) <= limit {
+			if loss.ColorAt(c, blend) <= match || channelGap(c, blend) <= limit {
 				return true
 			}
 		}
@@ -1475,7 +1475,7 @@ func (s *world) frontierHits(island []pix, paints []color.NRGBA) []int {
 			}
 			c := s.want.NRGBAAt(ox+nx, oy+ny)
 			for i, paint := range paints {
-				if loss.ColorAt(c, paint) <= float64(minErr) {
+				if loss.ColorAt(c, paint) <= s.errLimit() {
 					hit[i]++
 				}
 			}
@@ -1491,7 +1491,7 @@ func (s *world) frontierHits(island []pix, paints []color.NRGBA) []int {
 // segment than to either paint. A ramp that never meets the pane is
 // not that blur: its bands stay plates and Wash can fit them.
 func (s *world) seam(left leftover) bool {
-	if s == nil || s.paths == 0 || len(left.island) < minIsland {
+	if s == nil || s.paths == 0 || len(left.island) < s.islandMin() {
 		return false
 	}
 	mode := left.col
@@ -1501,25 +1501,25 @@ func (s *world) seam(left leftover) bool {
 	paints := make([]color.NRGBA, 0, len(s.fills)+1)
 	paints = append(paints, s.fills...)
 	paints = append(paints, paper)
-	if onBlend(mode, paints) {
+	if onBlend(mode, paints, s.errLimit()) {
 		return true
 	}
 	hit := s.frontierHits(left.island, paints)
 	if hit[len(hit)-1] == 0 {
 		return false
 	}
-	return closerBlend(mode, s.fills, paper)
+	return closerBlend(mode, s.fills, paper, s.errLimit())
 }
 
 // closerBlend reports that c lies on the open segment from a plate to
 // the pane and the mix beats either end. The 180 from the hue knee is
 // not a measured miss, so it does not count as "closer".
-func closerBlend(c color.NRGBA, fills []color.NRGBA, pane color.NRGBA) bool {
-	if loss.ColorAt(c, pane) <= float64(minErr) {
+func closerBlend(c color.NRGBA, fills []color.NRGBA, pane color.NRGBA, match float64) bool {
+	if loss.ColorAt(c, pane) <= match {
 		return false
 	}
 	for _, fill := range fills {
-		if loss.ColorAt(c, fill) <= float64(minErr) {
+		if loss.ColorAt(c, fill) <= match {
 			return false
 		}
 		t, blend := projectBlend(fill, pane, c)
@@ -1567,7 +1567,7 @@ func (s *world) leftoverOperators(left leftover, band int) []Operator {
 		}
 	}
 	var add []Operator
-	if !left.region && left.big() {
+	if !left.region && s.big(left) {
 		add = leftoverAddOperators(s, left)
 	}
 	if left.deltaHi > 0 && left.deltaLo < 64 {

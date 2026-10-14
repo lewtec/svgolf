@@ -72,6 +72,17 @@ func sameFile(t *testing.T, a, b string) {
 	}
 }
 
+func TestVectorizeSearchOpt(t *testing.T) {
+	app, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search", "stack", "--search-opt", "epochs=1", "--search-opt", "beam=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := app.Args.Vectorize.Opt
+	if len(opt) != 2 || opt[0].Value() != "epochs=1" || opt[1].Value() != "beam=2" {
+		t.Fatalf("opt=%v", opt)
+	}
+}
+
 func TestVectorizeUnknownSearch(t *testing.T) {
 	app, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search", "nope")
 	if err != nil {

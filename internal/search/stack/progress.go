@@ -147,6 +147,7 @@ func (s *world) fork() *world {
 		candidateLog: s.candidateLog,
 		snapID:       s.snapID,
 		simplifyMiss: s.simplifyMiss,
+		knob:         s.knob,
 		rank:         s.rank,
 	}
 }

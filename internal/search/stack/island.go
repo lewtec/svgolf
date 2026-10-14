@@ -221,9 +221,13 @@ func ownedMinus(owner []uint16, drop []pix, w int, id uint16, seen []byte) []pix
 }
 
 func residual(got, want *image.NRGBA, x, y, w int) bool {
+	return residualLimit(got, want, x, y, w, float64(minErr))
+}
+
+func residualLimit(got, want *image.NRGBA, x, y, w int, limit float64) bool {
 	q := want.NRGBAAt(want.Rect.Min.X+x, want.Rect.Min.Y+y)
 	g := got.NRGBAAt(got.Rect.Min.X+x, got.Rect.Min.Y+y)
-	return colorErr(g, q) > minErr
+	return colorErr(g, q) > limit
 }
 
 // leftoverHeat is HSV error scaled to the current max, 0–1.
@@ -269,7 +273,7 @@ func (s *world) hottest() (color.NRGBA, []pix) {
 }
 
 func (s *world) hottestN(k int) []leftoverBlob {
-	return s.hottestMarked(nil, k, minErr, 180)
+	return s.hottestMarked(nil, k, s.errLimit(), 180)
 }
 
 func (s *world) hottestMarked(ctx context.Context, k int, lo, hi float64) []leftoverBlob {
@@ -314,7 +318,7 @@ func (s *world) hottestMarked(ctx context.Context, k int, lo, hi float64) []left
 }
 
 func (s *world) coresFromMark(w, h int, gotP, wantP *loss.Plane, k int, errFromImage bool) (cores, rest []leftoverBlob) {
-	blobs := s.floodBlobs(w, h, gotP, wantP, 0, true, minIsland, errFromImage)
+	blobs := s.floodBlobs(w, h, gotP, wantP, 0, true, s.islandMin(), errFromImage)
 	s.unfloodMark()
 	for _, b := range blobs {
 		if hasCore(b.island) {
@@ -358,7 +362,7 @@ func (s *world) leftoverColors(b leftoverBlob) []color.NRGBA {
 	var out []color.NRGBA
 	seen := map[int]bool{}
 	add := func(c color.NRGBA) {
-		if paperLeftover(c) {
+		if s.paperColor(c) {
 			return
 		}
 		bin := coarse(c)
@@ -400,7 +404,7 @@ func (s *world) worldSize() (w, h int) {
 }
 
 func (s *world) floodWant(seed []pix, col color.NRGBA) []pix {
-	if paperLeftover(col) || len(seed) == 0 || s.want == nil {
+	if s.paperColor(col) || len(seed) == 0 || s.want == nil {
 		return nil
 	}
 	w, h := s.worldSize()
@@ -420,7 +424,7 @@ func (s *world) floodWant(seed []pix, col color.NRGBA) []pix {
 			return
 		}
 		wc := s.want.NRGBAAt(ox+p.x, oy+p.y)
-		if paperLeftover(wc) || coarse(wc) != bin {
+		if s.paperColor(wc) || coarse(wc) != bin {
 			return
 		}
 		seen[i] = 1
