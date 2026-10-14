@@ -12,6 +12,7 @@ import (
 	"github.com/lewtec/lewkit/x/cmd"
 	"github.com/lewtec/svgolf/internal/search"
 	"github.com/lewtec/svgolf/pkg/svg"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTraceOverwritesLast(t *testing.T) {
@@ -74,13 +75,11 @@ func sameFile(t *testing.T, a, b string) {
 
 func TestVectorizeSearchOpt(t *testing.T) {
 	app, err := cmd.Parse[cmd.App[root]]("vectorize", "x.png", "-o", "y.svg", "--search", "stack", "--search-opt", "epochs=1", "--search-opt", "beam=2")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	opt := app.Args.Vectorize.Opt
-	if len(opt) != 2 || opt[0].Value() != "epochs=1" || opt[1].Value() != "beam=2" {
-		t.Fatalf("opt=%v", opt)
-	}
+	require.Len(t, opt, 2)
+	require.Equal(t, "epochs=1", opt[0].Value())
+	require.Equal(t, "beam=2", opt[1].Value())
 }
 
 func TestVectorizeUnknownSearch(t *testing.T) {

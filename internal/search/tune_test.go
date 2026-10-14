@@ -5,6 +5,8 @@ import (
 	"image"
 	"iter"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 type tunedSearch struct {
@@ -28,44 +30,28 @@ func (plainSearch) Search(context.Context, *image.NRGBA) iter.Seq2[Epoch, error]
 
 func TestParseOptions(t *testing.T) {
 	got, err := ParseOptions([]string{"epochs=3", "beam=2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got["epochs"] != "3" || got["beam"] != "2" {
-		t.Fatalf("opts=%v", got)
-	}
-	if _, err := ParseOptions([]string{"epochs"}); err == nil {
-		t.Fatal("expected key=value error")
-	}
-	if _, err := ParseOptions([]string{"epochs=1", "epochs=2"}); err == nil {
-		t.Fatal("expected duplicate error")
-	}
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"epochs": "3", "beam": "2"}, got)
+	_, err = ParseOptions([]string{"epochs"})
+	require.Error(t, err)
+	_, err = ParseOptions([]string{"epochs=1", "epochs=2"})
+	require.Error(t, err)
 }
 
 func TestTuneEmptyIsNoop(t *testing.T) {
-	if err := Tune(plainSearch{}, nil); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, Tune(plainSearch{}, nil))
 }
 
 func TestTuneRejectsPlainAdapter(t *testing.T) {
-	if err := Tune(plainSearch{}, map[string]string{"epochs": "1"}); err == nil {
-		t.Fatal("expected error")
-	}
+	require.Error(t, Tune(plainSearch{}, map[string]string{"epochs": "1"}))
 }
 
 func TestTuneForwardsPairs(t *testing.T) {
 	s := &tunedSearch{}
-	if err := Tune(s, map[string]string{"beam": "2"}); err != nil {
-		t.Fatal(err)
-	}
-	if s.opts["beam"] != "2" {
-		t.Fatalf("opts=%v", s.opts)
-	}
+	require.NoError(t, Tune(s, map[string]string{"beam": "2"}))
+	require.Equal(t, map[string]string{"beam": "2"}, s.opts)
 }
 
 func TestTuneNil(t *testing.T) {
-	if err := Tune(nil, map[string]string{"beam": "1"}); err == nil {
-		t.Fatal("expected error")
-	}
+	require.Error(t, Tune(nil, map[string]string{"beam": "1"}))
 }

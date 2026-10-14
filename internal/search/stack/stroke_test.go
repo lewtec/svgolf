@@ -7,6 +7,7 @@ import (
 
 	"github.com/lewtec/svgolf/pkg/render"
 	"github.com/lewtec/svgolf/pkg/svg"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStrokeCoversLongBar(t *testing.T) {
@@ -24,40 +25,22 @@ func TestStrokeCoversLongBar(t *testing.T) {
 	}
 	s, left := strokeLeftover(t, img)
 	pick, err := (Stroke{world: s, left: left}).Run(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !pick.ok {
-		t.Fatal("stroke was not accepted")
-	}
+	require.NoError(t, err)
+	require.True(t, pick.ok)
 	path := lastPath(t, pick.doc)
-	if _, ok := path.Fill(); ok {
-		t.Fatal("stroke path has a fill")
-	}
+	_, filled := path.Fill()
+	require.False(t, filled)
 	stroke, ok := path.Stroke()
-	if !ok {
-		t.Fatal("stroke paint is off")
-	}
-	if stroke.Width() != 2 {
-		t.Fatalf("width=%v want the short side", stroke.Width())
-	}
-	if stroke.Cap() != svg.CapButt {
-		t.Fatalf("cap=%v want butt", stroke.Cap())
-	}
+	require.True(t, ok)
+	require.Equal(t, 2.0, stroke.Width())
+	require.Equal(t, svg.CapButt, stroke.Cap())
 	outline, err := (Outline{world: s, left: left}).Run(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !outline.scored || pick.commands >= outline.commands {
-		t.Fatalf("stroke commands=%d outline commands=%d", pick.commands, outline.commands)
-	}
+	require.NoError(t, err)
+	require.True(t, outline.scored)
+	require.Less(t, pick.commands, outline.commands)
 	got, err := render.Render(pick.doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if score := Score(nil, got, img); score != 0 {
-		t.Fatalf("score=%v want 0", score)
-	}
+	require.NoError(t, err)
+	require.Zero(t, Score(nil, got, img))
 }
 
 func TestStrokeSkipsSquare(t *testing.T) {
@@ -69,16 +52,10 @@ func TestStrokeSkipsSquare(t *testing.T) {
 		}
 	}
 	s, left := strokeLeftover(t, img)
-	if !(Stroke{world: s, left: left}).Applies() {
-		t.Fatal("stroke should still be scheduled on a square")
-	}
+	require.True(t, (Stroke{world: s, left: left}).Applies())
 	pick, err := (Stroke{world: s, left: left}).Run(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pick.ok {
-		t.Fatal("square became a stroke")
-	}
+	require.NoError(t, err)
+	require.False(t, pick.ok)
 }
 
 func TestStrokeSkipsElbow(t *testing.T) {
@@ -96,18 +73,12 @@ func TestStrokeSkipsElbow(t *testing.T) {
 		img.SetNRGBA(p.x, p.y, red)
 	}
 	s, err := newWorld(nil, img)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	left := leftover{island: island, col: red}
 	left.fresh = s.seedGrow(grow{i: -1, work: island, fill: red})
 	pick, err := (Stroke{world: s, left: left}).Run(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pick.ok {
-		t.Fatal("elbow became a stroke")
-	}
+	require.NoError(t, err)
+	require.False(t, pick.ok)
 }
 
 func TestStrokeCoversDiagonal(t *testing.T) {
@@ -130,30 +101,19 @@ func TestStrokeCoversDiagonal(t *testing.T) {
 				img.SetNRGBA(x, y, red)
 			}
 			s, err := newWorld(nil, img)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			left := leftover{island: island, col: red}
 			left.fresh = s.seedGrow(grow{i: -1, work: island, fill: red})
 			pick, err := (Stroke{world: s, left: left}).Run(nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !pick.ok {
-				t.Fatal("diagonal stroke was not accepted")
-			}
+			require.NoError(t, err)
+			require.True(t, pick.ok)
 			path := lastPath(t, pick.doc)
 			stroke, ok := path.Stroke()
-			if !ok || stroke.Width() != 1 {
-				t.Fatalf("stroke=%v on=%v want width 1", stroke.Width(), ok)
-			}
+			require.True(t, ok)
+			require.Equal(t, 1.0, stroke.Width())
 			got, err := render.Render(pick.doc)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if score := Score(nil, got, img); score != 0 {
-				t.Fatalf("score=%v want 0", score)
-			}
+			require.NoError(t, err)
+			require.Zero(t, Score(nil, got, img))
 		})
 	}
 }
@@ -161,9 +121,7 @@ func TestStrokeCoversDiagonal(t *testing.T) {
 func strokeLeftover(t *testing.T, img *image.NRGBA) (*world, leftover) {
 	t.Helper()
 	s, err := newWorld(nil, img)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var left leftover
 	for _, candidate := range s.leftovers(nil) {
 		if candidate.paper || candidate.region {
@@ -173,21 +131,15 @@ func strokeLeftover(t *testing.T, img *image.NRGBA) (*world, leftover) {
 			left = candidate
 		}
 	}
-	if len(left.island) < minIsland {
-		t.Fatalf("leftover=%d", len(left.island))
-	}
+	require.GreaterOrEqual(t, len(left.island), minIsland)
 	return s, left
 }
 
 func lastPath(t *testing.T, doc svg.Document) svg.Path {
 	t.Helper()
 	kids := doc.Children()
-	if len(kids) == 0 {
-		t.Fatal("empty document")
-	}
+	require.NotEmpty(t, kids)
 	path, ok := kids[len(kids)-1].Path()
-	if !ok {
-		t.Fatal("last node is not a path")
-	}
+	require.True(t, ok)
 	return path
 }
