@@ -806,11 +806,11 @@ A new adapter is a subpackage plus `init { Register("name", ...) }`. Blank-impor
 Search is the whole problem: `want` pixmap in, one `Epoch` per step. Host does not scale. Only a Search adapter may scale, as its own algorithm; it reports that scale on `Epoch.Scale` (`1` = native). A one-shot adapter yields once and stops. A looping adapter yields again after each epoch. What that Document is (best so far, generation pick) is the adapter's problem. Palette, Cost, Loss, and mutate stay inside the adapter. The CLI does not inject them. `--search` selects the registry name. Default `dumb` (via prelude). `vectorize` and `preview` Encode `Last` (the last successful epoch's Document). Zero epochs or a yielded error fail.
 
 ```
-svgolf vectorize in.png -o out.svg --search NAME [--search-opt key=value]
-svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview] [--search-opt key=value]
+svgolf vectorize in.png -o out.svg --search NAME [--search-opt KEY VALUE]
+svgolf preview --search NAME [--eval testdata/eval] [--out testdata/preview] [--search-opt KEY VALUE]
 ```
 
-`--search-opt` repeats. The CLI forwards `key=value` and does not interpret it. An adapter that does not implement `Tunable` rejects a non-empty map. `stack` keys, with the built-in value when the key is omitted:
+`--search-opt` repeats. Each use takes a key and a value. The CLI forwards the pairs and does not interpret them. An adapter that does not implement `Tunable` rejects a non-empty map. `stack` keys, with the built-in value when the key is omitted:
 
 | Key | Default | Meaning |
 | --- | --- | --- |

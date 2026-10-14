@@ -29,10 +29,10 @@ import (
 )
 
 type serverCmd struct {
-	Cache  cmd.StringArg   `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
-	Addr   cmd.StringArg   `long:"addr" default:":8080" help:"listen address"`
-	Search cmd.StringArg   `long:"search" default:"stack" help:"Search adapter"`
-	Opt    []cmd.StringArg `long:"search-opt" help:"Search option key=value"`
+	Cache  cmd.StringArg                    `long:"cache" default:"" help:"folder that stores every job and epoch frame"`
+	Addr   cmd.StringArg                    `long:"addr" default:":8080" help:"listen address"`
+	Search cmd.StringArg                    `long:"search" default:"stack" help:"Search adapter"`
+	Opt    []cmd.KV[string, *cmd.StringArg] `long:"search-opt" help:"Search option key and value"`
 }
 
 func (serverCmd) Description() string {
@@ -104,7 +104,7 @@ func (c *serverCmd) Run(ctx context.Context) error {
 type server struct {
 	cache string
 	algo  string
-	opts  []cmd.StringArg
+	opts  []cmd.KV[string, *cmd.StringArg]
 	mu    sync.Mutex
 	buses map[string]*event.Bus[jobEvent]
 	all   *event.Bus[jobEvent]

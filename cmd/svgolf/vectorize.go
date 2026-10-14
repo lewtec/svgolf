@@ -14,10 +14,10 @@ import (
 
 type vectorizeCmd struct {
 	In     cmd.StringArg
-	Out    cmd.StringArg `short:"o" long:"out" help:"output SVG path"`
-	Algo   cmd.StringArg   `long:"search" default:"dumb" help:"Search adapter"`
-	Opt    []cmd.StringArg `long:"search-opt" help:"Search option key=value"`
-	Epochs cmd.StringArg   `long:"epochs" default:"" help:"directory to write each epoch as N.svg and N.png, plus last.svg and last.png"`
+	Out    cmd.StringArg                    `short:"o" long:"out" help:"output SVG path"`
+	Algo   cmd.StringArg                    `long:"search" default:"dumb" help:"Search adapter"`
+	Opt    []cmd.KV[string, *cmd.StringArg] `long:"search-opt" help:"Search option key and value"`
+	Epochs cmd.StringArg                    `long:"epochs" default:"" help:"directory to write each epoch as N.svg and N.png, plus last.svg and last.png"`
 }
 
 func (vectorizeCmd) Description() string {

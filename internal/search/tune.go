@@ -2,10 +2,9 @@ package search
 
 import (
 	"fmt"
-	"strings"
 )
 
-// Tunable is a Search that accepts opaque key=value knobs.
+// Tunable is a Search that accepts opaque options.
 // The CLI forwards the pairs and does not interpret them.
 type Tunable interface {
 	Tune(map[string]string) error
@@ -25,20 +24,4 @@ func Tune(s Search, opts map[string]string) error {
 		return fmt.Errorf("search: adapter does not take options")
 	}
 	return t.Tune(opts)
-}
-
-// ParseOptions splits key=value pairs. Duplicate keys are an error.
-func ParseOptions(values []string) (map[string]string, error) {
-	out := make(map[string]string, len(values))
-	for _, raw := range values {
-		key, val, ok := strings.Cut(raw, "=")
-		if !ok || key == "" {
-			return nil, fmt.Errorf("search: option %q want key=value", raw)
-		}
-		if _, dup := out[key]; dup {
-			return nil, fmt.Errorf("search: duplicate option %q", key)
-		}
-		out[key] = val
-	}
-	return out, nil
 }

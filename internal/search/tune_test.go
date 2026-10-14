@@ -28,16 +28,6 @@ func (plainSearch) Search(context.Context, *image.NRGBA) iter.Seq2[Epoch, error]
 	return func(yield func(Epoch, error) bool) {}
 }
 
-func TestParseOptions(t *testing.T) {
-	got, err := ParseOptions([]string{"epochs=3", "beam=2"})
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{"epochs": "3", "beam": "2"}, got)
-	_, err = ParseOptions([]string{"epochs"})
-	require.Error(t, err)
-	_, err = ParseOptions([]string{"epochs=1", "epochs=2"})
-	require.Error(t, err)
-}
-
 func TestTuneEmptyIsNoop(t *testing.T) {
 	require.NoError(t, Tune(plainSearch{}, nil))
 }
