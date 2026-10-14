@@ -8,7 +8,7 @@ Contract: [SPEC.md](SPEC.md).
 
 ## Tools
 
-All tools come from mise. Do not install Go or resvg on the host.
+mise pins Go and resvg:
 
 ```
 mise install
@@ -17,9 +17,15 @@ mise run build
 mise run fuzz
 ```
 
-`mise run test` is the only supported test entry. It puts resvg 0.47.0 on PATH.
+`mise run test` puts resvg 0.47.0 on PATH. Match is exact RGBA vs resvg.
 
-Match is exact RGBA vs resvg. No slop.
+Build the CLI without mise when Go is already installed:
+
+```
+go build -o bin/svgolf ./cmd/svgolf
+```
+
+resvg is the verify oracle. `render` and `vectorize` do not call it. `verify`, `preview`, fuzz, and tests that compare to resvg do.
 
 ## CLI
 
